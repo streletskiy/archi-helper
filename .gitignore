@@ -8,7 +8,7 @@ artifacts/
 .env*
 !.env.example
 
-# Локальные проекты, настройки, ключи и материалы
+# Local projects, settings, keys and materials
 .archi/
 settings.json
 Local State
@@ -35,7 +35,7 @@ Thumbs.db
 Desktop.ini
 NVIDIA Corporation/
 
-# Локальные журналы генерации и тестовые скриншоты
+# Local generation logs and test screenshots
 assets/brand/mcp-build.json
 assets/brand/engineer.json
 docs/screenshots/*
