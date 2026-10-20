@@ -84,6 +84,8 @@
     "nsis": {
       "artifactName": "Archi-Helper-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
+      "useZip": true,
+      "differentialPackage": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
