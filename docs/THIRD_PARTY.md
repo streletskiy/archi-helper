@@ -7,12 +7,12 @@
 | Electron, React, react-markdown, remark-gfm, MCP SDK, electron-updater | MIT; лицензии включены в пакеты |
 | lucide-react | ISC |
 | CPython 3.13.7 | PSF |
-| uv 0.11.26 | MIT / Apache-2.0 |
+| uv 0.11.26 | MIT; полный текст в `vendor/licenses/uv-MIT.txt` |
 | FastMCP | Apache-2.0 |
 | Pillow | HPND |
 | pypdf | BSD-3-Clause |
 | PyMuPDF / MuPDF 1.28.2 | AGPL-3.0; см. ниже |
-| archicad | Условия Graphisoft в метаданных Python-пакета |
+| archicad | Apache-2.0; полный текст в метаданных Python-пакета |
 
 [archicad-mcp](https://github.com/lgradisar/archicad-mcp) включён с исходниками и MIT-лицензией в `vendor/archicad-mcp`, коммит `13b8645cf9d6c59543a9c2f6b0021ac76e2b0b36`. Два файла определений команд и TAPIR_VERSION обновлены из официального Tapir 1.7.2: 314 команд, проверка соединения и универсальный вызов дают 316 инструментов.
 
