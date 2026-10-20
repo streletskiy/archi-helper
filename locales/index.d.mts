@@ -1,0 +1,10 @@
+import type en from './en.json';
+export type Language = 'en' | 'ru';
+export type TranslationKey = keyof typeof en;
+export const catalogs: Record<Language, Record<TranslationKey, string>>;
+export function normalizeLanguage(value: unknown): Language;
+export function getLanguage(): Language;
+export function setLanguage(value: unknown): void;
+export function subscribe(listener: () => void): () => void;
+export function translate(locale: unknown, key: TranslationKey, values?: Record<string, unknown>): string;
+export function t(key: TranslationKey, values?: Record<string, unknown>): string;

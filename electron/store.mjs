@@ -1,3 +1,4 @@
+import { t, normalizeLanguage, setLanguage } from '../locales/index.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -11,35 +12,44 @@ export async function atomicJSON(file, value) {
 }
 export async function readJSON(file, fallback) {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); }
-  catch (e) { if (e.code === 'ENOENT') return fallback; throw new Error(`Не удаётся прочитать ${file}: ${e.message}`); }
+  catch (e) { if (e.code === 'ENOENT') return fallback; throw new Error(t('errors.cannotRead',{value0:file,value1:e.message})); }
 }
 export async function projectPath(root, relative = '.') {
-  if (typeof relative !== 'string') throw new Error('Ожидалось имя файла');
+  if (typeof relative !== 'string') throw new Error(t('errors.expectedAFileName'));
   const result = path.resolve(root, relative), base = await fs.realpath(root);
   const inside = p => { const r = path.relative(base, p); return !r.startsWith('..') && !path.isAbsolute(r); };
-  if (!inside(result)) throw new Error('Файл находится вне папки проекта');
+  if (!inside(result)) throw new Error(t('errors.theFileIsOutsideTheProjectFolder'));
   let ancestor = result;
   while (true) {
-    try { if (!inside(await fs.realpath(ancestor))) throw new Error('Ссылка ведёт за пределы проекта'); break; }
+    try { if (!inside(await fs.realpath(ancestor))) throw new Error(t('errors.theLinkLeadsOutsideTheProject')); break; }
     catch (e) { if (e.code !== 'ENOENT') throw e; ancestor = path.dirname(ancestor); }
   }
   return result;
 }
 export async function imageFile(root, relative) {
   const file=await projectPath(root,relative),stat=await fs.stat(file);
-  if(stat.size>12*1024*1024)throw new Error('Изображение больше 12 МБ. Уменьшите его через Python.');
+  if(stat.size>12*1024*1024)throw new Error(t('errors.theImageExceeds12MbResizeIt'));
   const data=await fs.readFile(file);
   const mime=data.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))?'image/png':
     data[0]===255&&data[1]===216?'image/jpeg':
     data.subarray(0,4).toString()==='RIFF'&&data.subarray(8,12).toString()==='WEBP'?'image/webp':null;
-  if(!mime)throw new Error('Для просмотра используйте PNG, JPEG или WebP');
+  if(!mime)throw new Error(t('errors.usePngJpegOrWebpForImage'));
   return {mime,data};
 }
 export class Store {
   constructor(directory, secrets) { this.directory = directory; this.secrets = secrets; }
-  async init() {
+  async init(defaultLanguage = 'en') {
     this.file = path.join(this.directory, 'settings.json');
     this.state = await readJSON(this.file, { version: 1, projects: [], providers: [], model: '', providerId: '', archicadPort: '', maxContextChars: 180000 });
+    this.state.language = normalizeLanguage(this.state.language || defaultLanguage);
+    setLanguage(this.state.language);
+  }
+  async setLanguage(value) {
+    if (!['ru', 'en'].includes(value)) throw new Error(t('errors.unsupportedLanguage'));
+    const previous = this.state.language;
+    this.state.language = value;
+    try { await this.save(); } catch (error) { this.state.language = previous; throw error; }
+    setLanguage(value);
   }
   async save() { await atomicJSON(this.file, this.state); }
   publicState() {
@@ -50,20 +60,20 @@ export class Store {
     const old = this.state.providers.find(p => p.id === id);
     const url = new URL(input.baseURL.trim().replace(/\/+$/, ''));
     if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
-      throw new Error('Используйте HTTPS или локальный сервер');
-    if (url.username || url.password || url.search || url.hash) throw new Error('Укажите базовый URL без пароля, параметров и якоря');
+      throw new Error(t('errors.useHttpsOrALocalServer'));
+    if (url.username || url.password || url.search || url.hash) throw new Error(t('errors.enterABaseUrlWithoutCredentialsQuery'));
     const provider = { id, name: String(input.name || url.hostname).slice(0,80), baseURL: url.toString().replace(/\/+$/, ''), supportsImages:input.supportsImages===true, models: old?.models || [], encryptedKey: input.apiKey ? this.secrets.encrypt(input.apiKey.trim()) : old?.encryptedKey };
-    if (!provider.encryptedKey && !['localhost','127.0.0.1','[::1]'].includes(url.hostname)) throw new Error('Введите API-ключ');
+    if (!provider.encryptedKey && !['localhost','127.0.0.1','[::1]'].includes(url.hostname)) throw new Error(t('errors.enterAnApiKey'));
     this.state.providers = [...this.state.providers.filter(p => p.id !== id), provider];
     this.state.providerId ||= id;
     await this.save(); return this.publicState();
   }
   getProvider(id) {
     const p = this.state.providers.find(p => p.id === id);
-    if (!p) throw new Error('Добавьте провайдера в настройках');
+    if (!p) throw new Error(t('errors.addAProviderInSettings'));
     return { ...p, apiKey: p.encryptedKey ? this.secrets.decrypt(p.encryptedKey) : '' };
   }
-  project(id) { const p = this.state.projects.find(p => p.id === id); if (!p) throw new Error('Проект не найден'); return p; }
+  project(id) { const p = this.state.projects.find(p => p.id === id); if (!p) throw new Error(t('errors.projectNotFound')); return p; }
   async addProject(directory, name) {
     await fs.mkdir(directory, { recursive: true }); directory = await fs.realpath(directory);
     const exists = this.state.projects.find(p => p.path.toLowerCase() === directory.toLowerCase()); if (exists) return exists;
@@ -72,7 +82,7 @@ export class Store {
     this.state.projects.push(p); await this.save(); return p;
   }
   sessionFile(projectId, id) {
-    if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Некорректная сессия');
+    if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error(t('errors.invalidSession'));
     return path.join(this.project(projectId).path, '.archi', 'sessions', `${id}.json`);
   }
   async sessions(projectId) {
@@ -83,8 +93,8 @@ export class Store {
     }));
     return all.sort((a,b)=>b.updatedAt-a.updatedAt);
   }
-  async session(projectId, id) { const s = await readJSON(this.sessionFile(projectId,id)); if (!s) throw new Error('Сессия не найдена'); return s; }
-  async newSession(projectId, title = 'Новая сессия') {
+  async session(projectId, id) { const s = await readJSON(this.sessionFile(projectId,id)); if (!s) throw new Error(t('errors.sessionNotFound')); return s; }
+  async newSession(projectId, title = t('ui.newSession')) {
     const s = { id:uid(), projectId, title, updatedAt:Date.now(), messages:[], history:[] }; await this.saveSession(s); return s;
   }
   async saveSession(s) { s.updatedAt = Date.now(); await atomicJSON(this.sessionFile(s.projectId,s.id), s); }
