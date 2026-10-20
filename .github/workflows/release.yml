@@ -1,0 +1,101 @@
+name: Релиз Windows
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      ELECTRON_BUILDER_COMPRESSION_LEVEL: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Проверить версию и ветку
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -cne "v$version" -or $version -notmatch '^\d+\.\d+\.\d+$') {
+            throw 'Тег должен совпадать со стабильной версией package.json'
+          }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Релиз разрешён только из истории main' }
+          if (!(Test-Path "docs/releases/$version.md")) { throw 'Нет описания релиза' }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: '0.11.26'
+          enable-cache: false
+      - run: npm ci
+      - run: node node_modules/electron/install.js
+      - run: npm test
+      - run: npm run runtime
+      - run: npm run package
+      - run: npm run release:sources
+      - name: Контрольные суммы
+        shell: pwsh
+        run: |
+          if (!(Test-Path release/latest.yml)) { throw 'Нет манифеста автообновления' }
+          $files = Get-ChildItem release -File | Where-Object {
+            $_.Name -match '\.(exe|blockmap|tar\.gz)$' -or $_.Name -eq 'latest.yml'
+          }
+          $lines = $files | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLower())  $($_.Name)"
+          }
+          $lines | Set-Content release/SHA256SUMS.txt -Encoding utf8NoBOM
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-release
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            release/*-x64.exe
+            release/*.blockmap
+            release/latest.yml
+            release/*.tar.gz
+            release/SHA256SUMS.txt
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-release
+          path: release
+      - name: Опубликовать релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-state.txt 2>/dev/null; then
+            test "$(cat release-state.txt)" = true || { echo "Релиз уже опубликован"; exit 1; }
+            gh release upload "$RELEASE_TAG" release/* --clobber
+          else
+            gh release create "$RELEASE_TAG" release/* --verify-tag --draft \
+              --title "Archi Helper $version" --notes-file "docs/releases/$version.md"
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false --latest

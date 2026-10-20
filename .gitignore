@@ -1,0 +1,42 @@
+node_modules/
+dist/
+release/
+.cache/
+runtime/
+artifacts/
+*.log
+.env*
+!.env.example
+
+# Локальные проекты, настройки, ключи и материалы
+.archi/
+settings.json
+Local State
+*.pln
+*.pla
+*.tpl
+*.bpn
+*.apx
+*.pem
+*.key
+*.pfx
+*.p12
+*.sqlite*
+*.db
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+NVIDIA Corporation/
+
+# Локальные журналы генерации и тестовые скриншоты
+assets/brand/mcp-build.json
+assets/brand/engineer.json
+docs/screenshots/*
+!docs/screenshots/app.png
