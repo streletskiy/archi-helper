@@ -39,3 +39,5 @@ select option::checkmark{content:"✓";order:1;margin-inline-start:auto;color:#6
 @media(prefers-reduced-motion:reduce){.mascot{background-position-x:calc(var(--sprite-size) * -8)}}
 
 .update-notice{display:flex;align-items:center;justify-content:center;gap:18px;min-height:32px;flex:none;background:#eef3e6;color:#617b4b;font-size:11px}.update-notice button{text-decoration:underline;font-size:11px;padding:5px}
+
+.language-setting{display:flex;align-items:center;justify-content:center;gap:16px;margin:20px 0}.language-setting select{width:160px}

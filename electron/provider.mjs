@@ -1,3 +1,4 @@
+import { t } from '../locales/index.mjs';
 function argumentText(value) {
   if(typeof value==='string')return value;
   // Some gateways serialize the SDK's argument union instead of its string value.
@@ -5,11 +6,11 @@ function argumentText(value) {
     if(typeof value.OfString==='string' && Object.keys(value).every(k=>['OfString','OfResponseToolSearchCallArguments'].includes(k)))return value.OfString;
     return JSON.stringify(value);
   }
-  throw new Error('Провайдер вернул некорректные аргументы команды');
+  throw new Error(t('errors.theProviderReturnedInvalidToolArguments'));
 }
 function completeCalls(calls) {
   return calls.map(t=>{
-    if(!t.id || !t.function?.name)throw new Error('Провайдер вернул незавершённую команду');
+    if(!t.id || !t.function?.name)throw new Error(t('errors.theProviderReturnedAnIncompleteToolCall'));
     const args=argumentText(t.function.arguments);JSON.parse(args);
     return {...t,function:{...t.function,arguments:args}};
   });
@@ -21,15 +22,15 @@ export async function api(provider, endpoint, init = {}) {
     signal:init.signal || AbortSignal.timeout(60000)
   });
   if (!response.ok) {
-    const text = (await response.text()).slice(0,1500).replaceAll(provider.apiKey || '\0','[скрыто]');
-    throw new Error(`Провайдер: HTTP ${response.status}. ${text}`);
+    const text = (await response.text()).slice(0,1500).replaceAll(provider.apiKey || '\0',t('errors.redacted'));
+    throw new Error(t('errors.providerHttp',{value0:response.status,value1:text}));
   }
   return response;
 }
 export async function models(provider) {
   const data=await (await api(provider,'models')).json();
   const items = data.data || data.models;
-  if (!Array.isArray(items)) throw new Error('Провайдер вернул некорректный список моделей');
+  if (!Array.isArray(items)) throw new Error(t('errors.theProviderReturnedAnInvalidModelList'));
   return items.map(m=>({ id:typeof m==='string'?m:m.id, name: m.name || m.id || m })).filter(m=>m.id).sort((a,b)=>a.name.localeCompare(b.name));
 }
 export async function completion(provider, model, messages, tools, signal, onDelta) {
@@ -39,7 +40,7 @@ export async function completion(provider, model, messages, tools, signal, onDel
   });
   if (!response.headers.get('content-type')?.includes('text/event-stream')) {
     const body=await response.json(); if(body.error) throw new Error(body.error.message || JSON.stringify(body.error));
-    const m=body.choices?.[0]?.message; if(!m) throw new Error('В ответе провайдера отсутствует сообщение');
+    const m=body.choices?.[0]?.message; if(!m) throw new Error(t('errors.theProviderResponseContainsNoMessage'));
     if(m.content)onDelta(m.content); return { role:'assistant', content:m.content || null, ...(m.tool_calls?.length?{tool_calls:completeCalls(m.tool_calls)}:{}) };
   }
   const decoder=new TextDecoder(); let pending='', content='', finishReason, done=false, activeCall, dataLines=[]; const calls=new Map();
@@ -54,7 +55,7 @@ export async function completion(provider, model, messages, tools, signal, onDel
       // Some OpenAI-compatible gateways emit complete calls with id but no index.
       // Never merge distinct calls into the same undefined-index slot.
       const key=t.index!==undefined?`index:${t.index}`:t.id?`id:${t.id}`:activeCall;
-      if(key===undefined)throw new Error('Фрагмент команды не содержит идентификатора или индекса');
+      if(key===undefined)throw new Error(t('errors.aToolCallFragmentHasNoId'));
       activeCall=key;
       const call=calls.get(key) || { id:'',type:'function',function:{name:'',arguments:''} };
       if(t.id)call.id=t.id; if(t.function?.name)call.function.name+=t.function.name;
@@ -71,8 +72,8 @@ export async function completion(provider, model, messages, tools, signal, onDel
     let i; while((i=pending.indexOf('\n'))!==-1){line(pending.slice(0,i));pending=pending.slice(i+1);}
   }
   pending+=decoder.decode(); if(pending)line(pending);line('');
-  if(!done && !finishReason)throw new Error('Соединение с моделью оборвалось. Незавершённые команды не выполнены.');
-  if(finishReason==='length')throw new Error('Ответ модели достиг лимита. Сократите задачу; незавершённые команды не выполнены.');
+  if(!done && !finishReason)throw new Error(t('errors.theModelConnectionWasInterruptedIncompleteTool'));
+  if(finishReason==='length')throw new Error(t('errors.theModelResponseReachedItsLimitShorten'));
   const tool_calls=completeCalls([...calls.values()]);
   return {role:'assistant',content:content||null,...(tool_calls.length?{tool_calls}:{})};
 }
