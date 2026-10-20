@@ -1,3 +1,4 @@
+import { t } from '../locales/index.mjs';
 import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, Menu } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -16,7 +17,7 @@ const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWi
 if(dataOverride)app.setPath('userData',path.resolve(dataOverride));
 // Keep the original profile so renaming the application preserves keys and projects.
 else if(app.isPackaged)app.setPath('userData',path.join(app.getPath('appData'),'Archi'));
-let win,store,mcp,agent,updates,connection={connected:false,message:'Подключение…'},connecting,activeCalls=0;
+let win,store,mcp,agent,updates,connection={connected:false,message:t('ui.connectingAlt')},connecting,activeCalls=0;
 const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(here,'../runtime');
 const emit=data=>{if(win && !win.isDestroyed())win.webContents.send('archi:event',data);};
 const publicState=()=>({...store.publicState(),connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,update:updates?.state});
@@ -24,11 +25,11 @@ async function connect() {
   if(connecting)return connecting;
   connecting=(async()=>{
     try {
-      if(agent.running)throw new Error('Подключение нельзя менять во время задачи');
+      if(agent.running)throw new Error(t('errors.cannotChangeTheConnectionDuringATask'));
       await mcp.connect(store.state.archicadPort);
       const result=await mcp.call('TestConnection',{});
       const data=result.structuredContent || parseResult(result);
-      connection={connected:!result.isError,message:result.isError?String(data):'Archicad подключён',data,port:store.state.archicadPort};
+      connection={connected:!result.isError,message:result.isError?String(data):t('errors.archicadConnected'),data,port:store.state.archicadPort};
       if(!result.isError) {
         const info=await mcp.call('GetProjectInfo',{});
         connection.project=info.structuredContent || parseResult(info);
@@ -44,11 +45,11 @@ function parseResult(result) {
   try{return JSON.parse(text);}catch{return text;}
 }
 async function attachFiles(projectId) {
-  const chosen=await dialog.showOpenDialog(win,{title:'Добавить материалы проекта',properties:['openFile','multiSelections']});
+  const chosen=await dialog.showOpenDialog(win,{title:t('errors.addProjectMaterials'),properties:['openFile','multiSelections']});
   if(chosen.canceled)return [];
   const result=[],root=store.project(projectId).path;
   for(const file of chosen.filePaths) {
-    const name=path.basename(file),relative=`Материалы/${Date.now()}-${name}`,destination=await projectPath(root,relative);
+    const name=path.basename(file),relative=`Materials/${Date.now()}-${name}`,destination=await projectPath(root,relative);
     await fs.mkdir(path.dirname(destination),{recursive:true});await fs.copyFile(file,destination);result.push(relative);
   }
   return result;
@@ -62,32 +63,32 @@ async function scan() {
   }))).filter(Boolean);
 }
 async function installTapir(version) {
-  if(!Number.isInteger(Number(version)) || Number(version)<25 || Number(version)>30)throw new Error('Выберите Archicad 25–30');
+  if(!Number.isInteger(Number(version)) || Number(version)<25 || Number(version)>30)throw new Error(t('errors.chooseArchicad2530'));
   const response=await fetch('https://api.github.com/repos/ENZYME-APD/tapir-archicad-automation/releases/latest',{headers:{'User-Agent':'Archi/0.1'},signal:AbortSignal.timeout(60000)});
   if(!response.ok)throw new Error(`GitHub HTTP ${response.status}`);
   const release=await response.json(),name=`TapirAddOn_AC${version}_Win.apx`,asset=release.assets.find(a=>a.name===name);
-  if(!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest||''))throw new Error('В выпуске нет проверяемого файла для этой версии Archicad');
+  if(!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest||''))throw new Error(t('errors.thisReleaseHasNoVerifiableFileFor'));
   const url=new URL(asset.browser_download_url);
-  if(url.hostname!=='github.com' || !url.pathname.startsWith('/ENZYME-APD/tapir-archicad-automation/releases/download/'))throw new Error('Неожиданный адрес выпуска');
+  if(url.hostname!=='github.com' || !url.pathname.startsWith('/ENZYME-APD/tapir-archicad-automation/releases/download/'))throw new Error(t('errors.unexpectedReleaseUrl'));
   const dataResponse=await fetch(url,{signal:AbortSignal.timeout(120000)});
-  if(!dataResponse.ok)throw new Error(`Загрузка Tapir: HTTP ${dataResponse.status}`);
+  if(!dataResponse.ok)throw new Error(t('errors.tapirDownloadHttp',{value0:dataResponse.status}));
   const bytes=Buffer.from(await dataResponse.arrayBuffer());
   const digest=crypto.createHash('sha256').update(bytes).digest('hex');
-  if(`sha256:${digest}`!==asset.digest)throw new Error('Контрольная сумма Tapir не совпала');
+  if(`sha256:${digest}`!==asset.digest)throw new Error(t('errors.tapirChecksumMismatch'));
   const folder=path.join(app.getPath('userData'),'addons',`AC${version}`,release.tag_name);
   await fs.mkdir(folder,{recursive:true});const file=path.join(folder,name);await fs.writeFile(file,bytes);
   const target=path.join(process.env.ProgramFiles||'C:\\Program Files','Graphisoft',`Archicad ${version}`,'Add-Ons','Archi',name);
   let installed=false;
   try {
     // A loaded add-on must be updated only after Archicad closes.
-    if((await scan()).some(x=>Number(x.version)===Number(version)))throw new Error('Archicad открыт');
+    if((await scan()).some(x=>Number(x.version)===Number(version)))throw new Error(t('errors.archicadIsOpen'));
     await fs.access(path.dirname(path.dirname(target)));
     await fs.mkdir(path.dirname(target),{recursive:true});
     try {await fs.access(target);await fs.copyFile(target,`${target}.${Date.now()}.bak`);}catch{}
     await fs.copyFile(file,target);installed=true;
   }catch{}
   shell.showItemInFolder(installed?target:file);
-  return {version:release.tag_name,file:installed?target:file,installed,sha256:digest,message:installed?'Tapir установлен. Перезапустите Archicad.':'Файл Tapir скачан и проверен. В Archicad: Параметры → Менеджер расширений → Добавить. Выберите этот .apx и перезапустите Archicad.'};
+  return {version:release.tag_name,file:installed?target:file,installed,sha256:digest,message:installed?t('errors.tapirInstalledRestartArchicad'):t('errors.tapirDownloadedAndVerifiedInArchicadOpen')};
 }
 const handlers={
   bootstrap:async()=>publicState(),
@@ -95,9 +96,9 @@ const handlers={
   checkUpdates:async()=>updates.check(),
   deferUpdate:async()=>updates.defer(),
   createProject:async({name,existing=false})=>{
-    const chosen=await dialog.showOpenDialog(win,{title:existing?'Выберите папку проекта':'Где создать папку проекта?',properties:['openDirectory','createDirectory']});
+    const chosen=await dialog.showOpenDialog(win,{title:existing?t('errors.chooseProjectFolder'):t('errors.whereShouldTheProjectFolderBeCreated'),properties:['openDirectory','createDirectory']});
     if(chosen.canceled)return null;
-    if(!existing && (!name?.trim() || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(name)))throw new Error('Укажите допустимое имя папки Windows');
+    if(!existing && (!name?.trim() || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(name)))throw new Error(t('errors.enterAValidWindowsFolderName'));
     const directory=existing?chosen.filePaths[0]:path.join(chosen.filePaths[0],name.trim());
     return store.addProject(directory,existing?undefined:name);
   },
@@ -105,7 +106,7 @@ const handlers={
   session:async({projectId,id})=>{
     const s=await store.session(projectId,id);
     if(!agent.running && s.messages.some(m=>m.status==='running')){
-      for(const m of s.messages)if(m.status==='running'){m.status='error';m.text='Приложение закрылось во время операции. Исход неизвестен: проверьте модель перед повтором.';}
+      for(const m of s.messages)if(m.status==='running'){m.status='error';m.text=t('errors.theAppClosedDuringAnOperationThe');}
       agent.repair(s.history);await store.saveSession(s);
     }
     return {...s,history:undefined};
@@ -119,15 +120,16 @@ const handlers={
     store.state.providers.find(p=>p.id===id).models=list;await store.save();return list;
   },
   settings:async input=>{
-    if(agent.running)throw new Error('Дождитесь завершения задачи');
+    if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
+    if(input.language!==undefined)await store.setLanguage(input.language);
     if(input.providerId!==undefined)store.state.providerId=String(input.providerId);
     if(input.model!==undefined)store.state.model=String(input.model);
     if(input.permissionMode!==undefined) {
-      if(!['review','read','full'].includes(input.permissionMode))throw new Error('Неизвестный режим работы');
+      if(!['review','read','full'].includes(input.permissionMode))throw new Error(t('errors.unknownWorkMode'));
       store.state.permissionMode=input.permissionMode;
     }
     if(input.archicadPort!==undefined) {
-      const p=String(input.archicadPort);if(p && (!/^\d+$/.test(p)||Number(p)<19723||Number(p)>19743))throw new Error('Порт должен быть от 19723 до 19743');store.state.archicadPort=p;
+      const p=String(input.archicadPort);if(p && (!/^\d+$/.test(p)||Number(p)<19723||Number(p)>19743))throw new Error(t('errors.portMustBeBetween19723And19743'));store.state.archicadPort=p;
     }
     await store.save();return publicState();
   },
@@ -135,7 +137,7 @@ const handlers={
   scan:async()=>scan(),
   tools:async()=>mcp.tools.map(t=>({key:t.key,name:t.name,description:t.description,inputSchema:t.inputSchema,readOnly:t.annotations?.readOnlyHint===true})),
   directTool:async({projectId,sessionId,key,args,mode})=>{
-    if(agent.running)throw new Error('Дождитесь завершения задачи');
+    if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
     const s=await store.session(projectId,sessionId),controller=new AbortController();
     agent.running=controller;agent.activeSession=sessionId;emit({type:'busy',busy:true,sessionId});
     const m={id:crypto.randomUUID(),role:'tool',name:key,args,text:'',status:'running',at:Date.now()};
@@ -149,7 +151,7 @@ const handlers={
       await store.saveSession(s);emit({type:'message',message:m,sessionId});return m;
     }finally{agent.running=null;agent.activeSession=null;emit({type:'busy',busy:false,sessionId});}
   },
-  send:async input=>{if(agent.running)throw new Error('Задача уже выполняется');if(!input.text?.trim())throw new Error('Введите задачу');await agent.run(input);return true;},
+  send:async input=>{if(agent.running)throw new Error(t('errors.aTaskIsAlreadyRunning'));if(!input.text?.trim())throw new Error(t('errors.enterATask'));await agent.run(input);return true;},
   stop:async()=>{agent.stop();return true;},
   approve:async({id,allowed})=>{agent.approve(id,allowed===true);return true;},
   attach:async({projectId})=>attachFiles(projectId),
@@ -164,15 +166,15 @@ const handlers={
   },
   exportSession:async({projectId,id})=>{
     const s=await store.session(projectId,id),root=store.project(projectId).path;
-    const relative=`Отчёт-${new Date().toISOString().slice(0,10)}-${id.slice(0,8)}.md`,file=await projectPath(root,relative);
-    await fs.writeFile(file,`# ${s.title}\n\n`+s.messages.map(m=>`## ${m.role==='user'?'Вы':m.role==='assistant'?'Archi Helper':m.name||'Система'}\n\n${m.text}\n${m.artifact?`\nПолный результат: ${m.artifact.path}\n`:''}`).join('\n\n'),'utf8');shell.showItemInFolder(file);return relative;
+    const relative=t('errors.reportMd',{value0:new Date().toISOString().slice(0,10),value1:id.slice(0,8)}),file=await projectPath(root,relative);
+    await fs.writeFile(file,`# ${s.title}\n\n`+s.messages.map(m=>`## ${m.role==='user'?t('ui.you'):m.role==='assistant'?'Archi Helper':m.name||t('errors.system')}\n\n${m.text}\n${m.artifact?t('errors.fullResult',{value0:m.artifact.path}):''}`).join('\n\n'),'utf8');shell.showItemInFolder(file);return relative;
   },
   installTapir:async({version})=>installTapir(version),
   launchArchicad:async()=>{
-    const chosen=await dialog.showOpenDialog(win,{title:'Открыть проект в Archicad',filters:[{name:'Проект Archicad',extensions:['pln','pla','tpl']}],properties:['openFile']});
+    const chosen=await dialog.showOpenDialog(win,{title:t('errors.openProjectInArchicad'),filters:[{name:t('errors.archicadProject'),extensions:['pln','pla','tpl']}],properties:['openFile']});
     if(chosen.canceled)return false;const error=await shell.openPath(chosen.filePaths[0]);if(error)throw new Error(error);return true;
   },
-  external:async({url})=>{const u=new URL(url);if(u.protocol!=='https:')throw new Error('Разрешены только HTTPS-ссылки');await shell.openExternal(u.toString());},
+  external:async({url})=>{const u=new URL(url);if(u.protocol!=='https:')throw new Error(t('errors.onlyHttpsLinksAreAllowed'));await shell.openExternal(u.toString());},
   window:async({action})=>{if(action==='minimize')win.minimize();else if(action==='maximize')win.isMaximized()?win.unmaximize():win.maximize();else if(action==='close')win.close();}
 };
 if(!app.requestSingleInstanceLock())app.quit();
@@ -182,15 +184,15 @@ else {
   app.setAppUserModelId('app.ac-helper.archi');
   Menu.setApplicationMenu(null);
   store=new Store(app.getPath('userData'),{
-    encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error('Шифрование Windows недоступно');return safeStorage.encryptString(value).toString('base64');},
+    encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error(t('errors.windowsEncryptionIsUnavailable'));return safeStorage.encryptString(value).toString('base64');},
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
   });
-  await store.init();mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);
+  await store.init(app.getLocale());connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);
   updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>updaterModule.autoUpdater.quitAndInstall(true,true)});
   ipcMain.handle('archi:call',async(event,method,input={})=>{
-    if(event.sender!==win?.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error('Недоверенный запрос');
-    if(updates.state.status==='installing'&&!['bootstrap','window'].includes(method))throw new Error('Устанавливается обновление');
-    if(!Object.hasOwn(handlers,method))throw new Error('Неизвестная операция');
+    if(event.sender!==win?.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error(t('errors.untrustedRequest'));
+    if(updates.state.status==='installing'&&!['bootstrap','window'].includes(method))throw new Error(t('errors.anUpdateIsBeingInstalled'));
+    if(!Object.hasOwn(handlers,method))throw new Error(t('errors.unknownOperation'));
     const tracked=!['bootstrap','updateIdle','checkUpdates','deferUpdate','window'].includes(method);
     if(tracked){activeCalls++;updates.workChanged();}
     try{return {ok:true,value:await handlers[method](input)};}
@@ -204,9 +206,9 @@ else {
   win.show();connect();
   const updateTimer=setTimeout(()=>updates.check(),15000);updateTimer.unref();
   win.on('close',event=>{
-    if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:'Остановить задачу и закрыть Archi Helper?',detail:'Уже выполненные изменения в Archicad не отменяются.',buttons:['Продолжить работу','Остановить и закрыть'],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop();setTimeout(()=>win.destroy(),500);}});}
+    if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop();setTimeout(()=>win.destroy(),500);}});}
   });
   app.on('window-all-closed',()=>app.quit());
   let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;clearTimeout(updateTimer);updates.dispose();agent.stop();mcp.close().finally(()=>app.quit());}});
-  }).catch(error=>{dialog.showErrorBox('Archi Helper — ошибка запуска',error.message);app.quit();});
+  }).catch(error=>{dialog.showErrorBox(t('errors.archiHelperStartupError'),error.message);app.quit();});
 }

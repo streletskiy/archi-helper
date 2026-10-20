@@ -1,4 +1,4 @@
-name: Проверки
+name: Checks
 on:
   push:
     branches: [main, dev]
@@ -24,10 +24,10 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - name: Проверить модули
+      - name: Check modules
         shell: pwsh
         run: |
           Get-ChildItem electron/*.mjs, scripts/*.mjs | ForEach-Object {
             node --check $_.FullName
-            if ($LASTEXITCODE -ne 0) { throw "Ошибка синтаксиса: $($_.Name)" }
+            if ($LASTEXITCODE -ne 0) { throw "Syntax error: $($_.Name)" }
           }

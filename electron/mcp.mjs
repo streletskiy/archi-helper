@@ -1,3 +1,4 @@
+import { t } from '../locales/index.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -21,7 +22,7 @@ export class MCP {
     let logs='';
     if(transport.stderr)transport.stderr.on('data',chunk=>{logs=(logs+chunk.toString()).slice(-4000);});
     try{await client.connect(transport,{timeout:60000});}
-    catch(e){await transport.close();throw new Error(`Не удалось запустить MCP: ${e.message}${logs?`\n${logs}`:''}`);}
+    catch(e){await transport.close();throw new Error(t('errors.couldNotStartMcp',{value0:e.message,value1:logs?`\n${logs}`:''}));}
     this.clients.set(id,client);
     let cursor;
     do {
@@ -30,12 +31,12 @@ export class MCP {
     } while(cursor);
   }
   async addRemote(id,url) {
-    const parsed=new URL(url); if(parsed.protocol!=='https:' && parsed.hostname!=='127.0.0.1' && parsed.hostname!=='localhost')throw new Error('MCP URL должен использовать HTTPS');
+    const parsed=new URL(url); if(parsed.protocol!=='https:' && parsed.hostname!=='127.0.0.1' && parsed.hostname!=='localhost')throw new Error(t('errors.theMcpUrlMustUseHttps'));
     await this.add(id,new StreamableHTTPClientTransport(parsed));
   }
   async call(key,args,signal) {
     const tool=this.tools.find(t=>t.key===key || t.name===key);
-    if(!tool)throw new Error(`Инструмент не найден: ${key}`);
+    if(!tool)throw new Error(t('errors.toolNotFound',{value0:key}));
     return this.clients.get(tool.server).callTool({name:tool.name,arguments:args},undefined,{timeout:330000,signal});
   }
   search(query, limit=12) {
