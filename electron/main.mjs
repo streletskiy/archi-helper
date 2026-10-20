@@ -16,7 +16,7 @@ const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWi
 if(dataOverride)app.setPath('userData',path.resolve(dataOverride));
 // Keep the original profile so renaming the application preserves keys and projects.
 else if(app.isPackaged)app.setPath('userData',path.join(app.getPath('appData'),'Archi'));
-let win,store,mcp,agent,updates,connection={connected:false,message:'Подключение…'},connecting;
+let win,store,mcp,agent,updates,connection={connected:false,message:'Подключение…'},connecting,activeCalls=0;
 const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(here,'../runtime');
 const emit=data=>{if(win && !win.isDestroyed())win.webContents.send('archi:event',data);};
 const publicState=()=>({...store.publicState(),connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,update:updates?.state});
@@ -186,12 +186,16 @@ else {
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
   });
   await store.init();mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);
-  updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running,emit,install:()=>updaterModule.autoUpdater.quitAndInstall(true,true)});
+  updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>updaterModule.autoUpdater.quitAndInstall(true,true)});
   ipcMain.handle('archi:call',async(event,method,input={})=>{
     if(event.sender!==win?.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error('Недоверенный запрос');
     if(updates.state.status==='installing'&&!['bootstrap','window'].includes(method))throw new Error('Устанавливается обновление');
     if(!Object.hasOwn(handlers,method))throw new Error('Неизвестная операция');
-    try{return {ok:true,value:await handlers[method](input)};}catch(e){return {ok:false,error:e.message};}
+    const tracked=!['bootstrap','updateIdle','checkUpdates','deferUpdate','window'].includes(method);
+    if(tracked){activeCalls++;updates.workChanged();}
+    try{return {ok:true,value:await handlers[method](input)};}
+    catch(e){return {ok:false,error:e.message};}
+    finally{if(tracked){activeCalls--;updates.workChanged();}}
   });
   win=new BrowserWindow({width:1440,height:950,minWidth:1000,minHeight:680,show:false,backgroundColor:'#f7f7f2',frame:false,title:'Archi Helper',icon:path.resolve(here,'../dist/icon.png'),webPreferences:{preload:path.join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));

@@ -31,6 +31,13 @@ test('defer lasts until the next launch',()=>{
   t.updates.defer();t.updates.setIdle(false);t.updates.setIdle(true);t.tick();
   assert.equal(t.installed,0);assert.equal(t.updates.state.status,'ready');
 });
+test('a native file dialog or file operation delays restart even with an empty editor',()=>{
+  const t=setup();t.updates.setIdle(true);t.setBusy(true);
+  t.updater.emit('update-downloaded',{version:'0.2.0'});t.tick();
+  assert.equal(t.installed,0);
+  t.setBusy(false);t.updates.workChanged();t.tick();
+  assert.equal(t.installed,1);
+});
 test('portable/development builds never check or install',async()=>{
   const t=setup(false);await t.updates.check();t.updates.setIdle(true);t.tick();
   assert.equal(t.checks,0);assert.equal(t.installed,0);assert.equal(t.updates.state.status,'disabled');
