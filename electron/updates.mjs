@@ -40,6 +40,7 @@ export function createUpdates({updater,enabled,version,getBusy,emit,install,
   return {
     get state(){return state;},
     setIdle(value){idle=value===true;reconcile();return state;},
+    workChanged(){reconcile();},
     defer(){deferred=true;publish({deferred:true});reconcile();return state;},
     check(){
       if(!enabled||ready)return Promise.resolve(state);
