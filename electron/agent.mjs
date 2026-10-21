@@ -10,18 +10,21 @@ import { enrichModels } from './model-catalog.mjs';
 import { resultData, toolSummary, recoveryHint } from './progress.mjs';
 import { saveApiCatalog, searchApiCatalog, catalogSummary, CATALOG_PATH } from './api-catalog.mjs';
 import { MessageQueue } from './message-queue.mjs';
+import { getKnowledge, zoneAreaLabelApproval, ZONE_AREA_LABEL_RECIPE } from './knowledge.mjs';
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const str=description=>({type:'string',description});
+const knowledgeId={type:'string',enum:[ZONE_AREA_LABEL_RECIPE],description:'Required when applying this knowledge recipe, including scripts that load parameters from files. Its explicit approval requirement also applies in Full access.'};
 export const agentTools=[
+  fn('get_knowledge','Read the bundled reference wiki. Omit id for a compact index, then request the relevant article. Procedures do not grant permission or replace the live API catalog.',{id:str('Article ID from the index, e.g. zone-stamp-area-label')}),
   fn('get_api_catalog','Inspect the authoritative local command catalog. Search MCP tools, direct Tapir JSON commands, version-matched Graphisoft SDK methods and SDK type constructors. Exact names return complete schemas/signatures. Never invent API names or arguments.',{source:{type:'string',enum:['all','mcp','tapir','graphisoft','types']},query:str('English keywords or an exact documented name'),limit:{type:'integer',minimum:1,maximum:30}}),
   fn('find_tools','Find Archicad/Tapir commands by English keywords. Keyword searches return a compact list; search an exact returned name to get its complete argument schema before calling it.',{query:str('English keywords, or an exact returned command name such as archicad:GetElementsByType')},['query']),
-  fn('call_archicad','Run a discovered MCP command with exact schema. Results are saved in full locally. Permissions follow the current work mode. For changes, include purpose in the user\'s language.',{name:str('Exact tool key from find_tools'),arguments:{type:'object',additionalProperties:true},purpose:str('Explain exactly what will change, in the user\'s language')},['name','arguments']),
+  fn('call_archicad','Run a discovered MCP command with exact schema. Results are saved in full locally. Permissions follow the current work mode and declared knowledge recipe. For changes, include purpose in the user\'s language.',{name:str('Exact tool key from find_tools'),arguments:{type:'object',additionalProperties:true},purpose:str('Explain exactly what will change, in the user\'s language'),knowledge_id:knowledgeId},['name','arguments']),
   fn('list_files','List files inside the current project folder.',{path:str('Relative directory, default .')}),
   fn('read_file','Read a UTF-8 file in chunks. For JSON results use json_pointer to select a subtree; offset and limit apply to the selected text.',{path:str('Project-relative file'),offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:24000},json_pointer:str('Optional RFC6901 pointer, e.g. /content/0/text')},['path']),
   fn('view_image','Inspect a PNG, JPEG or WebP from the project. The image is sent to your vision model. Convert PDF pages with Python first. Maximum 12 MiB per image.',{path:str('Project-relative image path')},['path']),
   fn('write_file','Write a text report or script inside the project folder. Overwrite permissions follow the current work mode.',{path:str('Project-relative output filename'),content:str('Complete UTF-8 text')},['path','content']),
-  fn('run_python','Run Python for calculations, PDF/image processing or Archicad operations. Execution permissions follow the current work mode. This is a real local process, not a sandbox. Bundled: archicad, pypdf, fitz/PyMuPDF, Pillow. Working directory is project folder. Long outputs saved to file.',{code:str('Complete Python script'),purpose:str('Short explanation in the user\'s language')},['code','purpose'])
+  fn('run_python','Run Python for calculations, PDF/image processing or Archicad operations. Execution permissions follow the current work mode and declared knowledge recipe. This is a real local process, not a sandbox. Bundled: archicad, pypdf, fitz/PyMuPDF, Pillow. Working directory is project folder. Long outputs saved to file.',{code:str('Complete Python script'),purpose:str('Short explanation in the user\'s language'),knowledge_id:knowledgeId},['code','purpose'])
 ];
 
 export class Agent extends MessageQueue {
@@ -46,16 +49,19 @@ export class Agent extends MessageQueue {
   async execute(session,name,args,mode,signal) {
     signal.throwIfAborted();
     const root=this.store.project(session.projectId).path;
+    if(name==='get_knowledge')return getKnowledge(args.id);
     if(name==='get_api_catalog')return searchApiCatalog(await saveApiCatalog(this.mcp,root),args);
     if(name==='find_tools') return this.mcp.search(args.query);
     if(name==='call_archicad') {
       const tool=this.mcp.tools.find(t=>t.key===args.name || t.name===args.name);
       if(!tool)throw new Error(t('agent.findTheToolWithFindToolsFirst'));
-      const readonly=tool.annotations?.readOnlyHint===true;
+      const areaLabel=zoneAreaLabelApproval(name,{...args,name:tool.name});
+      const readonly=tool.annotations?.readOnlyHint===true && !areaLabel;
       if(!readonly) {
         if(mode==='read')throw new Error(t('agent.readOnlyModeIsEnabledChangesAre'));
         const titles={CreatePolylines:t('agent.createPolylines'),CreateTexts:t('agent.addText'),DeleteElements:t('agent.deleteSelectedElements'),SaveProject:t('agent.saveProject'),SetPropertiesOfElements:t('agent.changeElementProperties'),SetDetailsOfElements:t('agent.changeElementParameters'),SetTextOfTextElements:t('agent.changeText')};
-        if(mode!=='full')await this.confirm(session,'archicad',args.purpose||titles[tool.name]||tool.name,args.arguments,signal);
+        if(areaLabel)await this.confirm(session,'archicad',t('agent.zoneAreaLabelApproval')+(args.purpose?`\n${args.purpose}`:''),args.arguments,signal);
+        else if(mode!=='full')await this.confirm(session,'archicad',args.purpose||titles[tool.name]||tool.name,args.arguments,signal);
       }
       signal.throwIfAborted();
       const result=await this.mcp.call(tool.key,args.arguments,signal);
@@ -101,7 +107,8 @@ export class Agent extends MessageQueue {
     }
     if(name==='run_python') {
       if(mode==='read')throw new Error(t('agent.pythonIsUnavailableInReadOnlyMode'));
-      if(mode!=='full')await this.confirm(session,'python',args.purpose,{code:args.code},signal);
+      if(zoneAreaLabelApproval(name,args))await this.confirm(session,'python',`${t('agent.zoneAreaLabelApproval')}\n${args.purpose}`,{code:args.code},signal);
+      else if(mode!=='full')await this.confirm(session,'python',args.purpose,{code:args.code},signal);
       const script=await projectPath(root,`.archi/scripts/${uid()}.py`);
       await fs.mkdir(path.dirname(script),{recursive:true});await fs.writeFile(script,args.code,'utf8');
       const log=script.replace(/\.py$/,'.log');
