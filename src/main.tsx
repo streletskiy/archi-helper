@@ -1,18 +1,18 @@
 import { t, setLanguage, useLanguage } from './i18n';
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Plus, Folder, FolderOpen, ArrowUp, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, LockKeyhole } from 'lucide-react';
+import { Plus, Folder, FolderOpen, ArrowUp, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, LockKeyhole, Copy, CircleAlert } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import './style.css';
 import { suggestions } from './suggestions';
 import { Mascot } from './Mascot';
-import { reasoningProfile, selectedEffort } from '../electron/reasoning.mjs';
+import { needsModelRefresh, reasoningProfile, selectedEffort } from '../electron/reasoning.mjs';
 
 declare global { interface Window { archi: {call:(method:string,input?:unknown)=>Promise<any>;onEvent:(cb:(e:any)=>void)=>()=>void} } }
 type Project={id:string;name:string;path:string};
 type Model={id:string;name:string;reasoningEfforts?:string[];contextWindow?:number};
-type Provider={id:string;name:string;baseURL:string;hasKey:boolean;catalogVersion?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
+type Provider={id:string;name:string;baseURL:string;hasKey:boolean;catalogVersion?:number;catalogUpdatedAt?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
 type Message={id:string;role:string;text:string;name?:string;status?:string;args?:unknown;artifact?:{path:string;bytes:number};model?:string};
 type Session={id:string;title:string;messages:Message[];updatedAt:number};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
@@ -38,13 +38,23 @@ function App(){
   const [state,setState]=useState<State|null>(null),[project,setProject]=useState<Project|null>(null),[sessions,setSessions]=useState<Session[]>([]),[session,setSession]=useState<Session|null>(null);
   const [draft,setDraft]=useState(''),[mode,setMode]=useState('review'),[busy,setBusy]=useState(false),[stream,setStream]=useState<Record<string,string>>({}),[approval,setApproval]=useState<any>(null);
   const [update,setUpdate]=useState<any>(null),[choosing,setChoosing]=useState(false);
-  const [modal,setModal]=useState(''),[notice,setNotice]=useState(''),[working,setWorking]=useState(''),[attachments,setAttachments]=useState<string[]>([]);
+  const [modal,setModal]=useState(''),[notice,setNotice]=useState<{text:string;tone:'success'|'error'}|null>(null),[working,setWorking]=useState(''),[attachments,setAttachments]=useState<string[]>([]);
   const [projectName,setProjectName]=useState(''),[search,setSearch]=useState(''),[toolSearch,setToolSearch]=useState(''),[tools,setTools]=useState<Tool[]>([]),[selectedTool,setSelectedTool]=useState<Tool|null>(null),[toolArgs,setToolArgs]=useState('{}');
   const [providerForm,setProviderForm]=useState(emptyProvider),[manualModel,setManualModel]=useState(''),[port,setPort]=useState(''),[instances,setInstances]=useState<any[]>([]),[acVersion,setAcVersion]=useState('27');
   const providerEditor=useRef<HTMLDivElement>(null);
   const sessionRef=useRef<string|undefined>(undefined),projectRef=useRef<Project|null>(null),bottom=useRef<HTMLDivElement>(null),textInput=useRef<HTMLTextAreaElement>(null);
   sessionRef.current=session?.id;projectRef.current=project;
-  const guard=async(fn:()=>Promise<any>,label='')=>{try{if(label)setWorking(label);return await fn();}catch(e){setNotice((e as Error).message);}finally{if(label)setWorking('');}};
+  const notify=(text:string,tone:'success'|'error'='success')=>setNotice({text,tone});
+  const guard=async(fn:()=>Promise<any>,label='')=>{try{if(label)setWorking(label);return await fn();}catch(e){notify((e as Error).message,'error');}finally{if(label)setWorking('');}};
+  const copyMessage=async(text:string)=>{
+    try{await navigator.clipboard.writeText(text);notify(t('ui.messageCopied'));}
+    catch{notify(t('ui.couldNotCopyMessage'),'error');}
+  };
+  useEffect(()=>{
+    if(notice?.tone!=='success')return;
+    const timer=setTimeout(()=>setNotice(null),4000);
+    return()=>clearTimeout(timer);
+  },[notice]);
   const refresh=async()=>{const s=await api('bootstrap');setLanguage(s.language);setState(s);setUpdate(s.update);setPort(s.archicadPort);setMode(s.permissionMode||'review');return s;};
   const refreshSessions=async(p=projectRef.current)=>{if(p)setSessions(await api('sessions',{projectId:p.id}));};
   const openProject=async(p:Project)=>{
@@ -57,7 +67,7 @@ function App(){
     guard(async()=>{
       const s=await refresh();if(s.projects.length)await openProject(s.projects[0]);
       const provider=s.providers.find((p:Provider)=>p.id===s.providerId);
-      if(provider && (!provider.models.length||provider.catalogVersion!==1))await syncModels(provider.id);
+      if(provider && needsModelRefresh(provider))await syncModels(provider.id);
     });
     return window.archi.onEvent(e=>{
       if(e.type==='update')setUpdate(e.update);
@@ -77,7 +87,7 @@ function App(){
   const syncModels=async(id:string)=>{try{await api('models',{id});}finally{await refresh();}};
   const chooseSettings=(input:Record<string,string>)=>guard(async()=>{
     setChoosing(true);
-    try{const s=await api('settings',input);setState(s);if(input.providerId){const p=s.providers.find((p:Provider)=>p.id===input.providerId);if(p&&(!p.models.length||p.catalogVersion!==1))await syncModels(p.id);}}
+    try{const s=await api('settings',input);setState(s);if(input.providerId){const p=s.providers.find((p:Provider)=>p.id===input.providerId);if(p&&needsModelRefresh(p))await syncModels(p.id);}}
     finally{setChoosing(false);}
   });
   const newSession=()=>guard(async()=>{if(!project)return;const s=await api('newSession',{projectId:project.id});setSession(s);setDraft('');setAttachments([]);setStream({});await refreshSessions();textInput.current?.focus();});
@@ -155,8 +165,8 @@ function App(){
               {suggestions().map(s=><button key={s.id} data-preset={s.id} title={s.description} onClick={()=>{setDraft(s.prompt);textInput.current?.focus();}}><Layers size={16}/><span>{s.title}</span></button>)}
             </div>}
           </div>:<div className="messages">
-            {groupMessages(session?.messages||[]).map(group=>{const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<article key={m.id} className={`message ${m.role}`}><div className="message-author">{m.role==='assistant'?<><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong></>:m.role==='user'?<><span className="user-avatar">{t('ui.y')}</span><strong>{t('ui.you')}</strong></>:<><Circle size={13}/><strong>{t('ui.pleaseNote')}</strong></>}</div><div className="prose"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{img:({src,alt})=><ProjectImage projectId={project?.id} src={typeof src==='string'?src:undefined} alt={alt}/>,a:({href,children})=><button className="inline-link" onClick={()=>href?.startsWith('https:')?guard(()=>api('external',{url:href})):reveal(href)}>{children}</button>}}>{m.text}</ReactMarkdown></div></article>;})}
-            {Object.entries(stream).filter(([,text])=>text.length>0).map(([id,text])=><article key={id} className="message assistant"><div className="message-author"><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong><span className="thinking-dot"/></div><div className="prose"><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></div></article>)}
+            {groupMessages(session?.messages||[]).map(group=>{const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<article key={m.id} className={`message ${m.role}`}><div className="message-author">{m.role==='assistant'?<><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong></>:m.role==='user'?<><span className="user-avatar">{t('ui.y')}</span><strong>{t('ui.you')}</strong></>:<><Circle size={13}/><strong>{t('ui.pleaseNote')}</strong></>}{(m.role==='user'||m.role==='assistant')&&<span className="message-actions"><IconButton title={t('ui.copyMessage')} disabled={!m.text} onClick={()=>copyMessage(m.text)}><Copy size={15}/></IconButton></span>}</div><div className="prose"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{img:({src,alt})=><ProjectImage projectId={project?.id} src={typeof src==='string'?src:undefined} alt={alt}/>,a:({href,children})=><button className="inline-link" onClick={()=>href?.startsWith('https:')?guard(()=>api('external',{url:href})):reveal(href)}>{children}</button>}}>{m.text}</ReactMarkdown></div></article>;})}
+            {Object.entries(stream).filter(([,text])=>text.length>0).map(([id,text])=><article key={id} className="message assistant"><div className="message-author"><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong><span className="thinking-dot"/><span className="message-actions"><IconButton title={t('ui.copyMessage')} onClick={()=>copyMessage(text)}><Copy size={15}/></IconButton></span></div><div className="prose"><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></div></article>)}
             {busy&&!Object.keys(stream).length&&<div className="working-indicator"><Mascot size={32} working/>{t('ui.working')}</div>}
             {approval&&<div className="approval-card"><div className="approval-title"><ShieldCheck size={21}/><div><strong>{approval.kind==='python'?t('ui.runProcessing'):t('ui.confirmAction')}</strong><p>{approval.description}</p></div></div><details className="approval-details" open={approval.kind==='python'}><summary>{approval.kind==='python'?t('ui.codeToRun'):t('ui.viewExactParameters')}</summary><pre>{pretty(approval.args)}</pre></details>{approval.kind==='python'&&<p className="muted">{t('ui.theScriptRunsLocallyWithYourPermissions')}</p>}<div className="approval-actions"><button className="secondary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:false}))}>{t('ui.cancel')}</button><button className="primary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:true}))}><Check size={15}/>{t('ui.run')}</button></div></div>}
           </div>}
@@ -172,7 +182,7 @@ function App(){
         </div>
       </main>
     </div>
-    {notice&&<div className="toast" role="alert"><span>{notice}</span><IconButton title={t('ui.dismissMessage')} onClick={()=>setNotice('')}><X size={15}/></IconButton></div>}
+    {notice&&<div className={`toast ${notice.tone}`} role={notice.tone==='error'?'alert':'status'} aria-atomic="true">{notice.tone==='error'?<CircleAlert size={17}/>:<Check size={17}/>}<span>{notice.text}</span><IconButton title={t('ui.dismissMessage')} onClick={()=>setNotice(null)}><X size={15}/></IconButton></div>}
     {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setModal('');}}><section className={`modal ${modal==='tools'?'wide':isSettings?'settings-modal':''}`} role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div className="modal-header"><div><h2 id="dialog-title">{modal==='projects'?t('ui.yourProjects'):modal==='tools'?t('ui.archicadTools'):modal==='rename'?t('ui.sessionTitle'):t('ui.settings')}</h2></div><IconButton title={t('ui.closeDialog')} onClick={()=>setModal('')}><X size={19}/></IconButton></div>
       {modal==='projects'&&<div className="modal-body"><div className="project-list">{state?.projects.map(p=><button key={p.id} onClick={()=>guard(async()=>{await openProject(p);setModal('');})}><Folder size={21}/><span><strong>{p.name}</strong><small>{p.path}</small></span><ChevronRight size={16}/></button>)}</div><label>{t('ui.newProject')}<input value={projectName} onChange={e=>setProjectName(e.target.value)} placeholder={t('ui.projectName')}/></label><div className="form-actions"><button className="secondary" onClick={()=>guard(async()=>{const p=await api('createProject',{existing:true});if(p){await refresh();await openProject(p);setModal('');}},t('ui.choosingFolder'))}><FolderOpen size={16}/>{t('ui.openFolder')}</button><button className="primary" disabled={!!working} onClick={()=>guard(async()=>{const p=await api('createProject',{name:projectName.trim()||t('ui.newProject')});if(p){await refresh();await openProject(p);setModal('');}},t('ui.creatingProject'))}><Plus size={16}/>{t('ui.createProject')}</button></div></div>}
       {isSettings&&<div className="settings-layout">
@@ -199,7 +209,7 @@ function App(){
                   <details className="settings-advanced"><summary>{t('ui.reasoningCompatibility')}<ChevronRight size={16}/></summary><div className="settings-advanced-content"><p>{t('ui.reasoningCompatibilityHint')}</p><label className="settings-field"><span>{t('ui.reasoningFormat')}</span><select value={providerForm.reasoningFormat} onChange={e=>setProviderForm(v=>({...v,reasoningFormat:e.target.value}))}><option value="auto">{t('ui.automatic')}</option><option value="effort">OpenAI / reasoning_effort</option><option value="openrouter">OpenRouter / reasoning.effort</option><option value="deepseek">DeepSeek / thinking</option><option value="none">{t('ui.reasoningUnsupported')}</option></select></label><label className="settings-field"><span>{t('ui.reasoningEfforts')}</span><input value={providerForm.reasoningEfforts} onChange={e=>setProviderForm(v=>({...v,reasoningEfforts:e.target.value}))} placeholder="low, medium, high, xhigh"/></label></div></details>
                   <details className="settings-advanced"><summary>{t('ui.modelById')}<ChevronRight size={16}/></summary><div className="settings-advanced-content"><div className="settings-control-row"><label className="settings-field"><span>{t('ui.modelId')}</span><input placeholder="model-id" value={manualModel} onChange={e=>setManualModel(e.target.value)}/></label><button className="secondary" disabled={!manualModel.trim()||!providerForm.id||busy||choosing||!!working} onClick={()=>guard(async()=>{await api('settings',{providerId:providerForm.id,model:manualModel.trim()});await refresh();setModal('');})}>{t('ui.select')}</button></div></div></details>
                 </div>
-                <div className="settings-actions"><button className="primary" disabled={!!working||busy||choosing} onClick={()=>guard(async()=>{const next=await api('saveProvider',{...providerForm,reasoningEfforts:providerForm.reasoningEfforts.split(',').map(v=>v.trim()).filter(Boolean)});setState(next);const saved=next.providers.find((p:Provider)=>p.id===providerForm.id)||next.providers.at(-1);setProviderForm(providerToForm(saved));await syncModels(saved.id);setNotice(t('ui.providerConnected'));},t('ui.checkingApi'))}>{working||t('ui.saveAndCheck')}</button></div>
+                <div className="settings-actions"><button className="primary" disabled={!!working||busy||choosing} onClick={()=>guard(async()=>{const next=await api('saveProvider',{...providerForm,reasoningEfforts:providerForm.reasoningEfforts.split(',').map(v=>v.trim()).filter(Boolean)});setState(next);const saved=next.providers.find((p:Provider)=>p.id===providerForm.id)||next.providers.at(-1);setProviderForm(providerToForm(saved));await syncModels(saved.id);notify(t('ui.providerConnected'));},t('ui.checkingApi'))}>{working||t('ui.saveAndCheck')}</button></div>
               </div>
             </div>
           </section>}
@@ -212,10 +222,10 @@ function App(){
             <div className="settings-card">
               <div className="settings-card-title"><h4>{t('ui.tapirExtension')}</h4><span className={`settings-badge ${tapirVersion?'':'neutral'}`}>{tapirVersion?t('ui.installed'):connected?t('ui.notInstalled'):t('ui.statusUnknown')}</span></div>
               <p className="settings-description">{t('ui.tapirDescription')}</p>
-              <div className="settings-control-row"><label className="settings-field"><span>{t('ui.archicadVersionForTapir')}</span><select value={acVersion} onChange={e=>setAcVersion(e.target.value)}>{[25,26,27,28,29,30].map(v=><option key={v} value={v}>Archicad {v}</option>)}</select></label><button className="secondary" disabled={!!working} onClick={()=>guard(async()=>{const result=await api('installTapir',{version:Number(acVersion)});setNotice(result.message);},t('ui.downloadingTapir'))}><Download size={16}/>{working===t('ui.downloadingTapir')?t('ui.downloading'):t('ui.installTapir')}</button></div>
+              <div className="settings-control-row"><label className="settings-field"><span>{t('ui.archicadVersionForTapir')}</span><select value={acVersion} onChange={e=>setAcVersion(e.target.value)}>{[25,26,27,28,29,30].map(v=><option key={v} value={v}>Archicad {v}</option>)}</select></label><button className="secondary" disabled={!!working} onClick={()=>guard(async()=>{const result=await api('installTapir',{version:Number(acVersion)});notify(result.message);},t('ui.downloadingTapir'))}><Download size={16}/>{working===t('ui.downloadingTapir')?t('ui.downloading'):t('ui.installTapir')}</button></div>
             </div>
             <div className="settings-card settings-card-list">
-              <details className="settings-advanced"><summary>{t('ui.chooseArchicadInstance')}<span>{state?.archicadPort||t('ui.automatic')}</span><ChevronRight size={16}/></summary><div className="settings-advanced-content"><div className="settings-control-row"><label className="settings-field"><span>{t('ui.port')}</span><select value={port} onChange={e=>setPort(e.target.value)}><option value="">{t('ui.automatic')}</option>{Array.from({length:21},(_,i)=>String(19723+i)).map(p=><option key={p} value={p}>{p}{instances.some(x=>String(x.port)===p)?t('ui.open'):''}</option>)}</select></label><button className="secondary" disabled={!!working||busy} onClick={()=>guard(async()=>{const found=await api('scan');setInstances(found);setNotice(found.length?t('ui.found',{value0:found.length}):t('ui.noRunningArchicadFound'));},t('ui.findingArchicad'))}>{t('ui.findRunningInstances')}</button><button className="primary" disabled={busy||!!working} onClick={()=>guard(async()=>{await api('settings',{archicadPort:port});await connect();})}>{t('ui.apply')}</button></div></div></details>
+              <details className="settings-advanced"><summary>{t('ui.chooseArchicadInstance')}<span>{state?.archicadPort||t('ui.automatic')}</span><ChevronRight size={16}/></summary><div className="settings-advanced-content"><div className="settings-control-row"><label className="settings-field"><span>{t('ui.port')}</span><select value={port} onChange={e=>setPort(e.target.value)}><option value="">{t('ui.automatic')}</option>{Array.from({length:21},(_,i)=>String(19723+i)).map(p=><option key={p} value={p}>{p}{instances.some(x=>String(x.port)===p)?t('ui.open'):''}</option>)}</select></label><button className="secondary" disabled={!!working||busy} onClick={()=>guard(async()=>{const found=await api('scan');setInstances(found);notify(found.length?t('ui.found',{value0:found.length}):t('ui.noRunningArchicadFound'));},t('ui.findingArchicad'))}>{t('ui.findRunningInstances')}</button><button className="primary" disabled={busy||!!working} onClick={()=>guard(async()=>{await api('settings',{archicadPort:port});await connect();})}>{t('ui.apply')}</button></div></div></details>
               <button className="settings-tools-link" onClick={openTools}><Wrench size={18}/><span>{t('ui.archicadTools')}</span><span className="settings-badge neutral">{state?.toolCount||0}</span><ChevronRight size={17}/></button>
             </div>
           </section>}

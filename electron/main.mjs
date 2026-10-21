@@ -121,7 +121,7 @@ const handlers={
     const p=store.getProvider(id),list=await models(p);
     const provider=store.state.providers.find(p=>p.id===id);if(!provider)return [];
     provider.models=list;
-    provider.catalogVersion=1;
+    provider.catalogVersion=2;provider.catalogUpdatedAt=Date.now();
     if(!provider.model)provider.model=list[0]?.id||'';
     if(store.state.providerId===id&&!store.state.model)store.state.model=provider.model;
     await store.save();return list;
