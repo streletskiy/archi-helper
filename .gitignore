@@ -40,3 +40,4 @@ assets/brand/mcp-build.json
 assets/brand/engineer.json
 docs/screenshots/*
 !docs/screenshots/app.png
+!docs/screenshots/app.webp
