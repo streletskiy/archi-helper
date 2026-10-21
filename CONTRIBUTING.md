@@ -42,7 +42,7 @@ NSIS использует ZIP (`useZip: true`, `differentialPackage: false`): ф
 ## Ветки и релизы
 
 - Создавайте рабочие ветки `feature/…` от `dev`, направляйте изменения в `dev`.
-- Для выпуска обновите `version` в `package.json` и lock-файле, добавьте русские заметки в `docs/releases/<версия>.md`.
+- Для выпуска обновите `version` в `package.json` и lock-файле, добавьте русские заметки в `docs/releases/<версия>.md` и запись в `changelog.md`.
 - Перенесите проверенные изменения из `dev` в `main`. Дождитесь успешных проверок.
 - Создайте тег на нужном коммите `main`: `git tag v0.2.0`, затем `git push origin v0.2.0`.
 
