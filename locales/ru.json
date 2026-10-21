@@ -1,4 +1,5 @@
 {
+  "ui.scrollToLatest": "К последнему сообщению",
   "errors.couldNotShowWindow": "Не удалось показать окно приложения. Запустите Archi Helper ещё раз, чтобы восстановить его.",
   "ui.knowledge": "База приёмов",
   "agent.unknownKnowledge": "Статья базы приёмов не найдена: {id}",
