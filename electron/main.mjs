@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { Store, projectPath } from './store.mjs';
+import { Store, projectPath, INBOX_ID } from './store.mjs';
 import { models } from './provider.mjs';
 import { EFFORTS } from './reasoning.mjs';
 import { MCP } from './mcp.mjs';
@@ -49,7 +49,7 @@ function parseResult(result) {
   try{return JSON.parse(text);}catch{return text;}
 }
 async function attachFiles(projectId,sessionId) {
-  await store.session(projectId,sessionId);
+  store.assertActive(projectId, await store.session(projectId,sessionId));
   const chosen=await dialog.showOpenDialog(win,{title:t('errors.addProjectMaterials'),properties:['openFile','multiSelections']});
   if(chosen.canceled)return [];
   const result=[],root=await store.workspace(projectId,sessionId);
@@ -108,12 +108,22 @@ const handlers={
     return store.addProject(directory,existing?undefined:name);
   },
   sessions:async({projectId})=>store.sessions(projectId),
+  sessionIndex:async()=>Promise.all([...store.state.projects.map(project=>project.id),INBOX_ID].map(async projectId=>{
+    try{return {projectId,sessions:await store.sessions(projectId)};}
+    catch(error){return {projectId,sessions:[],error:error.message};}
+  })),
   session:async({projectId,id})=>{
     const s=await agent.snapshot(projectId,id);
     return {...s,history:undefined};
   },
   newSession:async({projectId})=>store.newSession(projectId),
-  renameSession:async({projectId,id,title})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));const s=await store.session(projectId,id);s.title=String(title).slice(0,100);await store.saveSession(s);return s.title;}),
+  renameSession:async({projectId,id,title})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));const s=await store.session(projectId,id);s.title=String(title||'').trim().slice(0,100);if(!s.title)throw new Error(t('errors.enterAName'));await store.saveSession(s);return s.title;}),
+  archiveSession:async({projectId,id,archived})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.archiveSession(projectId,id,archived===true);return true;}),
+  deleteSession:async({projectId,id})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.deleteSession(projectId,id);return true;}),
+  archiveProject:async({id,archived})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.archiveProject(id,archived===true);return publicState();}),
+  renameProject:async({id,name})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.renameProject(id,name);return publicState();}),
+  deleteProject:async({id})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.deleteProject(id);return publicState();}),
+  moveDraft:async({projectId,id,targetProjectId})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));return store.moveDraft(projectId,id,targetProjectId||INBOX_ID);}),
   saveProvider:async input=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.provider(input);return publicState();},
   deleteProvider:async({id})=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.deleteProvider(id);return publicState();},
   models:async({id})=>{
@@ -170,8 +180,26 @@ const handlers={
   },
   reveal:async({projectId,sessionId,relative})=>{
     const root=store.project(projectId).path;
-    if(!relative){await shell.openPath(root);return true;}
-    const {file}=await store.resolveFile(projectId,sessionId,decodeURIComponent(relative));shell.showItemInFolder(file);return true;
+    if(!relative){const error=await shell.openPath(root);if(error)throw new Error(error);return true;}
+    let candidate = String(relative);
+    if (/^file:/i.test(candidate)) candidate = fileURLToPath(candidate);
+    if (/^[a-z]:(?:%5c|%2f)/i.test(candidate)) candidate = decodeURIComponent(candidate);
+    // Revealing is an explicit user click and never executes the target file.
+    // Generated relative paths still resolve against the chat/project scopes.
+    if (path.isAbsolute(candidate)) {
+      try { await fs.access(candidate); } catch (error) { const decoded=decodeURIComponent(candidate); if(decoded===candidate)throw error; await fs.access(decoded); candidate=decoded; }
+      shell.showItemInFolder(candidate); return true;
+    }
+    if (/^[a-z][a-z\d+.-]*:/i.test(candidate) && !/^(project|session):\//.test(candidate)) throw new Error(t('errors.expectedAFileName'));
+    let location;
+    try { location = await store.resolveFile(projectId,sessionId,candidate); }
+    catch (error) {
+      let decoded; try { decoded = decodeURIComponent(candidate); } catch { throw error; }
+      if (decoded !== candidate) { try { location = await store.resolveFile(projectId,sessionId,decoded); } catch {} }
+      if (!location && !/^(project|session):\//.test(candidate)) location = await store.resolveFile(projectId,sessionId,decoded,{scope:'project'});
+      if (!location) throw error;
+    }
+    shell.showItemInFolder(location.file);return true;
   },
   exportSession:async({projectId,id})=>{
     const s=await store.session(projectId,id);
