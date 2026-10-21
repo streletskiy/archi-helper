@@ -3,7 +3,8 @@ import { t } from '../locales/index.mjs';
 
 export const ZONE_AREA_LABEL_RECIPE='zone-stamp-area-label';
 const articles=Object.freeze([
-  Object.freeze({id:ZONE_AREA_LABEL_RECIPE,title:'Override the displayed area in a specific zone stamp',summary:'Custom stamp text only; preserve zone geometry and calculated areas. Stamp-specific procedure, pilot and verification required.',requiresExplicitApproval:true})
+  Object.freeze({id:ZONE_AREA_LABEL_RECIPE,title:'Override the displayed area in a specific zone stamp',summary:'Custom stamp text only; preserve zone geometry and calculated areas. Stamp-specific procedure, pilot and verification required.',requiresExplicitApproval:true}),
+  Object.freeze({id:'interactive-schedules',title:'Interactive schedules: Tapir, built-in Graphisoft API and supported alternatives',summary:'Distinguish navigator items and model properties from schedule cells, schemes and formatting. Check version-specific JSON/Python capabilities before choosing direct API, export or a separate Add-On.',requiresExplicitApproval:false})
 ]);
 
 export async function getKnowledge(id) {
