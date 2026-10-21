@@ -120,7 +120,13 @@ export class Store {
   async newSession(projectId, title = t('ui.newSession')) {
     const s = { id:uid(), projectId, title, updatedAt:Date.now(), messages:[], history:[] }; await this.saveSession(s); return s;
   }
-  async saveSession(s) { s.updatedAt = Date.now(); await atomicJSON(this.sessionFile(s.projectId,s.id), s); }
+  async saveSession(s) {
+    s.updatedAt=Date.now();const file=this.sessionFile(s.projectId,s.id),snapshot=structuredClone(s);
+    this.sessionWrites??=new Map();
+    const write=(this.sessionWrites.get(file)||Promise.resolve()).catch(()=>{}).then(()=>atomicJSON(file,snapshot));
+    this.sessionWrites.set(file,write);
+    try{await write;}finally{if(this.sessionWrites.get(file)===write)this.sessionWrites.delete(file);}
+  }
   async artifact(projectId, sessionId, name, value) {
     const relative = `.archi/results/${sessionId}/${Date.now()}-${uid().slice(0,8)}-${name.replace(/[^a-z0-9_.-]/gi,'_')}.json`;
     const file = await projectPath(this.project(projectId).path, relative);
