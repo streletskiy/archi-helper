@@ -15,14 +15,31 @@ Var archiUpdateStatusFile
 
 !macro customInit
   ${if} ${isUpdated}
-    ReadEnvStr $archiUpdateStatusFile "ARCHI_UPDATE_STATUS_FILE"
+    ${if} ${UAC_IsInnerInstance}
+      ; RunAs does not inherit the environment set by the running app.
+      !insertmacro UAC_AsUser_GetGlobal $archiUpdateStatusFile $archiUpdateStatusFile
+    ${else}
+      ReadEnvStr $archiUpdateStatusFile "ARCHI_UPDATE_STATUS_FILE"
+    ${endif}
     !insertmacro archiUpdateStatus "applying"
   ${endif}
 !macroend
 
 !macro customInstall
-  !insertmacro archiUpdateStatus "complete"
+  ; The updater forces a launch after a silent installation. Keep the helper
+  ; responsible for the original profile, readiness handshake and visible UI.
+  ${if} $archiUpdateStatusFile != ""
+    Push $0
+    ${GetParent} "$archiUpdateStatusFile" $0
+    IfFileExists "$0\Archi Helper Update.exe" 0 +2
+      StrCpy $launchLink "$0\Archi Helper Update.exe"
+    Pop $0
+  ${endif}
 !macroend
+
+  Function .onInstSuccess
+    !insertmacro archiUpdateStatus "complete"
+  FunctionEnd
 
   Function .onInstFailed
     !insertmacro archiUpdateStatus "error"

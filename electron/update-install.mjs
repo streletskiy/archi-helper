@@ -39,7 +39,7 @@ export async function stageUpdateHelper({app,win,update,language,executable=proc
 export async function prepareUpdateHelper(options) {
   const {root,helperExe,statusFile}=await stageUpdateHelper(options);
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
-  const child=spawn(helperExe,[],{detached:true,windowsHide:true,env,stdio:['ignore','ignore','ignore','ipc']});
+  const child=spawn(helperExe,[],{cwd:root,detached:true,env,stdio:['ignore','ignore','ignore','ipc']});
   try{await new Promise((resolve,reject)=>{
     const timeout=setTimeout(()=>{child.kill();reject(new Error('Update screen did not start'));},30000);
     const failed=error=>{clearTimeout(timeout);reject(error);};
@@ -62,16 +62,30 @@ export async function installUpdate(options) {
   child.once('exit',()=>options.updater.removeListener('error',abort));
   // Keep signature checks, installer launch and elevation in electron-updater.
   process.env.ARCHI_UPDATE_STATUS_FILE=statusFile;
-  try{options.updater.quitAndInstall(true,false);}catch(error){abort();throw error;}
+  try{
+    // Native installer launches may not inherit our IPC channel or environment.
+    await fs.writeFile(path.join(options.app.getPath('userData'),'update-handoff.json'),JSON.stringify({root:path.dirname(statusFile),version:options.update.nextVersion}));
+    options.updater.quitAndInstall(true,true);
+  }catch(error){abort();throw error;}
 }
 
 export async function cleanupUpdateHelper(app) {
-  const directory=process.env.ARCHI_UPDATE_HELPER_DIR;
+  const handoffFile=path.join(app.getPath('userData'),'update-handoff.json');
+  const handoff=await fs.readFile(handoffFile,'utf8').then(JSON.parse).catch(()=>null);
+  const directory=process.env.ARCHI_UPDATE_HELPER_DIR||(handoff?.version===app.getVersion()?handoff.root:null);
   delete process.env.ARCHI_UPDATE_HELPER_DIR;
   if(!directory)return;
   const resolved=path.resolve(directory),temp=path.resolve(app.getPath('temp'));
   if(path.dirname(resolved).toLowerCase()!==temp.toLowerCase()||!path.basename(resolved).startsWith('archi-update-'))return;
   const manifest=await fs.readFile(path.join(resolved,'resources','app','package.json'),'utf8').then(JSON.parse).catch(()=>null);
   if(manifest?.name!=='archi-update-helper')return;
-  await fs.rm(resolved,{recursive:true,force:true,maxRetries:15,retryDelay:1000}).catch(()=>{});
+  // Also acknowledge a launch performed by NSIS, without a Node IPC channel.
+  await fs.writeFile(path.join(resolved,'app-ready.json'),JSON.stringify({version:app.getVersion()}));
+  if(handoff?.root===resolved)await fs.rm(handoffFile,{force:true});
+  try{
+    // Preserve the readiness file until the helper has exited and Windows has
+    // released its executable. Removing the directory first races the reader.
+    await fs.rm(path.join(resolved,'Archi Helper Update.exe'),{recursive:true,force:true,maxRetries:15,retryDelay:1000});
+    await fs.rm(resolved,{recursive:true,force:true,maxRetries:15,retryDelay:1000});
+  }catch{}
 }
