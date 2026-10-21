@@ -25,6 +25,7 @@ export async function stageUpdateHelper({app,win,update,language,executable=proc
     fs.cp(path.join(runtime,'locales'),path.join(root,'locales'),{recursive:true}),
     copyTree(path.join(app.getAppPath(),'dist'),path.join(helperApp,'ui')),
     fs.copyFile(path.join(app.getAppPath(),'electron','update-helper.mjs'),path.join(helperApp,'main.mjs')),
+    fs.copyFile(path.join(app.getAppPath(),'electron','window-visibility.mjs'),path.join(helperApp,'window-visibility.mjs')),
     fs.copyFile(path.join(app.getAppPath(),'electron','preload.cjs'),path.join(helperApp,'preload.cjs')),
     fs.writeFile(path.join(helperApp,'package.json'),JSON.stringify({name:'archi-update-helper',productName:'Archi Helper',version:app.getVersion(),type:'module',main:'main.mjs'})),
     fs.writeFile(path.join(helperApp,'config.json'),JSON.stringify({root,statusFile,executable,language,update,bounds:win.getBounds(),maximized:win.isMaximized(),args:process.argv.filter(arg=>arg.startsWith('--archi-data-dir='))}))

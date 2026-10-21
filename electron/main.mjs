@@ -13,6 +13,7 @@ import { Agent } from './agent.mjs';
 import updaterModule from 'electron-updater';
 import { createUpdates } from './updates.mjs';
 import { installUpdate, cleanupUpdateHelper } from './update-install.mjs';
+import { showAppWindow } from './window-visibility.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWith('--archi-data-dir='))?.slice('--archi-data-dir='.length);
@@ -189,7 +190,7 @@ const handlers={
 };
 if(!app.requestSingleInstanceLock())app.quit();
 else {
-  app.on('second-instance',()=>{if(win){if(win.isMinimized())win.restore();win.focus();}});
+  app.on('second-instance',()=>{showAppWindow(win);});
   app.whenReady().then(async()=>{
   app.setAppUserModelId('app.ac-helper.archi');
   Menu.setApplicationMenu(null);
@@ -215,7 +216,8 @@ else {
   const painted=new Promise(resolve=>win.once('ready-to-show',resolve));
   if(!app.isPackaged && process.env.ARCHI_DEV_URL)await win.loadURL(process.env.ARCHI_DEV_URL);else await win.loadFile(path.resolve(here,'../dist/index.html'));
   await painted;
-  win.show();process.send?.({type:'archi-ready',version:app.getVersion()});
+  if(!showAppWindow(win))throw new Error(t('errors.couldNotShowWindow'));
+  process.send?.({type:'archi-ready',version:app.getVersion()});
   const cleanupTimer=setTimeout(()=>cleanupUpdateHelper(app).catch(()=>{}),1000);cleanupTimer.unref();
   updates.start();connect();
   win.on('close',event=>{
