@@ -60,7 +60,8 @@ export class Store {
   }
   async save() { this.saving=(this.saving||Promise.resolve()).catch(()=>{}).then(()=>atomicJSON(this.file,this.state));await this.saving; }
   publicState() {
-    return { ...this.state, providers: this.state.providers.map(({ encryptedKey, encryptedOAuth, ...p }) => ({ ...p, hasKey: !!encryptedKey || !!encryptedOAuth })) };
+    const {oauthRegistrations,...state}=this.state;
+    return { ...state, providers: state.providers.map(({ encryptedKey, encryptedOAuth, ...p }) => ({ ...p, hasKey: !!encryptedKey || !!encryptedOAuth })) };
   }
   async provider(input) {
     const id = input.id || uid();

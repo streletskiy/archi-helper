@@ -7,6 +7,7 @@ const equal=(a,b)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.
 export async function loopbackAuthorization(config,{openExternal,installationId,signal,timeoutMs=15*60*1000}) {
   const state=crypto.randomBytes(32).toString('base64url'),verifier=crypto.randomBytes(32).toString('base64url');
   const challenge=crypto.createHash('sha256').update(verifier).digest('base64url');
+  const nonce=config.oidc?crypto.randomBytes(32).toString('base64url'):undefined;
   let finish,fail,timer,settled=false,redirectUri;
   const result=new Promise((resolve,reject)=>{finish=resolve;fail=reject;});
   // Attach a rejection handler while the listener/browser is starting.
@@ -28,8 +29,14 @@ export async function loopbackAuthorization(config,{openExternal,installationId,
     if(url.searchParams.has('error')||!code||code.length>4096||url.searchParams.getAll('code').length!==1) {
       response.writeHead(400);response.end(t('errors.oauthCancelled'));complete(new Error(t('errors.oauthCancelled')));return;
     }
+    const issued=url.searchParams.get('client_id');
+    if(config.dynamicRegistration&&(url.searchParams.getAll('client_id').length>1||
+      (issued!==null&&(!/^[a-zA-Z0-9_-]{1,256}$/.test(issued)||issued==='dynamic_agent_client'))||
+      (config.newRegistration?!issued:issued!==null&&issued!==config.clientId))) {
+      response.writeHead(400);response.end();complete(new Error(t('errors.oauthInvalidResponse')));return;
+    }
     response.end(t('ui.oauthBrowserComplete'));
-    complete(null,{code,verifier,redirectUri});
+    complete(null,{code,verifier,redirectUri,nonce,clientId:issued||config.clientId});
   });
   server.requestTimeout=5000;server.headersTimeout=5000;server.maxConnections=8;
   try {
@@ -40,7 +47,10 @@ export async function loopbackAuthorization(config,{openExternal,installationId,
     for(const [key,value] of Object.entries(config.authorizationParameters||{}))url.searchParams.set(key,String(value));
     for(const [key,value] of Object.entries({response_type:'code',client_id:config.clientId,redirect_uri:redirectUri,
       scope:config.scopes.join(' '),state,code_challenge:challenge,code_challenge_method:'S256'}))url.searchParams.set(key,value);
-    if(config.installationParameter)url.searchParams.set(config.installationParameter,installationId);
+    if(config.installationParameter)url.searchParams.set(config.installationParameter,(config.installationPrefix||'')+installationId);
+    if(nonce)url.searchParams.set('nonce',nonce);
+    if(config.resource)url.searchParams.set('resource',config.resource);
+    if(config.newRegistration)url.searchParams.set('agent_name_hint',config.agentName);
     timer=setTimeout(()=>complete(new Error(t('errors.oauthTimeout'))),timeoutMs);timer.unref();
     signal?.addEventListener('abort',cancel,{once:true});
     if(signal?.aborted)cancel();
