@@ -23,7 +23,7 @@ let win,store,mcp,agent,updates,connection={connected:false,message:t('ui.connec
 const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(here,'../runtime');
 const emit=data=>{if(win && !win.isDestroyed())win.webContents.send('archi:event',data);};
 const runtimeManifest=await fs.readFile(path.join(runtime,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({}));
-const publicState=()=>({...store.publicState(),appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,update:updates?.state});
+const publicState=()=>({...store.publicState(),appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state});
 async function connect() {
   if(connecting)return connecting;
   connecting=(async()=>{
@@ -52,7 +52,7 @@ async function attachFiles(projectId) {
   if(chosen.canceled)return [];
   const result=[],root=store.project(projectId).path;
   for(const file of chosen.filePaths) {
-    const name=path.basename(file),relative=`Materials/${Date.now()}-${name}`,destination=await projectPath(root,relative);
+    const name=path.basename(file),relative=`Materials/${crypto.randomUUID()}-${name}`,destination=await projectPath(root,relative);
     await fs.mkdir(path.dirname(destination),{recursive:true});await fs.copyFile(file,destination);result.push(relative);
   }
   return result;
@@ -107,15 +107,11 @@ const handlers={
   },
   sessions:async({projectId})=>store.sessions(projectId),
   session:async({projectId,id})=>{
-    const s=await store.session(projectId,id);
-    if(!agent.running && s.messages.some(m=>m.status==='running')){
-      for(const m of s.messages)if(m.status==='running'){m.status='error';m.text=t('errors.theAppClosedDuringAnOperationThe');}
-      agent.repair(s.history);await store.saveSession(s);
-    }
+    const s=await agent.snapshot(projectId,id);
     return {...s,history:undefined};
   },
   newSession:async({projectId})=>store.newSession(projectId),
-  renameSession:async({projectId,id,title})=>{const s=await store.session(projectId,id);s.title=String(title).slice(0,100);await store.saveSession(s);return s.title;},
+  renameSession:async({projectId,id,title})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));const s=await store.session(projectId,id);s.title=String(title).slice(0,100);await store.saveSession(s);return s.title;}),
   saveProvider:async input=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.provider(input);return publicState();},
   deleteProvider:async({id})=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.deleteProvider(id);return publicState();},
   models:async({id})=>{
@@ -147,23 +143,20 @@ const handlers={
   connect:async()=>connect(),
   scan:async()=>scan(),
   tools:async()=>mcp.tools.map(t=>({key:t.key,name:t.name,description:t.description,inputSchema:t.inputSchema,readOnly:t.annotations?.readOnlyHint===true})),
-  directTool:async({projectId,sessionId,key,args,mode})=>{
-    if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
-    const s=await store.session(projectId,sessionId),controller=new AbortController();
-    agent.running=controller;agent.activeSession=sessionId;emit({type:'busy',busy:true,sessionId});
+  directTool:async({projectId,sessionId,key,args,mode})=>agent.runDirect({projectId,sessionId},async(s,controller)=>{
     const m={id:crypto.randomUUID(),role:'tool',name:key,args,text:'',status:'running',at:Date.now()};
     s.messages.push(m);await store.saveSession(s);emit({type:'message',message:m,sessionId});
-    try {
-      let result;
-      try {result=await agent.execute(s,'call_archicad',{name:key,arguments:args},mode,controller.signal);}
-      catch(error){result={isError:true,error:error.message};}
-      const artifact=await store.artifact(projectId,sessionId,key,result);
-      Object.assign(m,{text:JSON.stringify(result).slice(0,24000),status:result.isError?'error':'done',artifact});
-      await store.saveSession(s);emit({type:'message',message:m,sessionId});return m;
-    }finally{agent.running=null;agent.activeSession=null;emit({type:'busy',busy:false,sessionId});}
-  },
-  send:async input=>{if(agent.running)throw new Error(t('errors.aTaskIsAlreadyRunning'));if(!input.text?.trim())throw new Error(t('errors.enterATask'));await agent.run(input);return true;},
-  stop:async()=>{agent.stop();return true;},
+    let result;
+    try {result=await agent.execute(s,'call_archicad',{name:key,arguments:args},mode,controller.signal);}
+    catch(error){result={isError:true,error:error.message};}
+    const artifact=await store.artifact(projectId,sessionId,key,result);
+    Object.assign(m,{text:JSON.stringify(result).slice(0,24000),status:result.isError?'error':'done',artifact});
+    await store.saveSession(s);emit({type:'message',message:m,sessionId});return m;
+  }),
+  send:async input=>agent.enqueue(input),
+  queuedMessage:async input=>agent.changeQueued(input),
+  resumeQueue:async input=>agent.resume(input),
+  stop:async input=>agent.stop(input),
   approve:async({id,allowed})=>{agent.approve(id,allowed===true);return true;},
   attach:async({projectId})=>attachFiles(projectId),
   image:async({projectId,relative})=>{
@@ -220,9 +213,9 @@ else {
   const cleanupTimer=setTimeout(()=>cleanupUpdateHelper(app).catch(()=>{}),1000);cleanupTimer.unref();
   updates.start();connect();
   win.on('close',event=>{
-    if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop();setTimeout(()=>win.destroy(),500);}});}
+    if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop().catch(()=>{});setTimeout(()=>win.destroy(),500);}});}
   });
   app.on('window-all-closed',()=>app.quit());
-  let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;updates.dispose();agent.stop();mcp.close().finally(()=>app.quit());}});
+  let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;updates.dispose();Promise.allSettled([agent.stop(),mcp.close()]).finally(()=>app.quit());}});
   }).catch(error=>{dialog.showErrorBox(t('errors.archiHelperStartupError'),error.message);app.quit();});
 }
