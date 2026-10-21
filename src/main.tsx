@@ -13,9 +13,10 @@ type Project={id:string;name:string;path:string};
 type Model={id:string;name:string;reasoningEfforts?:string[];contextWindow?:number};
 type Provider={id:string;name:string;baseURL:string;hasKey:boolean;catalogVersion?:number;catalogUpdatedAt?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
 type Message={id:string;role:string;text:string;name?:string;status?:string;summary?:string;args?:unknown;artifact?:{path:string;bytes:number};model?:string};
-type Session={id:string;title:string;messages:Message[];updatedAt:number};
+type QueuedMessage={id:string;text:string;attachments:string[];model:string;delivery:'queue'|'steer'};
+type Session={id:string;title:string;messages:Message[];updatedAt:number;pendingMessages?:QueuedMessage[];queuePaused?:boolean};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
-type State={appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;update?:any};
+type State={appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any};
 const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
 const emptyProvider=()=>({id:'',name:'',baseURL:'',apiKey:'',supportsImages:false,reasoningFormat:'auto',reasoningEfforts:''});
 const effortLabel=(value:string)=>t(({none:'ui.reasoningNone',minimal:'ui.reasoningMinimal',low:'ui.reasoningLow',medium:'ui.reasoningMedium',high:'ui.reasoningHigh',xhigh:'ui.reasoningXhigh',max:'ui.reasoningMax',ultra:'ui.reasoningUltra'} as const)[value as 'xhigh']);
@@ -32,6 +33,8 @@ function App(){
   const [state,setState]=useState<State|null>(null),[project,setProject]=useState<Project|null>(null),[sessions,setSessions]=useState<Session[]>([]),[session,setSession]=useState<Session|null>(null);
   const [draft,setDraft]=useState(''),[mode,setMode]=useState('review'),[busy,setBusy]=useState(false),[stream,setStream]=useState<Record<string,string>>({}),[approval,setApproval]=useState<any>(null);
   const [update,setUpdate]=useState<any>(null),[choosing,setChoosing]=useState(false);
+  const [submitting,setSubmitting]=useState(false);
+  const sending=useRef(false),retryRequest=useRef<{key:string;id:string}|null>(null);
   const updateBlocking=!state||state.updateOnly===true||(!update?.deferred&&['checking','downloading','ready','countdown','installing','error'].includes(update?.status));
   const [modal,setModal]=useState(''),[notice,setNotice]=useState<{text:string;tone:'success'|'error'}|null>(null),[working,setWorking]=useState(''),[attachments,setAttachments]=useState<string[]>([]);
   const [projectName,setProjectName]=useState(''),[search,setSearch]=useState(''),[toolSearch,setToolSearch]=useState(''),[tools,setTools]=useState<Tool[]>([]),[selectedTool,setSelectedTool]=useState<Tool|null>(null),[toolArgs,setToolArgs]=useState('{}');
@@ -50,25 +53,28 @@ function App(){
     const timer=setTimeout(()=>setNotice(null),4000);
     return()=>clearTimeout(timer);
   },[notice,updateBlocking]);
-  const refresh=async()=>{const s=await api('bootstrap');setLanguage(s.language);setState(s);setUpdate(s.update);setPort(s.archicadPort);setMode(s.permissionMode||'review');return s;};
+  const refresh=async()=>{const s=await api('bootstrap');setLanguage(s.language);setState(s);setBusy(s.busy);setApproval(s.approval&&s.approval.sessionId===s.activeSession?s.approval.approval:null);setUpdate(s.update);setPort(s.archicadPort);setMode(s.permissionMode||'review');return s;};
   const refreshSessions=async(p=projectRef.current)=>{if(p)setSessions(await api('sessions',{projectId:p.id}));};
-  const openProject=async(p:Project)=>{
-    if(busy)return;setProject(p);setStream({});setDraft('');setAttachments([]);
+  const openProject=async(p:Project,activeSession?:string)=>{
+    if(busy||sending.current)return;setProject(p);setStream({});setDraft('');setAttachments([]);
     const list=await api('sessions',{projectId:p.id});setSessions(list);
-    const s=list.length?await api('session',{projectId:p.id,id:list[0].id}):await api('newSession',{projectId:p.id});
+    const s=list.length?await api('session',{projectId:p.id,id:list.find((s:Session)=>s.id===activeSession)?.id||list[0].id}):await api('newSession',{projectId:p.id});
     setSession(s);if(!list.length)setSessions([s]);
   };
   useEffect(()=>{
     guard(async()=>{
-      const s=await refresh();if(s.updateApplied)notify(t('ui.updateApplied',{version:s.appVersion}));if(s.projects.length)await openProject(s.projects[0]);
+      const s=await refresh();if(s.updateApplied)notify(t('ui.updateApplied',{version:s.appVersion}));if(s.projects.length)await openProject(s.projects.find((p:Project)=>p.id===s.activeProject)||s.projects[0],s.activeSession);
       const provider=s.providers.find((p:Provider)=>p.id===s.providerId);
       if(provider && needsModelRefresh(provider))await syncModels(provider.id);
     });
     return window.archi.onEvent(e=>{
       if(e.type==='update')setUpdate(e.update);
       if(e.type==='connection')setState(s=>s?{...s,connection:e.connection,toolCount:e.toolCount,runtimeReady:e.runtimeReady}:s);
-      if(e.type==='busy'){setBusy(e.busy);if(!e.busy)guard(()=>refreshSessions());}
+      if(e.type==='busy'){setBusy(e.busy);setState(s=>s?{...s,busy:e.busy,canSteer:e.canSteer,activeSession:e.busy?e.sessionId:undefined,activeProject:e.busy?e.projectId:undefined}:s);if(!e.busy){setApproval(null);guard(()=>refreshSessions());}}
+      if(e.type==='queue-error')notify(e.message,'error');
       if(e.sessionId!==sessionRef.current)return;
+      if(e.type==='queue')setSession(s=>s?{...s,pendingMessages:e.pendingMessages,queuePaused:e.queuePaused}:s);
+      if(e.type==='stream-reset')setStream(v=>{const next={...v};delete next[e.id];return next;});
       if(e.type==='message'){
         setSession(s=>s?{...s,messages:[...s.messages.filter(m=>m.id!==e.message.id),e.message]}:s);
         setStream(v=>{const n={...v};delete n[e.message.id];return n;});
@@ -85,12 +91,23 @@ function App(){
     try{const s=await api('settings',input);setState(s);if(input.providerId){const p=s.providers.find((p:Provider)=>p.id===input.providerId);if(p&&needsModelRefresh(p))await syncModels(p.id);}}
     finally{setChoosing(false);}
   });
-  const newSession=()=>guard(async()=>{if(!project)return;const s=await api('newSession',{projectId:project.id});setSession(s);setDraft('');setAttachments([]);setStream({});await refreshSessions();textInput.current?.focus();});
-  const send=()=>guard(async()=>{
-    if(!project || !session || !draft.trim() || busy || choosing || !state?.providerId || !state?.model)return;
-    const text=draft.trim()+(attachments.length?t('ui.materialsInTheProjectFolder',{value0:attachments.map(x=>`- ${x}`).join('\n')}):'');
-    setDraft('');setAttachments([]);setBusy(true);setStream({});
-    try{await api('send',{projectId:project.id,sessionId:session.id,text,providerId:state?.providerId,model:state?.model,mode});}finally{setBusy(false);}
+  const newSession=()=>guard(async()=>{if(!project||busy||sending.current)return;const s=await api('newSession',{projectId:project.id});setSession(s);setDraft('');setAttachments([]);setStream({});await refreshSessions();textInput.current?.focus();});
+  const send=(delivery:'queue'|'steer'='queue')=>guard(async()=>{
+    if(!project||!session||(!draft.trim()&&!attachments.length)||sending.current||choosing||!state?.providerId||!state?.model)return;
+    const text=draft,files=[...attachments],input={projectId:project.id,sessionId:session.id,text,attachments:files,providerId:state.providerId,model:state.model,mode,delivery};
+    const key=JSON.stringify(input),id=retryRequest.current?.key===key?retryRequest.current.id:crypto.randomUUID();
+    retryRequest.current={key,id};sending.current=true;setSubmitting(true);setDraft('');setAttachments([]);
+    try{await api('send',{...input,id});retryRequest.current=null;}
+    catch(error){setDraft(current=>text?(current?`${text}\n\n${current}`:text):current);setAttachments(current=>[...new Set([...files,...current])]);throw error;}
+    finally{sending.current=false;setSubmitting(false);textInput.current?.focus();}
+  });
+  const changeQueued=(item:QueuedMessage,action:'steer'|'remove'|'edit')=>guard(async()=>{
+    if(!project||!session||sending.current)return;
+    sending.current=true;setSubmitting(true);
+    try{
+      const value=await api('queuedMessage',{projectId:project.id,sessionId:session.id,id:item.id,action:action==='edit'?'remove':action});
+      if(action==='edit'){setDraft(current=>current?`${value.text}\n\n${current}`:value.text);setAttachments(current=>[...new Set<string>([...value.attachments,...current])]);textInput.current?.focus();}
+    }finally{sending.current=false;setSubmitting(false);}
   });
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{
@@ -109,7 +126,7 @@ function App(){
     const trap=(e:KeyboardEvent)=>{if(e.key!=='Tab')return;const items=focusable(),first=items[0],last=items[items.length-1];if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}};
     document.addEventListener('keydown',trap);return()=>{cancelAnimationFrame(frame);document.removeEventListener('keydown',trap);previous?.focus();};
   },[modal]);
-  useEffect(()=>{api('updateIdle',{idle:!busy&&!draft.trim()&&!attachments.length&&(!modal||updateBlocking)&&!approval}).catch(()=>{});},[busy,draft,attachments.length,modal,approval,updateBlocking]);
+  useEffect(()=>{api('updateIdle',{idle:!busy&&!draft.trim()&&!attachments.length&&!session?.pendingMessages?.length&&(!modal||updateBlocking)&&!approval}).catch(()=>{});},[busy,draft,attachments.length,session?.pendingMessages?.length,modal,approval,updateBlocking]);
   const connect=()=>guard(async()=>{await api('connect');await refresh();},t('ui.connecting'));
   const openTools=()=>guard(async()=>{setTools(await api('tools'));setModal('tools');});
   const chooseTool=(t:Tool)=>{
@@ -144,11 +161,11 @@ function App(){
     <div className="titlebar"><div className="titlebar-brand"><img src="./helmet.png" alt="" width="32"/>Archi Helper</div><div className="titlebar-actions"><label className="language-switch" title={t('ui.language')}><Languages size={15}/><select aria-label={t('ui.language')} value={language} disabled={!state||busy||choosing} onChange={e=>{const language=e.target.value;guard(async()=>{setChoosing(true);try{const s=await api('settings',{language});setLanguage(s.language);setState(s);}finally{setChoosing(false);}});}}><option value="ru">RU</option><option value="en">EN</option></select></label><div className="window-controls"><IconButton title={t('ui.minimize')} onClick={()=>api('window',{action:'minimize'})}><Minus size={14}/></IconButton><IconButton title={t('ui.maximize')} onClick={()=>api('window',{action:'maximize'})}><Square size={11}/></IconButton><IconButton title={t('ui.close')} onClick={()=>api('window',{action:'close'})}><X size={15}/></IconButton></div></div></div>
     <div className="workspace">
       <aside className="sidebar">
-        <button className="project-select" onClick={()=>setModal('projects')} disabled={busy}><Folder size={18}/><strong>{project?.name||t('ui.chooseProject')}</strong><ChevronDown size={14}/></button>
-        <button className="new-chat" aria-label={t('ui.createANewSession')} title="Ctrl + N" onClick={newSession} disabled={!project||busy}><Plus size={17}/>{t('ui.newSession')}</button>
+        <button className="project-select" onClick={()=>setModal('projects')} disabled={busy||submitting}><Folder size={18}/><strong>{project?.name||t('ui.chooseProject')}</strong><ChevronDown size={14}/></button>
+        <button className="new-chat" aria-label={t('ui.createANewSession')} title="Ctrl + N" onClick={newSession} disabled={!project||busy||submitting}><Plus size={17}/>{t('ui.newSession')}</button>
         {sessions.length>6&&<div className="sidebar-search"><Search size={14}/><input aria-label={t('ui.findSession')} placeholder={t('ui.search')} value={search} onChange={e=>setSearch(e.target.value)}/></div>}
         <div className="session-list">
-          {sessions.filter(s=>s.title.toLowerCase().includes(search.toLowerCase())).map(s=><button className={`session-row ${session?.id===s.id?'selected':''}`} disabled={busy} key={s.id} onClick={()=>guard(async()=>{setSession(await api('session',{projectId:project?.id,id:s.id}));setStream({});setDraft('');setAttachments([]);})}><MessageSquare size={15}/><span>{s.title}</span></button>)}
+          {sessions.filter(s=>s.title.toLowerCase().includes(search.toLowerCase())).map(s=><button className={`session-row ${session?.id===s.id?'selected':''}`} disabled={busy||submitting} key={s.id} onClick={()=>guard(async()=>{if(sending.current)return;setSession(await api('session',{projectId:project?.id,id:s.id}));setStream({});setDraft('');setAttachments([]);})}><MessageSquare size={15}/><span>{s.title}</span></button>)}
         </div>
         <div className="sidebar-bottom"><button className="sidebar-link" disabled={!project} onClick={()=>reveal()}><FolderOpen size={17}/>{t('ui.projectFiles')}</button><button className="sidebar-link" onClick={()=>setModal('providers')}><Settings size={17}/>{t('ui.settings')}</button></div>
       </aside>
@@ -170,11 +187,22 @@ function App(){
           <div ref={bottom}/>
         </div>
         <div className="composer-wrap">
+          {!!session?.pendingMessages?.length&&<section className="message-queue" aria-label={t('ui.messageQueue')}>
+            <div className="message-queue-heading"><span role="status">{session.queuePaused?t('ui.queuePaused'):t('ui.queuedMessageCount',{count:session.pendingMessages.length})}</span>{session.queuePaused&&<button className="text-button" disabled={busy||submitting} onClick={()=>guard(()=>api('resumeQueue',{projectId:project?.id,sessionId:session.id}))}><Play size={13}/>{t('ui.resumeQueue')}</button>}</div>
+            <ol>{session.pendingMessages.map(item=><li key={item.id}>
+              <span className="queued-message-icon" aria-hidden="true">{item.delivery==='steer'?<RotateCw size={15}/>:<ArrowUpRight size={15}/>}</span>
+              <div className="queued-message-copy" title={[item.text,...item.attachments].join('\n')}><span>{item.text||t('ui.attachedMaterials')}</span>{item.attachments.length>0&&<small><Paperclip size={11}/>{item.attachments.map(file=>file.split('/').pop()).join(', ')}</small>}</div>
+              <button className="queued-message-steer" disabled={submitting||item.delivery==='steer'||busy&&(!state?.canSteer||session.queuePaused)} onClick={()=>changeQueued(item,'steer')}><ArrowUpRight size={13}/>{item.delivery==='steer'?t('ui.applyingCorrection'):busy?t('ui.steerTask'):t('ui.sendNow')}</button>
+              <IconButton title={t('ui.editQueuedMessage')} disabled={submitting||!!draft||!!attachments.length} onClick={()=>changeQueued(item,'edit')}><Pencil size={14}/></IconButton>
+              <IconButton title={t('ui.removeQueuedMessage')} disabled={submitting} onClick={()=>changeQueued(item,'remove')}><Trash2 size={14}/></IconButton>
+            </li>)}</ol>
+          </section>}
           {attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a}><Paperclip size={12}/>{a.split('/').pop()}<button onClick={()=>setAttachments(v=>v.filter(x=>x!==a))}><X size={12}/></button></span>)}</div>}
-          <div className={`composer ${busy?'is-busy':''}`}><textarea ref={textInput} aria-label={t('ui.taskForArchiHelper')} placeholder={project?t('ui.describeYourTask'):t('ui.chooseAProjectFirst')} value={draft} onChange={e=>setDraft(e.target.value)} disabled={!project||busy} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send();}}}/>
+          <div className={`composer ${busy?'is-busy':''}`}><textarea ref={textInput} aria-label={t('ui.taskForArchiHelper')} placeholder={project?t(busy?'ui.describeFollowUp':'ui.describeYourTask'):t('ui.chooseAProjectFirst')} value={draft} onChange={e=>setDraft(e.target.value)} disabled={!project} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send((e.ctrlKey||e.metaKey)&&busy&&state?.canSteer?'steer':'queue');}}}/>
+            {busy&&<div className="composer-follow-up"><span>{t(state?.canSteer?'ui.queueHint':'ui.queueHintNoSteering')}</span>{state?.canSteer&&<button disabled={submitting||(!draft.trim()&&!attachments.length)||choosing} onClick={()=>send('steer')}><ArrowUpRight size={13}/>{t('ui.steerTask')}</button>}</div>}
 
-            <div className="composer-toolbar"><div className="composer-options"><IconButton title={t('ui.attachAPdfImageOrFile')} disabled={!project||busy} onClick={()=>guard(async()=>{const files=await api('attach',{projectId:project?.id});setAttachments(v=>[...v,...files]);})}><Plus size={20}/></IconButton><span className={`permission-control ${mode==='full'?'full-access':''}`} title={`${t('ui.workMode')}: ${mode==='full'?t('ui.fullAccess'):mode==='read'?t('ui.readOnly'):t('ui.askForApproval')}${mode==='full'?' · '+t('ui.commandsFilesAndPythonWithoutConfirmation'):''}`}>{mode==='full'?<ShieldAlert size={16}/>:mode==='read'?<Eye size={16}/>:<ShieldCheck size={16}/>}<select aria-label={t('ui.workMode')} value={mode} disabled={busy} onChange={e=>{const next=e.target.value;guard(async()=>{const s=await api('settings',{permissionMode:next});setState(s);setMode(next);});}}><option value="review">{t('ui.askForApproval')}</option><option value="full">{t('ui.fullAccess')}</option><option value="read">{t('ui.readOnly')}</option></select></span></div><div className="composer-ai"><select className="provider-select" title={selectedProvider?.name||t('ui.provider')} aria-label={t('ui.provider')} value={state?.providerId||''} disabled={busy||choosing||!state?.providers.length} onChange={e=>chooseSettings({providerId:e.target.value})}><option value="" disabled>{t('ui.connectAi')}</option>{state?.providers.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><select className="model-select" title={selectedProvider?.models.find(m=>m.id===state?.model)?.name||state?.model||t('ui.chooseAModel')} aria-label={t('ui.model')} value={state?.model||''} disabled={busy||choosing||!selectedProvider} onChange={e=>chooseSettings({model:e.target.value})}><option value="">{t('ui.chooseAModel')}</option>{selectedProvider?.models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}{state?.model&&!selectedProvider?.models.some(m=>m.id===state.model)&&<option value={state.model}>{state.model}</option>}</select><IconButton title={t('ui.providerSettings')} onClick={()=>setModal('providers')}><Settings size={15}/></IconButton></div><div className="composer-reasoning" title={`${t('ui.reasoningLevel')}: ${effort?effortLabel(effort):t('ui.reasoningDefault')} · ${reasoning.toolRestricted?t('ui.reasoningToolsRestricted'):reasoning.efforts.length?t('ui.reasoningHint'):t('ui.reasoningUnavailable')}`}><Brain size={15}/><span className="effort-value" aria-hidden="true">{effort?effort.charAt(0).toUpperCase()+effort.slice(1):'—'}</span><select aria-label={t('ui.reasoningLevel')} value={effort} disabled={busy||choosing||!reasoning.efforts.length} onChange={e=>chooseSettings({reasoningEffort:e.target.value})}>{reasoning.efforts.length?reasoning.efforts.map(value=><option key={value} value={value}>{effortLabel(value)}</option>):<option value="">{t('ui.reasoningDefault')}</option>}</select></div>
-            {busy?<button className="send-button stop" title={t('ui.stop')} onClick={()=>guard(()=>api('stop'))}><Square size={14} fill="currentColor"/></button>:<button className="send-button" title={t('ui.sendTask')} onClick={send} disabled={!draft.trim()||!project||!state?.model||choosing}><ArrowUp size={20}/></button>}</div>
+            <div className="composer-toolbar"><div className="composer-options"><IconButton title={t('ui.attachAPdfImageOrFile')} disabled={!project||submitting} onClick={()=>guard(async()=>{const projectId=project?.id,files=await api('attach',{projectId});if(projectRef.current?.id===projectId)setAttachments(v=>[...new Set<string>([...v,...files])]);})}><Plus size={20}/></IconButton><span className={`permission-control ${mode==='full'?'full-access':''}`} title={`${t('ui.workMode')}: ${mode==='full'?t('ui.fullAccess'):mode==='read'?t('ui.readOnly'):t('ui.askForApproval')}${mode==='full'?' · '+t('ui.commandsFilesAndPythonWithoutConfirmation'):''}`}>{mode==='full'?<ShieldAlert size={16}/>:mode==='read'?<Eye size={16}/>:<ShieldCheck size={16}/>}<select aria-label={t('ui.workMode')} value={mode} disabled={busy} onChange={e=>{const next=e.target.value;guard(async()=>{const s=await api('settings',{permissionMode:next});setState(s);setMode(next);});}}><option value="review">{t('ui.askForApproval')}</option><option value="full">{t('ui.fullAccess')}</option><option value="read">{t('ui.readOnly')}</option></select></span></div><div className="composer-ai"><select className="provider-select" title={selectedProvider?.name||t('ui.provider')} aria-label={t('ui.provider')} value={state?.providerId||''} disabled={busy||choosing||!state?.providers.length} onChange={e=>chooseSettings({providerId:e.target.value})}><option value="" disabled>{t('ui.connectAi')}</option>{state?.providers.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><select className="model-select" title={selectedProvider?.models.find(m=>m.id===state?.model)?.name||state?.model||t('ui.chooseAModel')} aria-label={t('ui.model')} value={state?.model||''} disabled={busy||choosing||!selectedProvider} onChange={e=>chooseSettings({model:e.target.value})}><option value="">{t('ui.chooseAModel')}</option>{selectedProvider?.models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}{state?.model&&!selectedProvider?.models.some(m=>m.id===state.model)&&<option value={state.model}>{state.model}</option>}</select><IconButton title={t('ui.providerSettings')} onClick={()=>setModal('providers')}><Settings size={15}/></IconButton></div><div className="composer-reasoning" title={`${t('ui.reasoningLevel')}: ${effort?effortLabel(effort):t('ui.reasoningDefault')} · ${reasoning.toolRestricted?t('ui.reasoningToolsRestricted'):reasoning.efforts.length?t('ui.reasoningHint'):t('ui.reasoningUnavailable')}`}><Brain size={15}/><span className="effort-value" aria-hidden="true">{effort?effort.charAt(0).toUpperCase()+effort.slice(1):'—'}</span><select aria-label={t('ui.reasoningLevel')} value={effort} disabled={busy||choosing||!reasoning.efforts.length} onChange={e=>chooseSettings({reasoningEffort:e.target.value})}>{reasoning.efforts.length?reasoning.efforts.map(value=><option key={value} value={value}>{effortLabel(value)}</option>):<option value="">{t('ui.reasoningDefault')}</option>}</select></div>
+            <div className="composer-actions">{busy&&<button className="send-button stop" title={t('ui.stop')} aria-label={t('ui.stop')} onClick={()=>guard(()=>api('stop',{projectId:project?.id,sessionId:session?.id}))}><Square size={14} fill="currentColor"/></button>}<button className="send-button" title={t(busy||session?.pendingMessages?.length?'ui.addToQueue':'ui.sendTask')} aria-label={t(busy||session?.pendingMessages?.length?'ui.addToQueue':'ui.sendTask')} onClick={()=>send()} disabled={(!draft.trim()&&!attachments.length)||!project||!session||!state?.providerId||!state?.model||choosing||submitting}><ArrowUp size={20}/></button></div></div>
           </div>
         </div>
       </main>

@@ -9,6 +9,7 @@ import { compactSession, estimateTokens, recordContextUsage, reduceContextLimit 
 import { enrichModels } from './model-catalog.mjs';
 import { resultData, toolSummary, recoveryHint } from './progress.mjs';
 import { saveApiCatalog, searchApiCatalog, catalogSummary, CATALOG_PATH } from './api-catalog.mjs';
+import { MessageQueue } from './message-queue.mjs';
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const str=description=>({type:'string',description});
@@ -23,8 +24,9 @@ export const agentTools=[
   fn('run_python','Run Python for calculations, PDF/image processing or Archicad operations. Execution permissions follow the current work mode. This is a real local process, not a sandbox. Bundled: archicad, pypdf, fitz/PyMuPDF, Pillow. Working directory is project folder. Long outputs saved to file.',{code:str('Complete Python script'),purpose:str('Short explanation in the user\'s language')},['code','purpose'])
 ];
 
-export class Agent {
-  constructor(store,mcp,emit) { this.store=store; this.mcp=mcp; this.emit=emit; this.pending=new Map(); }
+export class Agent extends MessageQueue {
+  constructor(store,mcp,emit) { super(store,emit);this.mcp=mcp;this.pending=new Map();this.approval=null; }
+  interrupt(){this.completionController?.abort();for(const id of this.pending.keys())this.approve(id,false);}
   approve(id,allowed) { const p=this.pending.get(id); if(p){this.pending.delete(id);p.resolve(allowed);} }
   async confirm(session,kind,description,args,signal) {
     if(signal.aborted)throw new Error(t('agent.stopped'));
@@ -33,9 +35,12 @@ export class Agent {
       const abort=()=>{this.pending.delete(id);resolve(false);};
       this.pending.set(id,{resolve:(v)=>{signal.removeEventListener('abort',abort);resolve(v);}});
       signal.addEventListener('abort',abort,{once:true});
-      this.emit({type:'approval',sessionId:session.id,approval:{id,kind,description,args}});
+      this.approval={sessionId:session.id,approval:{id,kind,description,args}};
+      this.emit({type:'approval',...this.approval});
     });
+    if(this.approval?.approval.id===id)this.approval=null;
     this.emit({type:'approval-done',sessionId:session.id,id});
+    if(this.hasSteering)throw new Error(t('agent.actionSuperseded'));
     if(!allowed)throw new Error(t('agent.theUserDeclinedTheActionDoNot'));
   }
   async execute(session,name,args,mode,signal) {
@@ -52,6 +57,7 @@ export class Agent {
         const titles={CreatePolylines:t('agent.createPolylines'),CreateTexts:t('agent.addText'),DeleteElements:t('agent.deleteSelectedElements'),SaveProject:t('agent.saveProject'),SetPropertiesOfElements:t('agent.changeElementProperties'),SetDetailsOfElements:t('agent.changeElementParameters'),SetTextOfTextElements:t('agent.changeText')};
         if(mode!=='full')await this.confirm(session,'archicad',args.purpose||titles[tool.name]||tool.name,args.arguments,signal);
       }
+      signal.throwIfAborted();
       const result=await this.mcp.call(tool.key,args.arguments,signal);
       if(tool.name==='TestConnection'&&!result.isError)await saveApiCatalog(this.mcp,root);
       return result;
@@ -89,7 +95,8 @@ export class Agent {
       const file=await projectPath(root,args.path);
       let exists=false;try{await fs.access(file);exists=true;}catch{}
       if(exists && mode!=='full')await this.confirm(session,'file',t('agent.overwrite',{value0:args.path}),{content:args.content},signal);
-      await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,args.content,'utf8');
+      signal.throwIfAborted();await fs.mkdir(path.dirname(file),{recursive:true});
+      signal.throwIfAborted();await fs.writeFile(file,args.content,'utf8');
       return {saved:args.path,bytes:Buffer.byteLength(args.content)};
     }
     if(name==='run_python') {
@@ -99,6 +106,7 @@ export class Agent {
       await fs.mkdir(path.dirname(script),{recursive:true});await fs.writeFile(script,args.code,'utf8');
       const log=script.replace(/\.py$/,'.log');
       const catalogPath=await projectPath(root,CATALOG_PATH);
+      signal.throwIfAborted();
       return new Promise((resolve,reject)=>{
         const env={...process.env,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8',PYTHONFAULTHANDLER:'1',PYTHONNOUSERSITE:'1',NO_PROXY:'localhost,127.0.0.1',
           ARCHI_UV:path.join(this.mcp.runtime,'uv.exe'),UV_PYTHON:this.mcp.python,UV_PYTHON_DOWNLOADS:'never',ARCHI_API_CATALOG:catalogPath};
@@ -125,18 +133,17 @@ export class Agent {
     }
     throw new Error(t('agent.unknownTool',{value0:name}));
   }
-  async run({projectId,sessionId,text,providerId,model,mode='review'}) {
-    if(this.running)throw new Error(t('agent.waitForTheCurrentTaskToFinish'));
-    const session=await this.store.session(projectId,sessionId), provider=this.store.getProvider(providerId);
-    if(!model)throw new Error(t('ui.chooseAModel'));
-    this.running=new AbortController(); const signal=this.running.signal; this.activeSession=sessionId;
+  async performTask(session,{providerId,model,mode='review',reasoningEffort},signal) {
+    const {projectId,id:sessionId}=session;
     const emit=e=>this.emit({...e,sessionId});
-    const user={id:uid(),role:'user',text,at:Date.now()};
-    session.messages.push(user);session.history.push({role:'user',content:text});
-    if(session.messages.filter(m=>m.role==='user').length===1)session.title=text.slice(0,55);
-    await this.store.saveSession(session);emit({type:'message',message:user});emit({type:'busy',busy:true});
-    let overflowRetries=0,silentRounds=0,toolFailed=false;
+    let overflowRetries=0,silentRounds=0,toolFailed=false,streamId;
     try {
+      // Later settings may restrict a queued request, but never broaden the
+      // permission it had when the user submitted it.
+      const modes=['read','review','full'];
+      mode=modes[Math.min(Math.max(0,modes.indexOf(mode)),Math.max(0,modes.indexOf(this.store.state.permissionMode||'review')))];
+      const provider=this.store.getProvider(providerId);
+      if(!model)throw new Error(t('ui.chooseAModel'));
       // Also resolve manually entered IDs, which need not appear in /models.
       const info=provider.models?.find(m=>m.id===model);
       if(!info?.contextWindow) {
@@ -152,34 +159,50 @@ export class Agent {
       const overhead=estimateTokens(system)+estimateTokens(tools);
       while(true) {
         signal.throwIfAborted();
+        await this.takeSteering(session);
         this.repair(session.history);
         if(await compactSession({store:this.store,session,provider,model,signal,overhead}))emit({type:'message',message:await this.contextNotice(session)});
+        if(this.hasSteering)continue;
         const history=await this.prepareMessages(session.history,this.store.project(projectId).path,provider.supportsImages===true);
+        if(this.hasSteering)continue;
         const id=uid();let streamed='';
+        streamId=id;
+        const completionController=new AbortController();this.completionController=completionController;
         let result,usage;
         try {
           const checkpoint=silentRounds>=3||toolFailed?'\nProgress checkpoint: send a brief user-facing update before further tools. Summarize verified findings and the next step; if a tool failed, explain the obstacle and the corrected approach. Do not expose private reasoning.':'';
-          result=await completion(provider,model,[{...system,content:system.content+checkpoint},...history],tools,AbortSignal.any([signal,AbortSignal.timeout(180000)]),delta=>{
+          result=await completion(provider,model,[{...system,content:system.content+checkpoint},...history],tools,AbortSignal.any([signal,completionController.signal,AbortSignal.timeout(180000)]),delta=>{
+            if(completionController.signal.aborted)return;
             streamed+=delta;emit({type:'delta',id,delta});
-          },this.store.state.reasoningEffort,value=>{usage=value;});
+          },reasoningEffort,value=>{usage=value;});
         } catch(error) {
+          emit({type:'stream-reset',id});
+          if(completionController.signal.aborted&&!signal.aborted)continue;
           if(!error.contextOverflow||overflowRetries>=3)throw error;
           overflowRetries++;
           reduceContextLimit(session,provider,model,error,overhead);
           if(await compactSession({store:this.store,session,provider,model,signal,overhead,force:true}))emit({type:'message',message:await this.contextNotice(session)});
           continue;
-        }
+        }finally{if(this.completionController===completionController)this.completionController=null;}
+        if(this.hasSteering){emit({type:'stream-reset',id});continue;}
         overflowRetries=0;
         if(!result.content && !result.tool_calls?.length)throw new Error(t('agent.theModelReturnedAnEmptyResponseCheck'));
         recordContextUsage(session,provider,model,usage,overhead);
         session.history.push(result);
         if(result.content) {const m={id,role:'assistant',text:result.content,at:Date.now(),model};session.messages.push(m);emit({type:'message',message:m});}
         silentRounds=result.content?0:silentRounds+1;toolFailed=false;
-        if(!result.tool_calls?.length){await this.store.saveSession(session);return;}
+        if(!result.tool_calls?.length){await this.store.saveSession(session);if(this.hasSteering)continue;this.steerable=false;return true;}
         // Persist the intent before execution. A restart must never replay a mutation.
         await this.store.saveSession(session);
         const images=[];
-        for(const call of result.tool_calls) {
+        for(let index=0;index<result.tool_calls.length;index++) {
+          // A correction never aborts a tool already in progress. Calls that
+          // have not started receive explicit results, so they cannot replay.
+          if(this.hasSteering){
+            for(const call of result.tool_calls.slice(index))session.history.push({role:'tool',tool_call_id:call.id,content:'Not executed: the user corrected the task before this operation started. Follow the latest user request; do not replay this call.'});
+            await this.store.saveSession(session);break;
+          }
+          const call=result.tool_calls[index];
           let resultDataValue,args;
           try{args=JSON.parse(call.function.arguments);}catch{}
           const toolMessage={id:uid(),role:'tool',name:call.function.name,args:args??call.function.arguments,text:'',status:'running',at:Date.now()};
@@ -205,11 +228,13 @@ export class Agent {
         if(images.length){session.history.push({role:'user',content:images,_attachment:true});await this.store.saveSession(session);}
       }
     } catch(e) {
+      if(streamId)emit({type:'stream-reset',id:streamId});
       // Repair incomplete tool batches on cancellation/failure without replaying commands.
       this.repair(session.history);
       const m={id:uid(),role:'notice',text:signal.aborted?t('agent.taskStoppedCompletedChangesRemainIfAn'):e.message,at:Date.now()};
       session.messages.push(m);emit({type:'message',message:m});await this.store.saveSession(session);
-    } finally {this.running=null;this.activeSession=null;emit({type:'busy',busy:false});}
+      return false;
+    }
   }
   repair(history) {
     const completed=new Set(history.filter(m=>m.role==='tool').map(m=>m.tool_call_id));
@@ -235,5 +260,4 @@ export class Agent {
       }))};
     }));
   }
-  stop(){this.running?.abort();}
 }
