@@ -33,9 +33,19 @@ export async function oauthPost(url, values, fetcher=fetch) {
   catch { throw new Error(t('errors.oauthNetwork')); }
   const body=await response.json().catch(()=>null);
   if(!response.ok) {
-    const error=new Error(t(body?.error==='invalid_grant'?'errors.oauthReconnect':'errors.oauthFailed'));
-    error.oauthCode=typeof body?.error==='string'?body.error:'server_error';
-    error.status=response.status;error.definitive=typeof body?.error==='string';
+    const received=typeof body?.error==='string'?body.error:body?.error?.code||body?.code;
+    const code=typeof received==='string'&&/^[a-zA-Z0-9_.-]{1,128}$/.test(received)?received:'server_error';
+    let detail=body?.error_description||body?.error?.message||body?.detail||'';
+    if(typeof detail!=='string')detail='';
+    for(const key of ['code','code_verifier','refresh_token','token','access_token','id_token']) {
+      for(const secret of [values[key],body?.[key]])if(typeof secret==='string'&&secret)detail=detail.replaceAll(secret,t('errors.redacted'));
+    }
+    detail=detail.replace(/[\x00-\x1f\x7f]/g,' ').slice(0,500);
+    const requestId=response.headers.get('x-request-id')||response.headers.get('request-id')||response.headers.get('cf-ray');
+    if(code==='unsupported_country_region_territory')detail=t('errors.oauthRegionUnsupported');
+    const error=new Error(code==='invalid_grant'?t('errors.oauthReconnect'):t('errors.oauthProviderFailure',{status:response.status,code,detail}));
+    error.oauthCode=code;error.requestId=requestId?.slice(0,150);
+    error.status=response.status;error.definitive=typeof received==='string';
     throw error;
   }
   return body;

@@ -32,7 +32,10 @@ export async function responsesCompletion(provider,model,messages,tools,signal,o
       tools:tools.map(tool=>({type:'function',name:tool.function.name,description:tool.function.description,
         parameters:tool.function.parameters,strict:false}))}]}:{})};
   const response=await api(provider,'responses',{method:'POST',signal,body:JSON.stringify(body)});
-  if(!response.headers.get('content-type')?.includes('text/event-stream'))throw new Error(t('errors.responsesStreamRequired'));
+  // Some proxy paths omit Content-Type. The stream still has to contain a valid
+  // response.completed event before any tool call can be returned for execution.
+  const contentType=response.headers.get('content-type');
+  if(contentType&&!contentType.includes('text/event-stream'))throw new Error(t('errors.responsesStreamRequired'));
   let completed,buffer='',lines=[];
   const decoder=new TextDecoder();
   const event=()=>{

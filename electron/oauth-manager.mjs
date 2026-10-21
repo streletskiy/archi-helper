@@ -3,11 +3,12 @@ import { t } from '../locales/index.mjs';
 import { providerDefinitions } from './provider-definitions.mjs';
 import { oauthDefinition,oauthPost,tokenResponse } from './oauth-config.mjs';
 import { loopbackAuthorization } from './oauth-loopback.mjs';
-import { readOAuthTokens,saveOAuthProvider,saveOAuthRegistration,updateOAuthTokens } from './oauth-store.mjs';
+import { readOAuthTokens,saveOAuthProvider,saveOAuthRegistration,archiveOAuthRegistration,updateOAuthTokens } from './oauth-store.mjs';
 import { identityVerifier } from './oauth-identity.mjs';
+import { providerFetch } from './provider-network.mjs';
 
 export class OAuthManager {
-  constructor(store,{openExternal,fetcher=fetch,definitions=providerDefinitions,authorize=loopbackAuthorization}={}) {
+  constructor(store,{openExternal,fetcher=providerFetch,definitions=providerDefinitions,authorize=loopbackAuthorization}={}) {
     Object.assign(this,{store,openExternal,fetcher,definitions,authorize});this.refreshing=new Map();this.disconnecting=new Set();
     this.verifyIdentity=identityVerifier(fetcher);this.retryAfter=new Map();
   }
@@ -16,11 +17,15 @@ export class OAuthManager {
     if(provider?.baseURL!==definition.baseURL)throw new Error(t('errors.oauthEndpointLocked'));
     return {provider,definition};
   }
-  async connect(definitionId,id) {
+  async connect(definitionId,id,registrationId) {
     if(this.pending||this.disconnecting.size||this.refreshing.size)throw new Error(t('errors.oauthAlreadyConnecting'));
     const definition=oauthDefinition(definitionId,this.definitions),config={...definition.oauth};
     if(id&&!this.store.state.providers.some(p=>p.id===id))throw new Error(t('errors.providerNotFound'));
-    const selected=id&&this.store.state.providers.find(p=>p.id===id);
+    const registrations=(this.store.state.oauthRegistrations||[]).filter(p=>p.definitionId===definitionId);
+    const registration=!id&&config.retainRegistration&&registrationId!==null?
+      (registrationId?registrations.find(p=>p.id===registrationId):registrations.at(-1)):undefined;
+    if(registrationId&&!registration)throw new Error(t('errors.providerNotFound'));
+    const selected=id?this.store.state.providers.find(p=>p.id===id):registration;
     if(selected&&(!selected.oauth||selected.definitionId!==definitionId))throw new Error(t('errors.oauthEndpointLocked'));
     if(selected?.oauth.status==='revoking')throw new Error(t('errors.oauthRevokeFailed'));
     if(config.dynamicRegistration) {
@@ -43,7 +48,7 @@ export class OAuthManager {
       if(config.dynamicRegistration) {
         if(typeof clientId!=='string'||!/^[a-zA-Z0-9_-]{1,256}$/.test(clientId)||clientId===definition.oauth.clientId||(!config.newRegistration&&clientId!==config.clientId))throw new Error(t('errors.oauthInvalidResponse'));
         config.clientId=clientId;
-        if(config.newRegistration)id=await saveOAuthRegistration(this.store,definition,clientId);
+        if(!id)id=await saveOAuthRegistration(this.store,definition,clientId,registration);
       }
       const body=await oauthPost(config.tokenURL,{grant_type:'authorization_code',client_id:config.clientId,
         code,code_verifier:verifier,redirect_uri:redirectUri,...(config.resource?{resource:config.resource}:{})},this.fetcher);
@@ -124,10 +129,7 @@ export class OAuthManager {
       provider.oauth.status='revoking';await this.store.save();
       try {if(tokens)await this.revoke({...definition.oauth,clientId:provider.oauth.clientId||definition.oauth.clientId},tokens.refreshToken);}catch{throw new Error(t('errors.oauthRevokeFailed'));}
       if(definition.oauth.retainRegistration) {
-        delete provider.encryptedOAuth;provider.oauth.status='signed-out';provider.models=[];provider.model='';
-        delete provider.catalogUpdatedAt;
-        if(this.store.state.providerId===id)this.store.state.model='';
-        await this.store.save();
+        await archiveOAuthRegistration(this.store,provider);
       } else await this.store.deleteProvider(id);
     } finally {this.disconnecting.delete(id);}
   }

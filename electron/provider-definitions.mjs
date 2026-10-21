@@ -13,7 +13,7 @@ export const providerDefinitions = [
   },
   {id:'openai',name:'OpenAI',baseURL:'https://api.openai.com/v1',adapter:'openai-compatible'},
   {
-    id:'chatgpt',name:'ChatGPT',baseURL:'https://api.openai.com/v1',adapter:'openai-responses',supportsImages:true,
+    id:'chatgpt',name:'ChatGPT',logo:'providers/chatgpt.svg',logoMonochrome:true,baseURL:'https://api.openai.com/v1',adapter:'openai-responses',supportsImages:true,
     connectLabel:'ui.continueWithChatGPT',planLabel:'ui.usingChatGPTPlan',manageUsageURL:'https://chatgpt.com/settings/usage',
     accountCatalog:true,
     oauth:{clientId:'dynamic_agent_client',dynamicRegistration:true,agentName:'Archi Helper',

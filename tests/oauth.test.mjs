@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { Store } from '../electron/store.mjs';
 import { OAuthManager } from '../electron/oauth-manager.mjs';
 import { loopbackAuthorization } from '../electron/oauth-loopback.mjs';
-import { oauthDefinition,tokenResponse } from '../electron/oauth-config.mjs';
+import { oauthDefinition,oauthPost,tokenResponse } from '../electron/oauth-config.mjs';
 import { readOAuthTokens } from '../electron/oauth-store.mjs';
 import { api } from '../electron/provider.mjs';
 
@@ -122,4 +122,12 @@ test('provider definitions and token responses fail closed',()=>{
   assert.throws(()=>oauthDefinition(definition.id,[{...definition,baseURL:'http://evil.test'}]));
   assert.throws(()=>tokenResponse({access_token:'secret',token_type:'Bearer',expires_in:3600}));
   assert.throws(()=>tokenResponse({access_token:'secret\nheader',refresh_token:'refresh',token_type:'Bearer',expires_in:3600}));
+});
+
+test('OAuth failures preserve safe diagnostics for nested errors and redact submitted credentials',async()=>{
+  await assert.rejects(oauthPost('https://identity.example/token',{code:'one-use-secret',code_verifier:'private-verifier'},async()=>
+    Response.json({error:{code:'invalid_client',message:'Rejected one-use-secret and private-verifier'}},{status:401,headers:{'x-request-id':'request-123'}})),error=>{
+      assert.equal(error.oauthCode,'invalid_client');assert.equal(error.status,401);assert.equal(error.requestId,'request-123');
+      assert.match(error.message,/invalid_client/);assert.ok(!error.message.includes('one-use-secret'));assert.ok(!error.message.includes('private-verifier'));return true;
+    });
 });

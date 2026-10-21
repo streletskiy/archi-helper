@@ -29,3 +29,5 @@
 Персонаж и каска — исходные изображения проекта. Они созданы через [Aseprite MCP](https://github.com/MalloyTheDev/aseprite-mcp); сам Aseprite и сервер генерации в приложение не включены.
 
 Archi Helper — независимое приложение, не продукт Graphisoft.
+
+Логотип ChatGPT взят из [официальных материалов Sign in with ChatGPT](https://developers.openai.com/siwc/ui-ux-guidelines) ([SVG](https://developers.openai.com/assets/siwc/chatgpt-logo-white.svg)). Название и логотип принадлежат OpenAI и не покрываются MIT-лицензией Archi Helper.
