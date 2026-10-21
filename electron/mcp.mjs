@@ -9,6 +9,7 @@ export class MCP {
   constructor(runtime) { this.runtime=runtime; this.tools=[]; this.clients=new Map(); }
   async connect(port='') {
     await this.close();
+    this.port=port;
     const manifest=JSON.parse(await fs.readFile(path.join(this.runtime,'manifest.json'),'utf8'));
     this.python=path.join(this.runtime,manifest.python);
     const env={...process.env,PYTHONUTF8:'1',PYTHONNOUSERSITE:'1',ARCHICAD_MCP_SEARCH:'0',ARCHICAD_MCP_MODE:'all',ARCHICAD_TIMEOUT:'300',NO_PROXY:'127.0.0.1,localhost'};
@@ -37,12 +38,20 @@ export class MCP {
   async call(key,args,signal) {
     const tool=this.tools.find(t=>t.key===key || t.name===key);
     if(!tool)throw new Error(t('errors.toolNotFound',{value0:key}));
-    return this.clients.get(tool.server).callTool({name:tool.name,arguments:args},undefined,{timeout:330000,signal});
+    const result=await this.clients.get(tool.server).callTool({name:tool.name,arguments:args},undefined,{timeout:330000,signal});
+    if(tool.server==='archicad' && tool.name==='TestConnection' && !result.isError) {
+      const data=result.structuredContent || result.content?.filter(c=>c.type==='text').map(c=>{try{return JSON.parse(c.text);}catch{return null;}}).find(c=>c?.port);
+      if(Number.isInteger(data?.port) && data.port>=19723 && data.port<=19743)this.port=String(data.port);
+    }
+    return result;
   }
   search(query, limit=12) {
+    const exact=this.tools.filter(t=>[t.key,t.name].some(name=>name.toLowerCase()===query.trim().toLowerCase()));
+    const describe=t=>({name:t.key,description:t.description,readOnly:t.annotations?.readOnlyHint===true});
+    if(exact.length)return exact.map(t=>({...describe(t),inputSchema:t.inputSchema}));
     const words=query.toLowerCase().split(/\W+/).filter(Boolean);
     return this.tools.map(t=>({t,score:words.reduce((n,w)=>n+(t.name.toLowerCase()===w?25:0)+(t.name.toLowerCase().includes(w)?8:0)+((t.description||'').toLowerCase().includes(w)?1:0),0)}))
-      .filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,limit).map(({t})=>({name:t.key,description:t.description,inputSchema:t.inputSchema,readOnly:t.annotations?.readOnlyHint===true}));
+      .filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,limit).map(({t})=>({...describe(t),schemaHint:'Search find_tools with this exact name to retrieve the complete inputSchema before calling it.'}));
   }
-  async close() { await Promise.allSettled([...this.clients.values()].map(c=>c.close())); this.clients.clear(); this.tools=[]; }
+  async close() { await Promise.allSettled([...this.clients.values()].map(c=>c.close())); this.clients.clear(); this.tools=[]; this.port=''; }
 }
