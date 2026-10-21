@@ -54,3 +54,11 @@ test('HTTP quota errors are actionable and redact the bearer credential',async t
   mock(t,async()=>Response.json({error:{code:'subscription_sharing_usage_limit_exceeded',message:'test-access'}},{status:429}));
   await assert.rejects(models(provider),error=>error.code==='subscription_sharing_usage_limit_exceeded'&&error.usageAction===definition.manageUsageURL&&!error.message.includes('test-access'));
 });
+
+test('a proxy may omit the stream content type, but completed events remain mandatory',async t=>{
+  let content='data: '+JSON.stringify({type:'response.completed',response:{status:'completed',output:[{type:'message',content:[{type:'output_text',text:'Ready'}]}]}})+'\n\n';
+  mock(t,async()=>new Response(new TextEncoder().encode(content)));
+  assert.equal((await completion(provider,'model-a',[],[],undefined,()=>{})).content,'Ready');
+  content=JSON.stringify({status:'completed',output:[call]});
+  await assert.rejects(completion(provider,'model-a',[],tools,undefined,()=>{}));
+});

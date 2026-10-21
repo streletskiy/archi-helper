@@ -23,13 +23,25 @@ export async function saveOAuthProvider(store,definition,tokens,profile,id) {
 
 // Persist the issued registration before exchanging a one-use code. A failed exchange
 // or later logout must reuse this client rather than silently creating another grant.
-export async function saveOAuthRegistration(store,definition,clientId) {
-  const provider={id:crypto.randomUUID(),name:definition.name,baseURL:definition.baseURL,definitionId:definition.id,
+export async function saveOAuthRegistration(store,definition,clientId,registration) {
+  const previous={...store.state};
+  const provider={id:registration?.id||crypto.randomUUID(),name:definition.name,baseURL:definition.baseURL,definitionId:definition.id,
     adapter:definition.adapter,supportsImages:definition.supportsImages===true,models:[],model:'',
-    oauth:{clientId,status:'reauthorize',accountId:'',accountName:definition.name}};
-  store.state.providers.push(provider);
-  try {await store.save();}catch(error){store.state.providers=store.state.providers.filter(p=>p!==provider);throw error;}
+    oauth:{clientId,status:'reauthorize',accountId:registration?.oauth.accountId||'',accountName:registration?.oauth.accountName||definition.name}};
+  store.state.providers=[...store.state.providers,provider];
+  store.state.oauthRegistrations=(store.state.oauthRegistrations||[]).filter(p=>p.id!==provider.id);
+  try {await store.save();}catch(error){store.state=previous;throw error;}
   return provider.id;
+}
+
+// Logout removes the visible connection and its credentials. Keep only the issued
+// client/account mapping privately, so reconnecting does not create another grant.
+export async function archiveOAuthRegistration(store,provider) {
+  const previous={...store.state};
+  const {clientId,accountId,accountName}=provider.oauth;
+  store.state.oauthRegistrations=[...(store.state.oauthRegistrations||[]).filter(p=>p.id!==provider.id),
+    {id:provider.id,definitionId:provider.definitionId,oauth:{clientId,accountId,accountName}}];
+  try {await store.deleteProvider(provider.id);}catch(error){store.state=previous;throw error;}
 }
 
 export function readOAuthTokens(store,provider) {

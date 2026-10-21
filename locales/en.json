@@ -430,7 +430,7 @@
   "ui.oauthAccount": "Account: {name}",
   "ui.oauthConnected": "Connected",
   "ui.oauthNeedsAttention": "Reconnect or retry disconnecting",
-  "errors.oauthAccountMismatch": "This is a different account. Disconnect the previous account first, or add a separate connection.",
+  "errors.oauthAccountMismatch": "This is a different account. Disconnect the previous account first, then sign in again.",
   "ui.oauthDisconnect": "Disconnect and revoke access",
   "ui.providerWelcome": "Connect an AI provider to get started. Sign in through your browser or add your API key below.",
   "ui.continueWithChatGPT": "Continue with ChatGPT",
@@ -438,7 +438,6 @@
   "ui.manageUsage": "Manage usage",
   "ui.planWelcome": "Requests in this connection use your ChatGPT plan. Available models and limits depend on your account. Manage usage in ChatGPT settings. You can disconnect in provider settings.",
   "ui.gotIt": "Got it",
-  "ui.addOAuthAccount": "Add another {name} account",
   "ui.oauthSignedOut": "Signed out — sign in again to connect",
   "ui.oauthPlanDisabled": "Plan access is disabled. Continue sign-in to enable it.",
   "errors.oauthIdentityInvalid": "Could not verify the signed-in account. Sign in again.",
@@ -450,5 +449,14 @@
   "errors.planUsageLimit": "Your ChatGPT plan usage limit was reached. Open Manage usage to check availability.",
   "errors.planUsageUnavailable": "ChatGPT plan usage is temporarily unavailable. Try again later.",
   "errors.planNotEligible": "This account is not eligible for ChatGPT plan use in this app. Check your plan in ChatGPT.",
-  "errors.refreshAccountModels": "Refresh this account’s models in provider settings and choose an available model."
+  "errors.refreshAccountModels": "Refresh this account’s models in provider settings and choose an available model.",
+  "errors.oauthProviderFailure": "Authorization failed (HTTP {status}, {code}). {detail}",
+  "ui.providerRemoving": "Removing connection…",
+  "ui.providerRemoveConfirm": "Remove {name}?",
+  "ui.oauthRemoveDescription": "Access for {account} will be revoked and this connection removed. You can sign in again later. Chats and projects will remain.",
+  "ui.keyRemoveDescription": "The saved API key will be removed from this app. The key itself will remain active with the provider. Chats and projects will remain.",
+  "ui.oauthChooseAccount": "Choose an account",
+  "ui.oauthChooseAccountDescription": "Continue with a previous account or sign in with a different one.",
+  "ui.oauthDifferentAccount": "Use a different account",
+  "errors.oauthRegionUnsupported": "The provider does not support sign-in from the current country or region."
 }

@@ -1,5 +1,5 @@
 import { t } from '../locales/index.mjs';
-import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, Menu, session } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -9,6 +9,7 @@ import { Store, projectPath, INBOX_ID } from './store.mjs';
 import { models } from './provider.mjs';
 import { providerDefinitions } from './provider-definitions.mjs';
 import { OAuthManager } from './oauth-manager.mjs';
+import { configureProviderFetch } from './provider-network.mjs';
 import { EFFORTS } from './reasoning.mjs';
 import { MCP } from './mcp.mjs';
 import { Agent } from './agent.mjs';
@@ -25,8 +26,21 @@ else if(app.isPackaged)app.setPath('userData',path.join(app.getPath('appData'),'
 let win,store,mcp,agent,updates,connection={connected:false,message:t('ui.connectingAlt')},connecting,activeCalls=0;
 const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(here,'../runtime');
 const emit=data=>{if(win && !win.isDestroyed())win.webContents.send('archi:event',data);};
+let pendingProviderPrompt;
+function showProviderPrompt(options) {
+  if(pendingProviderPrompt)throw new Error(t('errors.oauthAlreadyConnecting'));
+  return new Promise(resolve=>{
+    pendingProviderPrompt={prompt:{...options,id:crypto.randomUUID()},resolve};
+    emit({type:'provider-prompt',prompt:pendingProviderPrompt.prompt});
+  });
+}
+function answerProviderPrompt({id,response}) {
+  const pending=pendingProviderPrompt;
+  if(!pending||pending.prompt.id!==id||!Number.isInteger(response)||response<0||response>=pending.prompt.buttons.length)throw new Error(t('errors.unknownOperation'));
+  pendingProviderPrompt=undefined;emit({type:'provider-prompt',prompt:null});pending.resolve({response});
+}
 const runtimeManifest=await fs.readFile(path.join(runtime,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({}));
-const publicState=()=>({...store.publicState(),appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state});
+const publicState=()=>({...store.publicState(),providerPrompt:pendingProviderPrompt?.prompt,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state});
 async function connect() {
   if(connecting)return connecting;
   connecting=(async()=>{
@@ -100,14 +114,25 @@ async function installTapir(version) {
 const handlers={
   bootstrap:async()=>publicState(),
   providerDefinitions:async()=>providerDefinitions,
+  answerProviderPrompt:async input=>{answerProviderPrompt(input);return true;},
   connectOAuth:async({definitionId,id})=>{
     if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
-    const providerId=await store.oauthManager.connect(definitionId,id);
+    let registrationId;
+    const registrations=!id&&(store.state.oauthRegistrations||[]).filter(p=>p.definitionId===definitionId);
+    if(registrations?.length) {
+      const buttons=[...registrations.map(p=>p.oauth.accountName),t('ui.oauthDifferentAccount'),t('ui.cancel')];
+      const {response}=await showProviderPrompt({kind:'account',definitionId,message:t('ui.oauthChooseAccount'),
+        detail:t('ui.oauthChooseAccountDescription'),buttons,defaultId:registrations.length-1,cancelId:buttons.length-1});
+      if(response===buttons.length-1)throw new Error(t('errors.oauthCancelled'));
+      registrationId=registrations[response]?.id||null;
+    }
+    if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
+    const providerId=await store.oauthManager.connect(definitionId,id,registrationId);
     const provider=store.state.providers.find(p=>p.id===providerId),definition=providerDefinitions.find(d=>d.id===definitionId);
     store.selectModel(providerId);await store.save();
     if(provider.oauth.planEnabled&&!(store.state.planNotices||[]).includes(definitionId)) {
       showAppWindow(win);
-      await dialog.showMessageBox(win,{type:'info',message:t(definition.planLabel),detail:t('ui.planWelcome'),buttons:[t('ui.gotIt')]});
+      await showProviderPrompt({kind:'info',definitionId,message:t(definition.planLabel),detail:t('ui.planWelcome'),buttons:[t('ui.gotIt')],defaultId:0,cancelId:0});
       store.state.planNotices=[...(store.state.planNotices||[]),definitionId];await store.save();
     }
     showAppWindow(win);return {providerId,state:publicState()};
@@ -141,7 +166,19 @@ const handlers={
   deleteProject:async({id})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.deleteProject(id);return publicState();}),
   moveDraft:async({projectId,id,targetProjectId})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));return store.moveDraft(projectId,id,targetProjectId||INBOX_ID);}),
   saveProvider:async input=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.provider(input);return publicState();},
-  deleteProvider:async({id})=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));if(store.state.providers.find(p=>p.id===id)?.oauth)await store.oauthManager.disconnect(id);else await store.deleteProvider(id);return publicState();},
+  deleteProvider:async({id})=>{
+    if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
+    const provider=store.state.providers.find(p=>p.id===id);
+    if(!provider)throw new Error(t('errors.providerNotFound'));
+    const {response}=await showProviderPrompt({kind:'remove',definitionId:provider.definitionId,
+      message:t('ui.providerRemoveConfirm',{name:provider.name}),
+      detail:t(provider.oauth?'ui.oauthRemoveDescription':'ui.keyRemoveDescription',{account:provider.oauth?.accountName||provider.name}),
+      buttons:[t('ui.cancel'),t(provider.oauth?'ui.oauthDisconnect':'ui.deleteProvider')],defaultId:0,cancelId:0});
+    if(response!==1)return publicState();
+    if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
+    if(provider.oauth)await store.oauthManager.disconnect(id);else await store.deleteProvider(id);
+    return publicState();
+  },
   models:async({id})=>{
     const p=store.getProvider(id),list=await models(p);
     const provider=store.state.providers.find(p=>p.id===id);if(!provider)return [];
@@ -183,7 +220,7 @@ const handlers={
     Object.assign(m,{text:JSON.stringify(result).slice(0,24000),status:result.isError?'error':'done',artifact});
     await store.saveSession(s);emit({type:'message',message:m,sessionId});return m;
   }),
-  send:async input=>{if(store.oauthManager.pending||store.oauthManager.disconnecting.size)throw new Error(t('errors.oauthAlreadyConnecting'));return agent.enqueue(input);},
+  send:async input=>{if(pendingProviderPrompt||store.oauthManager.pending||store.oauthManager.disconnecting.size)throw new Error(t('errors.oauthAlreadyConnecting'));return agent.enqueue(input);},
   queuedMessage:async input=>agent.changeQueued(input),
   resumeQueue:async input=>agent.resume(input),
   stop:async input=>agent.stop(input),
@@ -240,6 +277,9 @@ else {
   app.whenReady().then(async()=>{
   app.setAppUserModelId('app.ac-helper.archi');
   Menu.setApplicationMenu(null);
+  const providerSession=session.fromPartition('providers',{cache:false});
+  await providerSession.setProxy({mode:'system'});
+  configureProviderFetch((input,init)=>providerSession.fetch(input,{...init,credentials:'omit',cache:'no-store'}));
   store=new Store(app.getPath('userData'),{
     encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error(t('errors.windowsEncryptionIsUnavailable'));return safeStorage.encryptString(value).toString('base64');},
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
@@ -270,6 +310,6 @@ else {
     if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop().catch(()=>{});setTimeout(()=>win.destroy(),500);}});}
   });
   app.on('window-all-closed',()=>app.quit());
-   let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;updates.dispose();store.oauthManager.dispose();Promise.allSettled([agent.stop(),mcp.close()]).finally(()=>app.quit());}});
+   let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;if(pendingProviderPrompt)answerProviderPrompt({id:pendingProviderPrompt.prompt.id,response:pendingProviderPrompt.prompt.cancelId});updates.dispose();store.oauthManager.dispose();Promise.allSettled([agent.stop(),mcp.close()]).finally(()=>app.quit());}});
   }).catch(error=>{dialog.showErrorBox(t('errors.archiHelperStartupError'),error.message);app.quit();});
 }

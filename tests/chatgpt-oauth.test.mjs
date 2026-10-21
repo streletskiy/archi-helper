@@ -44,10 +44,14 @@ test('dynamic registration, verified identity, refresh and logout retain a reusa
   assert.deepEqual(await Promise.all(Array.from({length:8},()=>manager.access(id,'access-1'))),Array(8).fill('access-2'));
   assert.equal(state.requests.filter(r=>r.body.get('grant_type')==='refresh_token').length,1);
   assert.equal(readOAuthTokens(store,provider).refreshToken,'refresh-2');
-  await manager.disconnect(id);assert.equal(provider.oauth.status,'signed-out');assert.equal(provider.encryptedOAuth,undefined);
+  await manager.disconnect(id);assert.equal(store.state.providers.length,0);assert.equal(store.state.providerId,'');assert.equal(store.state.model,'');
+  assert.equal(store.state.oauthRegistrations[0].oauth.clientId,'oaiapp_1');
+  assert.equal(store.publicState().oauthRegistrations,undefined);
+  const disk=await fs.readFile(store.file,'utf8');assert.ok(!disk.includes('encryptedOAuth'));assert.ok(!disk.includes('access-2'));
+  const restarted=new Store(store.directory,store.secrets);await restarted.init('en');manager.store=restarted;
   assert.equal(state.requests.at(-1).body.get('client_id'),'oaiapp_1');assert.equal(state.requests.at(-1).body.get('token'),'refresh-2');
-  await manager.connect('chatgpt',id);assert.equal(state.authorizations.at(-1).newRegistration,false);assert.equal(state.authorizations.at(-1).clientId,'oaiapp_1');
-  assert.equal(store.state.installationId,host);assert.equal(store.state.providers.length,1);
+  assert.equal(await manager.connect('chatgpt'),id);assert.equal(state.authorizations.at(-1).newRegistration,false);assert.equal(state.authorizations.at(-1).clientId,'oaiapp_1');
+  assert.equal(restarted.state.installationId,host);assert.equal(restarted.state.providers.length,1);assert.equal(restarted.state.oauthRegistrations.length,0);
 });
 
 test('failed code exchange persists the issued client before retry and restart',async t=>{
@@ -79,9 +83,20 @@ test('revocation failure keeps encrypted credentials for retry; terminal refresh
   const {store,manager,state}=await fixture(t),id=await manager.connect('chatgpt');
   state.revocationFails=true;await assert.rejects(manager.disconnect(id));await assert.rejects(manager.access(id));assert.ok(store.state.providers[0].encryptedOAuth);
   await assert.rejects(manager.connect('chatgpt',id));
-  state.revocationFails=false;await manager.disconnect(id);await manager.connect('chatgpt',id);
+  state.revocationFails=false;await manager.disconnect(id);await manager.connect('chatgpt');
   state.tokenError='invalid_grant';await assert.rejects(manager.access(id,'access-2'));
   assert.equal(store.state.providers[0].encryptedOAuth,undefined);assert.equal(store.state.providers[0].oauth.clientId,'oaiapp_1');
+});
+
+test('account switching preserves previous registrations and cancellation leaves them hidden',async t=>{
+  const {store,manager,state}=await fixture(t),first=await manager.connect('chatgpt');
+  await manager.disconnect(first);
+  const authorize=manager.authorize;manager.authorize=async()=>{throw new Error('cancelled');};
+  await assert.rejects(manager.connect('chatgpt'),/cancelled/);assert.equal(store.state.providers.length,0);assert.equal(store.state.oauthRegistrations.length,1);
+  manager.authorize=authorize;state.subject='subject-2';const second=await manager.connect('chatgpt',undefined,null);
+  assert.notEqual(first,second);assert.equal(state.client,2);await manager.disconnect(second);
+  state.subject='subject-1';assert.equal(await manager.connect('chatgpt',undefined,first),first);
+  assert.equal(state.client,2);assert.equal(store.state.oauthRegistrations[0].id,second);
 });
 
 test('loopback binds dynamic client, nonce, PKCE, resource and installation; rejects swapped client IDs',async()=>{

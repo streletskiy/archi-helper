@@ -1,6 +1,6 @@
 import type { TranslationKey } from '../locales/index.mjs';
 export type ProviderDefinition = {
-  id:string;name:string;logo?:string;baseURL:string;adapter:string;supportsImages?:boolean;
+  id:string;name:string;logo?:string;logoMonochrome?:boolean;baseURL:string;adapter:string;supportsImages?:boolean;
   catalog?:{path:string;modelsPath:string[]};toolReasoningRestrictions?:string[];
   connectLabel?:TranslationKey;planLabel?:TranslationKey;manageUsageURL?:string;accountCatalog?:boolean;
   oauth?:{clientId:string;authorizationURL:string;tokenURL:string;revocationURL?:string;profileURL?:string;
