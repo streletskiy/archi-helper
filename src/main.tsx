@@ -1,12 +1,11 @@
 import { t, setLanguage, useLanguage } from './i18n';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Plus, Folder, FolderOpen, ArrowUp, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, LockKeyhole, Copy, CircleAlert } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import './style.css';
 import { suggestions } from './suggestions';
 import { Mascot } from './Mascot';
+import { MessageContent } from './MessageContent';
 import { needsModelRefresh, reasoningProfile, selectedEffort } from '../electron/reasoning.mjs';
 
 declare global { interface Window { archi: {call:(method:string,input?:unknown)=>Promise<any>;onEvent:(cb:(e:any)=>void)=>()=>void} } }
@@ -27,11 +26,6 @@ const labels=():Record<string,string>=>({get_api_catalog:t('ui.apiCatalog'),find
 function IconButton({title,onClick,children,disabled=false}:{title:string;onClick:()=>void;children:React.ReactNode;disabled?:boolean}) {
   return <button className="icon-button" title={title} aria-label={title} onClick={onClick} disabled={disabled}>{children}</button>;
 }
-function ProjectImage({projectId,src,alt}:{projectId?:string;src?:string;alt?:string}){
-  const [url,setURL]=useState(''),[error,setError]=useState('');
-  useEffect(()=>{let live=true;if(projectId&&src)api('image',{projectId,relative:src}).then(v=>{if(live)setURL(v);}).catch(e=>{if(live)setError(e.message);});return()=>{live=false;};},[projectId,src]);
-  return url?<img className="project-image" src={url} alt={alt||t('ui.processingResult')}/>:<span className="muted">{error||t('ui.loadingImage')}</span>;
-}
 function App(){
   const language=useLanguage();
   useEffect(()=>{document.documentElement.lang=language;document.title=`Archi Helper — ${t('ui.architectSAssistant')}`;},[language]);
@@ -45,8 +39,8 @@ function App(){
   const providerEditor=useRef<HTMLDivElement>(null);
   const sessionRef=useRef<string|undefined>(undefined),projectRef=useRef<Project|null>(null),bottom=useRef<HTMLDivElement>(null),textInput=useRef<HTMLTextAreaElement>(null);
   sessionRef.current=session?.id;projectRef.current=project;
-  const notify=(text:string,tone:'success'|'error'='success')=>setNotice({text,tone});
-  const guard=async(fn:()=>Promise<any>,label='')=>{try{if(label)setWorking(label);return await fn();}catch(e){notify((e as Error).message,'error');}finally{if(label)setWorking('');}};
+  const notify=useCallback((text:string,tone:'success'|'error'='success')=>setNotice({text,tone}),[]);
+  const guard=useCallback(async(fn:()=>Promise<any>,label='')=>{try{if(label)setWorking(label);return await fn();}catch(e){notify((e as Error).message,'error');}finally{if(label)setWorking('');}},[notify]);
   const copyMessage=async(text:string)=>{
     try{await navigator.clipboard.writeText(text);notify(t('ui.messageCopied'));}
     catch{notify(t('ui.couldNotCopyMessage'),'error');}
@@ -124,6 +118,7 @@ function App(){
     setToolArgs(JSON.stringify(args,null,2));
   };
   const reveal=(relative?:string)=>guard(()=>api('reveal',{projectId:project?.id,relative}));
+  const openMessageLink=useCallback((href?:string)=>guard(()=>href?.startsWith('https:')?api('external',{url:href}):api('reveal',{projectId:project?.id,relative:href})),[guard,project?.id]);
   const selectedProvider=state?.providers.find(p=>p.id===state.providerId);
   const reasoning=reasoningProfile(selectedProvider,state?.model||'');
   const effort=selectedEffort(reasoning.efforts,state?.reasoningEffort||'xhigh');
@@ -167,8 +162,8 @@ function App(){
               {suggestions().map(s=><button key={s.id} data-preset={s.id} title={s.description} onClick={()=>{setDraft(s.prompt);textInput.current?.focus();}}><Layers size={16}/><span>{s.title}</span></button>)}
             </div>}
           </div>:<div className="messages">
-            {groupMessages(session?.messages||[]).map(group=>{const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<article key={m.id} className={`message ${m.role}`}><div className="message-author">{m.role==='assistant'?<><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong></>:m.role==='user'?<><span className="user-avatar">{t('ui.y')}</span><strong>{t('ui.you')}</strong></>:<><Circle size={13}/><strong>{t('ui.pleaseNote')}</strong></>}{(m.role==='user'||m.role==='assistant')&&<span className="message-actions"><IconButton title={t('ui.copyMessage')} disabled={!m.text} onClick={()=>copyMessage(m.text)}><Copy size={15}/></IconButton></span>}</div><div className="prose"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{img:({src,alt})=><ProjectImage projectId={project?.id} src={typeof src==='string'?src:undefined} alt={alt}/>,a:({href,children})=><button className="inline-link" onClick={()=>href?.startsWith('https:')?guard(()=>api('external',{url:href})):reveal(href)}>{children}</button>}}>{m.text}</ReactMarkdown></div></article>;})}
-            {Object.entries(stream).filter(([,text])=>text.length>0).map(([id,text])=><article key={id} className="message assistant"><div className="message-author"><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong><span className="thinking-dot"/><span className="message-actions"><IconButton title={t('ui.copyMessage')} onClick={()=>copyMessage(text)}><Copy size={15}/></IconButton></span></div><div className="prose"><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></div></article>)}
+            {groupMessages(session?.messages||[]).map(group=>{const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<article key={m.id} className={`message ${m.role}`}><div className="message-author">{m.role==='assistant'?<><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong></>:m.role==='user'?<><span className="user-avatar">{t('ui.y')}</span><strong>{t('ui.you')}</strong></>:<><Circle size={13}/><strong>{t('ui.pleaseNote')}</strong></>}{(m.role==='user'||m.role==='assistant')&&<span className="message-actions"><IconButton title={t('ui.copyMessage')} disabled={!m.text} onClick={()=>copyMessage(m.text)}><Copy size={15}/></IconButton></span>}</div><div className="prose"><MessageContent text={m.text} projectId={project?.id} onLink={openMessageLink}/></div></article>;})}
+            {Object.entries(stream).filter(([,text])=>text.length>0).map(([id,text])=><article key={id} className="message assistant"><div className="message-author"><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong><span className="thinking-dot"/><span className="message-actions"><IconButton title={t('ui.copyMessage')} onClick={()=>copyMessage(text)}><Copy size={15}/></IconButton></span></div><div className="prose"><MessageContent text={text} projectId={project?.id} onLink={openMessageLink}/></div></article>)}
             {busy&&!Object.keys(stream).length&&<div className="working-indicator"><Mascot size={32} working/>{t('ui.working')}</div>}
             {approval&&<div className="approval-card"><div className="approval-title"><ShieldCheck size={21}/><div><strong>{approval.kind==='python'?t('ui.runProcessing'):t('ui.confirmAction')}</strong><p>{approval.description}</p></div></div><details className="approval-details" open={approval.kind==='python'}><summary>{approval.kind==='python'?t('ui.codeToRun'):t('ui.viewExactParameters')}</summary><pre>{pretty(approval.args)}</pre></details>{approval.kind==='python'&&<p className="muted">{t('ui.theScriptRunsLocallyWithYourPermissions')}</p>}<div className="approval-actions"><button className="secondary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:false}))}>{t('ui.cancel')}</button><button className="primary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:true}))}><Check size={15}/>{t('ui.run')}</button></div></div>}
           </div>}
