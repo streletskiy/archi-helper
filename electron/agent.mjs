@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { uid, projectPath, imageFile } from './store.mjs';
 import { completion } from './provider.mjs';
+import { compactSession, contextBudget } from './context.mjs';
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const str=description=>({type:'string',description});
@@ -125,14 +126,27 @@ export class Agent {
     session.messages.push(user);session.history.push({role:'user',content:text});
     if(session.messages.filter(m=>m.role==='user').length===1)session.title=text.slice(0,55);
     await this.store.saveSession(session);emit({type:'message',message:user});emit({type:'busy',busy:true});
+    let overflowRetries=0;
     try {
-      for(let round=0;round<40;round++) {
+      while(true) {
         signal.throwIfAborted();
-        const history=await this.prepareMessages(this.context(session.history),this.store.project(projectId).path,provider.supportsImages===true);
+        this.repair(session.history);
+        if(await compactSession({store:this.store,session,provider,model,signal}))emit({type:'message',message:await this.contextNotice(session)});
+        const history=await this.prepareMessages(session.history,this.store.project(projectId).path,provider.supportsImages===true);
         const id=uid();let streamed='';
-        const result=await completion(provider,model,[{role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode)},...history],agentTools.filter(t=>provider.supportsImages||t.function.name!=='view_image'),AbortSignal.any([signal,AbortSignal.timeout(180000)]),delta=>{
-          streamed+=delta;emit({type:'delta',id,delta});
-        });
+        let result;
+        try {
+          result=await completion(provider,model,[{role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode)},...history],agentTools.filter(t=>provider.supportsImages||t.function.name!=='view_image'),AbortSignal.any([signal,AbortSignal.timeout(180000)]),delta=>{
+            streamed+=delta;emit({type:'delta',id,delta});
+          },this.store.state.reasoningEffort);
+        } catch(error) {
+          if(!error.contextOverflow||overflowRetries>=3)throw error;
+          overflowRetries++;
+          session.contextLimit=Math.max(16000,Math.floor(contextBudget(this.store,provider,model,session)*.5));
+          if(await compactSession({store:this.store,session,provider,model,signal,force:true}))emit({type:'message',message:await this.contextNotice(session)});
+          continue;
+        }
+        overflowRetries=0;
         if(!result.content && !result.tool_calls?.length)throw new Error(t('agent.theModelReturnedAnEmptyResponseCheck'));
         session.history.push(result);
         if(result.content) {const m={id,role:'assistant',text:result.content,at:Date.now(),model};session.messages.push(m);emit({type:'message',message:m});}
@@ -160,7 +174,6 @@ export class Agent {
         }
         if(images.length){session.history.push({role:'user',content:images,_attachment:true});await this.store.saveSession(session);}
       }
-      throw new Error(t('agent.the40StepLimitWasReachedIntermediate'));
     } catch(e) {
       // Repair incomplete tool batches on cancellation/failure without replaying commands.
       this.repair(session.history);
@@ -177,17 +190,12 @@ export class Agent {
       }
     }
   }
-  context(history) {
-    this.repair(history);
-    // Trim only complete user turns; tool-call pairs remain together.
-    let start=0;while(JSON.stringify(history.slice(start)).length>this.store.state.maxContextChars){
-      const next=history.findIndex((m,i)=>i>start && m.role==='user'&&!m._attachment); if(next<0)throw new Error(t('agent.theCurrentTaskExceededTheContextLimit'));
-      start=next;
-    }
-    return history.slice(start);
+  async contextNotice(session) {
+    const message={id:uid(),role:'notice',text:t('agent.contextCompacted'),at:Date.now()};
+    session.messages.push(message);await this.store.saveSession(session);return message;
   }
   async prepareMessages(history,root,supportsImages=true) {
-    return Promise.all(history.map(async({_attachment,...message})=>{
+    return Promise.all(history.map(async({_attachment,_checkpoint,...message})=>{
       if(!Array.isArray(message.content))return message;
       return {...message,content:await Promise.all(message.content.map(async part=>{
         if(part.type!=='image_url' || !part.image_url.url.startsWith('archi-file:'))return part;

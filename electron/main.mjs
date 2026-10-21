@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Store, projectPath, imageFile } from './store.mjs';
 import { models } from './provider.mjs';
+import { EFFORTS } from './reasoning.mjs';
 import { MCP } from './mcp.mjs';
 import { Agent } from './agent.mjs';
 import updaterModule from 'electron-updater';
@@ -20,7 +21,8 @@ else if(app.isPackaged)app.setPath('userData',path.join(app.getPath('appData'),'
 let win,store,mcp,agent,updates,connection={connected:false,message:t('ui.connectingAlt')},connecting,activeCalls=0;
 const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(here,'../runtime');
 const emit=data=>{if(win && !win.isDestroyed())win.webContents.send('archi:event',data);};
-const publicState=()=>({...store.publicState(),connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,update:updates?.state});
+const runtimeManifest=await fs.readFile(path.join(runtime,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({}));
+const publicState=()=>({...store.publicState(),appVersion:app.getVersion(),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,update:updates?.state});
 async function connect() {
   if(connecting)return connecting;
   connecting=(async()=>{
@@ -113,17 +115,25 @@ const handlers={
   },
   newSession:async({projectId})=>store.newSession(projectId),
   renameSession:async({projectId,id,title})=>{const s=await store.session(projectId,id);s.title=String(title).slice(0,100);await store.saveSession(s);return s.title;},
-  saveProvider:async input=>{await store.provider(input);return publicState();},
-  deleteProvider:async({id})=>{store.state.providers=store.state.providers.filter(p=>p.id!==id);if(store.state.providerId===id){store.state.providerId=store.state.providers[0]?.id||'';store.state.model='';}await store.save();return publicState();},
+  saveProvider:async input=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.provider(input);return publicState();},
+  deleteProvider:async({id})=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.deleteProvider(id);return publicState();},
   models:async({id})=>{
     const p=store.getProvider(id),list=await models(p);
-    store.state.providers.find(p=>p.id===id).models=list;await store.save();return list;
+    const provider=store.state.providers.find(p=>p.id===id);if(!provider)return [];
+    provider.models=list;
+    provider.catalogVersion=1;
+    if(!provider.model)provider.model=list[0]?.id||'';
+    if(store.state.providerId===id&&!store.state.model)store.state.model=provider.model;
+    await store.save();return list;
   },
   settings:async input=>{
     if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
     if(input.language!==undefined)await store.setLanguage(input.language);
-    if(input.providerId!==undefined)store.state.providerId=String(input.providerId);
-    if(input.model!==undefined)store.state.model=String(input.model);
+    if(input.providerId!==undefined||input.model!==undefined)store.selectModel(input.providerId,input.model);
+    if(input.reasoningEffort!==undefined) {
+      if(!EFFORTS.includes(input.reasoningEffort))throw new Error(t('errors.invalidReasoning'));
+      store.state.reasoningEffort=input.reasoningEffort;
+    }
     if(input.permissionMode!==undefined) {
       if(!['review','read','full'].includes(input.permissionMode))throw new Error(t('errors.unknownWorkMode'));
       store.state.permissionMode=input.permissionMode;

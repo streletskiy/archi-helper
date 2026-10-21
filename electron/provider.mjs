@@ -1,4 +1,5 @@
 import { t } from '../locales/index.mjs';
+import { modelInfo, reasoningOptions, reasoningProfile } from './reasoning.mjs';
 function argumentText(value) {
   if(typeof value==='string')return value;
   // Some gateways serialize the SDK's argument union instead of its string value.
@@ -23,7 +24,9 @@ export async function api(provider, endpoint, init = {}) {
   });
   if (!response.ok) {
     const text = (await response.text()).slice(0,1500).replaceAll(provider.apiKey || '\0',t('errors.redacted'));
-    throw new Error(t('errors.providerHttp',{value0:response.status,value1:text}));
+    const error=new Error(t('errors.providerHttp',{value0:response.status,value1:text}));
+    error.status=response.status;error.contextOverflow=[400,413,422].includes(response.status)&&/context[_\s-]*(length|window)|maximum context|too many tokens|prompt.{0,30}(too long|exceed)|input.{0,30}exceed/i.test(text);
+    throw error;
   }
   return response;
 }
@@ -31,25 +34,47 @@ export async function models(provider) {
   const data=await (await api(provider,'models')).json();
   const items = data.data || data.models;
   if (!Array.isArray(items)) throw new Error(t('errors.theProviderReturnedAnInvalidModelList'));
-  return items.map(m=>({ id:typeof m==='string'?m:m.id, name: m.name || m.id || m })).filter(m=>m.id).sort((a,b)=>a.name.localeCompare(b.name));
+  const list=items.map(modelInfo).filter(m=>m.id);
+  // lumv exposes the same per-model variants used by its OpenCode integration.
+  if(new URL(provider.baseURL).hostname==='lumv.app') {
+    const catalog=await (await api(provider,'opencode/catalog')).json();
+    for(const model of list) {
+      const entry=catalog.providers?.lumv?.models?.[model.id];
+      if(entry)Object.assign(model,modelInfo({...entry,id:model.id,variants:entry.variants||[]}));
+    }
+  }
+  if(new URL(provider.baseURL).hostname==='openrouter.ai')for(const model of list) {
+    if(model.supportsReasoning&&!model.reasoningEfforts)model.reasoningEfforts=['none','minimal','low','medium','high','xhigh'];
+  }
+  return list.sort((a,b)=>a.name.localeCompare(b.name));
 }
-export async function completion(provider, model, messages, tools, signal, onDelta) {
+export async function completion(provider, model, messages, tools, signal, onDelta, effort='xhigh') {
+  // Reasoning state is provider-specific; never carry it into a different provider.
+  const format=reasoningProfile(provider,model).format;
+  messages=messages.map(({reasoning_content,reasoning_details,...message})=>({...message,...(format==='deepseek'&&message.role==='assistant'?{reasoning_content:reasoning_content||''}:{}),...(format==='openrouter'&&reasoning_details?{reasoning_details}:{})}));
   const response = await api(provider, 'chat/completions', {
     method:'POST', signal,
-    body:JSON.stringify({ model, messages, stream:true, ...(tools.length ? { tools, tool_choice:'auto' } : {}) })
+    body:JSON.stringify({ model, messages, stream:true, ...reasoningOptions(provider,model,effort), ...(tools.length ? { tools, tool_choice:'auto' } : {}) })
   });
   if (!response.headers.get('content-type')?.includes('text/event-stream')) {
     const body=await response.json(); if(body.error) throw new Error(body.error.message || JSON.stringify(body.error));
     const m=body.choices?.[0]?.message; if(!m) throw new Error(t('errors.theProviderResponseContainsNoMessage'));
-    if(m.content)onDelta(m.content); return { role:'assistant', content:m.content || null, ...(m.tool_calls?.length?{tool_calls:completeCalls(m.tool_calls)}:{}) };
+    if(m.content)onDelta(m.content); return { role:'assistant', content:m.content || null, ...(m.reasoning_content!==undefined?{reasoning_content:m.reasoning_content}:{}),...(m.reasoning_details?{reasoning_details:m.reasoning_details}:{}),...(m.tool_calls?.length?{tool_calls:completeCalls(m.tool_calls)}:{}) };
   }
-  const decoder=new TextDecoder(); let pending='', content='', finishReason, done=false, activeCall, dataLines=[]; const calls=new Map();
+  const decoder=new TextDecoder(); let pending='', content='', reasoning='', finishReason, done=false, activeCall, dataLines=[]; const calls=new Map(), reasoningDetails=new Map();
   const event = block => {
     const data=block.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');
     if(!data) return; if(data==='[DONE]'){done=true;return;}
     const parsed=JSON.parse(data); if(parsed.error) throw new Error(parsed.error.message || JSON.stringify(parsed.error));
     const choice=parsed.choices?.[0]; if(choice?.finish_reason)finishReason=choice.finish_reason;
     const delta=choice?.delta; if(!delta)return;
+    if(typeof delta.reasoning_content==='string')reasoning+=delta.reasoning_content;
+    for(const detail of delta.reasoning_details||[]) {
+      const key=detail.index??detail.id??reasoningDetails.size, previous=reasoningDetails.get(key)||{};
+      const combined={...previous,...detail};
+      for(const field of ['text','data','signature','summary'])if(typeof previous[field]==='string'&&typeof detail[field]==='string')combined[field]=previous[field]+detail[field];
+      reasoningDetails.set(key,combined);
+    }
     if(typeof delta.content==='string' && delta.content.length) { content+=delta.content; onDelta(delta.content); }
     for(const t of delta.tool_calls || []) {
       // Some OpenAI-compatible gateways emit complete calls with id but no index.
@@ -75,5 +100,5 @@ export async function completion(provider, model, messages, tools, signal, onDel
   if(!done && !finishReason)throw new Error(t('errors.theModelConnectionWasInterruptedIncompleteTool'));
   if(finishReason==='length')throw new Error(t('errors.theModelResponseReachedItsLimitShorten'));
   const tool_calls=completeCalls([...calls.values()]);
-  return {role:'assistant',content:content||null,...(tool_calls.length?{tool_calls}:{})};
+  return {role:'assistant',content:content||null,...(reasoning?{reasoning_content:reasoning}:{}),...(reasoningDetails.size?{reasoning_details:[...reasoningDetails.values()]}:{}),...(tool_calls.length?{tool_calls}:{})};
 }
