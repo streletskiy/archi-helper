@@ -2,25 +2,26 @@ import { t } from '../locales/index.mjs';
 import { systemMessage } from './instructions.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { uid, projectPath, imageFile } from './store.mjs';
+import { uid, projectPath } from './store.mjs';
+import { runPython } from './python.mjs';
 import { completion } from './provider.mjs';
 import { compactSession, estimateTokens, recordContextUsage, reduceContextLimit } from './context.mjs';
 import { enrichModels } from './model-catalog.mjs';
 import { resultData, toolSummary, recoveryHint } from './progress.mjs';
-import { saveApiCatalog, searchApiCatalog, catalogSummary, CATALOG_PATH } from './api-catalog.mjs';
+import { saveApiCatalog, searchApiCatalog, catalogSummary } from './api-catalog.mjs';
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const str=description=>({type:'string',description});
+const scope={type:'string',enum:['session','project'],description:'Default session: private chat workspace in app data. Project: original project files; write only user-requested final deliverables there.'};
 export const agentTools=[
   fn('get_api_catalog','Inspect the authoritative local command catalog. Search MCP tools, direct Tapir JSON commands, version-matched Graphisoft SDK methods and SDK type constructors. Exact names return complete schemas/signatures. Never invent API names or arguments.',{source:{type:'string',enum:['all','mcp','tapir','graphisoft','types']},query:str('English keywords or an exact documented name'),limit:{type:'integer',minimum:1,maximum:30}}),
   fn('find_tools','Find Archicad/Tapir commands by English keywords. Keyword searches return a compact list; search an exact returned name to get its complete argument schema before calling it.',{query:str('English keywords, or an exact returned command name such as archicad:GetElementsByType')},['query']),
   fn('call_archicad','Run a discovered MCP command with exact schema. Results are saved in full locally. Permissions follow the current work mode. For changes, include purpose in the user\'s language.',{name:str('Exact tool key from find_tools'),arguments:{type:'object',additionalProperties:true},purpose:str('Explain exactly what will change, in the user\'s language')},['name','arguments']),
-  fn('list_files','List files inside the current project folder.',{path:str('Relative directory, default .')}),
-  fn('read_file','Read a UTF-8 file in chunks. For JSON results use json_pointer to select a subtree; offset and limit apply to the selected text.',{path:str('Project-relative file'),offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:24000},json_pointer:str('Optional RFC6901 pointer, e.g. /content/0/text')},['path']),
-  fn('view_image','Inspect a PNG, JPEG or WebP from the project. The image is sent to your vision model. Convert PDF pages with Python first. Maximum 12 MiB per image.',{path:str('Project-relative image path')},['path']),
-  fn('write_file','Write a text report or script inside the project folder. Overwrite permissions follow the current work mode.',{path:str('Project-relative output filename'),content:str('Complete UTF-8 text')},['path','content']),
-  fn('run_python','Run Python for calculations, PDF/image processing or Archicad operations. Execution permissions follow the current work mode. This is a real local process, not a sandbox. Bundled: archicad, pypdf, fitz/PyMuPDF, Pillow. Working directory is project folder. Long outputs saved to file.',{code:str('Complete Python script'),purpose:str('Short explanation in the user\'s language')},['code','purpose'])
+  fn('list_files','List files in the chat workspace, or original project files with scope=project. Inspect exact paths before consuming a generated file.',{path:str('Relative directory, default .'),scope}),
+  fn('read_file','Read a UTF-8 file in chunks. For JSON results use json_pointer to select a subtree; offset and limit apply to the selected text. Default scope is the chat workspace.',{path:str('Relative file, or project:/path for an original project file'),scope,offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:24000},json_pointer:str('Optional RFC6901 pointer, e.g. /content/0/text')},['path']),
+  fn('view_image','Inspect a PNG, JPEG or WebP from the chat workspace or project. The image is sent to your vision model. Convert PDF pages with Python first. Maximum 12 MiB per image.',{path:str('Relative image path'),scope},['path']),
+  fn('write_file','Write a text report or script in the private chat workspace by default. Use scope=project only for explicitly requested final deliverables. Overwrite permissions follow the current work mode.',{path:str('Relative output filename'),content:str('Complete UTF-8 text'),scope},['path','content']),
+  fn('run_python','Run Python in the private chat workspace. Read original input files via os.environ[ARCHI_PROJECT_DIR]. Permissions follow the work mode; this is a real local process, not a sandbox. Bundled: archicad, pypdf, fitz/PyMuPDF, Pillow. Full output is logged. Batch slow API reads and print progress; a timeout has an unknown mutation outcome.',{code:str('Complete Python script'),purpose:str('Short explanation in the user\'s language'),timeout_seconds:{type:'integer',minimum:1,maximum:1800,description:'Default 300 seconds. Choose a justified longer limit for bounded work; prefer smaller batches and checkpoints.'}},['code','purpose'])
 ];
 
 export class Agent {
@@ -40,7 +41,7 @@ export class Agent {
   }
   async execute(session,name,args,mode,signal) {
     signal.throwIfAborted();
-    const root=this.store.project(session.projectId).path;
+    const root=await this.store.workspace(session.projectId,session.id);
     if(name==='get_api_catalog')return searchApiCatalog(await saveApiCatalog(this.mcp,root),args);
     if(name==='find_tools') return this.mcp.search(args.query);
     if(name==='call_archicad') {
@@ -57,12 +58,12 @@ export class Agent {
       return result;
     }
     if(name==='list_files') {
-      const dir=await projectPath(root,args.path||'.');
-      const entries=await fs.readdir(dir,{withFileTypes:true});
-      return entries.slice(0,500).map(e=>({name:e.name,directory:e.isDirectory()}));
+      const location=await this.store.resolveFile(session.projectId,session.id,args.path||'.',args);
+      const entries=await fs.readdir(location.file,{withFileTypes:true});
+      return {scope:location.scope==='legacy'?'session':location.scope,source:location.scope,path:args.path||'.',entries:entries.slice(0,500).map(e=>({name:e.name,directory:e.isDirectory()})),total:entries.length};
     }
     if(name==='read_file') {
-      const file=await projectPath(root,args.path);
+      const {file,scope}=await this.store.resolveFile(session.projectId,session.id,args.path,args);
       const stat=await fs.stat(file);
       if(stat.size>256*1024*1024)throw new Error(t('agent.theFileExceeds256MbProcessIt'));
       let text=await fs.readFile(file,'utf8');
@@ -75,53 +76,28 @@ export class Agent {
         text=typeof value==='string'?value:JSON.stringify(value,null,2);
       }
       const offset=Math.max(0,Math.floor(args.offset||0)),limit=Math.min(24000,Math.max(1,Math.floor(args.limit||16000)));
-      return {text:text.slice(offset,offset+limit),totalChars:text.length,offset,nextOffset:offset+limit<text.length?offset+limit:null};
+      return {scope:scope==='legacy'?'session':scope,source:scope,path:args.path,text:text.slice(offset,offset+limit),totalChars:text.length,offset,nextOffset:offset+limit<text.length?offset+limit:null};
     }
     if(name==='view_image') {
-      const {mime,data}=await imageFile(root,args.path);
+      const {mime,data}=await this.store.image(session.projectId,session.id,args.path,args);
       const relative=`.archi/images/${uid()}.${mime.split('/')[1]}`,file=await projectPath(root,relative);
       await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,data);
       return {imagePath:relative,originalPath:args.path,mime,bytes:data.length};
     }
     if(name==='write_file') {
       if(mode==='read')throw new Error(t('agent.writingIsForbiddenInReadOnlyMode'));
-      if(args.path.replaceAll('\\','/').startsWith('.archi/'))throw new Error(t('agent.theArchiFolderIsManagedByThe'));
-      const file=await projectPath(root,args.path);
+      const location=await this.store.resolveFile(session.projectId,session.id,args.path,{...args,write:true});
+      const file=location.file,relative=path.relative(location.root,file).replaceAll('\\','/');
+      if(relative==='.archi'||relative.startsWith('.archi/'))throw new Error(t('agent.theArchiFolderIsManagedByThe'));
       let exists=false;try{await fs.access(file);exists=true;}catch{}
       if(exists && mode!=='full')await this.confirm(session,'file',t('agent.overwrite',{value0:args.path}),{content:args.content},signal);
       await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,args.content,'utf8');
-      return {saved:args.path,bytes:Buffer.byteLength(args.content)};
+      return {saved:location.scope==='project'?`project:/${relative}`:relative,scope:location.scope,bytes:Buffer.byteLength(args.content)};
     }
     if(name==='run_python') {
       if(mode==='read')throw new Error(t('agent.pythonIsUnavailableInReadOnlyMode'));
       if(mode!=='full')await this.confirm(session,'python',args.purpose,{code:args.code},signal);
-      const script=await projectPath(root,`.archi/scripts/${uid()}.py`);
-      await fs.mkdir(path.dirname(script),{recursive:true});await fs.writeFile(script,args.code,'utf8');
-      const log=script.replace(/\.py$/,'.log');
-      const catalogPath=await projectPath(root,CATALOG_PATH);
-      return new Promise((resolve,reject)=>{
-        const env={...process.env,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8',PYTHONFAULTHANDLER:'1',PYTHONNOUSERSITE:'1',NO_PROXY:'localhost,127.0.0.1',
-          ARCHI_UV:path.join(this.mcp.runtime,'uv.exe'),UV_PYTHON:this.mcp.python,UV_PYTHON_DOWNLOADS:'never',ARCHI_API_CATALOG:catalogPath};
-        if(this.mcp.port)env.ARCHICAD_PORT=String(this.mcp.port);else delete env.ARCHICAD_PORT;
-        // Use our bundled executables even when Python/uv are absent from Windows.
-        const pathKey=Object.keys(env).find(key=>key.toUpperCase()==='PATH')||'PATH';
-        env[pathKey]=[path.dirname(this.mcp.python),this.mcp.runtime,env[pathKey]||''].join(path.delimiter);
-        for(const key of Object.keys(env))if(/(?:api.?key|token|secret|password|credential)/i.test(key))delete env[key];
-        const child=spawn(this.mcp.python,['-u',script],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
-        let preview='',total=0,write=Promise.resolve();const output=chunk=>{total+=chunk.length; if(preview.length<20000)preview+=chunk.toString('utf8').slice(0,20000-preview.length);write=write.then(()=>fs.appendFile(log,chunk));};
-        child.stdout.on('data',output);child.stderr.on('data',output);
-        const kill=()=>{
-          if(process.platform==='win32' && child.pid) {
-            const killer=spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});
-            killer.on('error',()=>child.kill());
-          } else child.kill();
-        };
-        signal.addEventListener('abort',kill,{once:true}); const timer=setTimeout(kill,300000);
-        child.on('error',reject);child.on('close',async code=>{
-          clearTimeout(timer);signal.removeEventListener('abort',kill);await write;
-          resolve({exitCode:code,isError:code!==0,output:preview,bytes:total,log:path.relative(root,log),script:path.relative(root,script),...(code===null?{warning:t('agent.theProcessStoppedCheckTheOutcomeCompleted')}:{})});
-        });
-      });
+      return runPython({store:this.store,mcp:this.mcp,session,code:args.code,timeoutSeconds:args.timeout_seconds,signal});
     }
     throw new Error(t('agent.unknownTool',{value0:name}));
   }
@@ -146,15 +122,16 @@ export class Agent {
         if(saved){saved.models=provider.models;await this.store.save();}
       }
       delete session.contextLimit;
-      const catalog=await saveApiCatalog(this.mcp,this.store.project(projectId).path);
-      const system={role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode,catalogSummary(catalog))};
+      const workspace=await this.store.workspace(projectId,sessionId);
+      const catalog=await saveApiCatalog(this.mcp,workspace);
+      const system={role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode,catalogSummary(catalog),{workspace,legacyProjectFiles:session.legacyProjectFiles})};
       const tools=agentTools.filter(t=>provider.supportsImages||t.function.name!=='view_image');
       const overhead=estimateTokens(system)+estimateTokens(tools);
       while(true) {
         signal.throwIfAborted();
         this.repair(session.history);
         if(await compactSession({store:this.store,session,provider,model,signal,overhead}))emit({type:'message',message:await this.contextNotice(session)});
-        const history=await this.prepareMessages(session.history,this.store.project(projectId).path,provider.supportsImages===true);
+        const history=await this.prepareMessages(session.history,session,provider.supportsImages===true);
         const id=uid();let streamed='';
         let result,usage;
         try {
@@ -224,13 +201,13 @@ export class Agent {
     const message={id:uid(),role:'notice',text:t('agent.contextCompacted'),at:Date.now()};
     session.messages.push(message);await this.store.saveSession(session);return message;
   }
-  async prepareMessages(history,root,supportsImages=true) {
+  async prepareMessages(history,session,supportsImages=true) {
     return Promise.all(history.map(async({_attachment,_checkpoint,...message})=>{
       if(!Array.isArray(message.content))return message;
       return {...message,content:await Promise.all(message.content.map(async part=>{
         if(part.type!=='image_url' || !part.image_url.url.startsWith('archi-file:'))return part;
         if(!supportsImages)return {type:'text',text:`Image ${part.image_url.url.slice('archi-file:'.length)} was not sent: the current API supports text only.`};
-        const {mime,data}=await imageFile(root,part.image_url.url.slice('archi-file:'.length));
+        const {mime,data}=await this.store.image(session.projectId,session.id,part.image_url.url.slice('archi-file:'.length));
         return {type:'image_url',image_url:{url:`data:${mime};base64,${data.toString('base64')}`}};
       }))};
     }));
