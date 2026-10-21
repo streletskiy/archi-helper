@@ -128,7 +128,8 @@ export class Agent extends MessageQueue {
       if(!model)throw new Error(t('ui.chooseAModel'));
       // Also resolve manually entered IDs, which need not appear in /models.
       const info=provider.models?.find(m=>m.id===model);
-      if(!info?.contextWindow) {
+      if(provider.adapter==='openai-responses'&&!info)throw new Error(t('errors.refreshAccountModels'));
+      if(!info?.contextWindow&&provider.adapter!=='openai-responses') {
         const [resolved]=await enrichModels(provider,[info||{id:model,name:model}]);
         provider.models=[...(provider.models||[]).filter(m=>m.id!==model),resolved];
         const saved=this.store.state.providers.find(p=>p.id===provider.id);
@@ -214,7 +215,8 @@ export class Agent extends MessageQueue {
       if(streamId)emit({type:'stream-reset',id:streamId});
       // Repair incomplete tool batches on cancellation/failure without replaying commands.
       this.repair(session.history);
-      const m={id:uid(),role:'notice',text:signal.aborted?t('agent.taskStoppedCompletedChangesRemainIfAn'):e.message,at:Date.now()};
+      const m={id:uid(),role:'notice',text:signal.aborted?t('agent.taskStoppedCompletedChangesRemainIfAn'):e.message,at:Date.now(),
+        ...(!signal.aborted&&e.usageAction?{usageAction:e.usageAction}:{})};
       session.messages.push(m);emit({type:'message',message:m});await this.store.saveSession(session);
       return false;
     }

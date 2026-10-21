@@ -4,7 +4,7 @@
 
 | Компонент | Лицензия / источник |
 | --- | --- |
-| Electron, React, react-markdown, remark-gfm, MCP SDK, electron-updater | MIT; лицензии включены в пакеты |
+| Electron, React, react-markdown, remark-gfm, MCP SDK, electron-updater, jose | MIT; лицензии включены в пакеты |
 | lucide-react | ISC |
 | CPython 3.13.7 | PSF |
 | uv 0.11.26 | MIT; полный текст в `vendor/licenses/uv-MIT.txt` |
