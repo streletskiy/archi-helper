@@ -11,10 +11,11 @@ export function toolSummary(name,args,result) {
   const command=name==='call_archicad'?String(args?.name||'').split(':').pop():name;
   const data=resultData(result);
   if(result?.isError) {
-    const error=result.error || (typeof data==='string'?data:result.output?.trim().split(/\r?\n/).filter(Boolean).at(-1)) || t('agent.openToolError');
+    const error=result.error || (name==='run_python'?t('agent.pythonExited',{code:result.exitCode??'unknown'}):typeof data==='string'?data:undefined) || t('agent.openToolError');
     return t('agent.toolFailed',{command,error:String(error).slice(0,280)});
   }
   if(name==='list_files' && Array.isArray(data))return t('agent.filesFound',{count:data.length,path:args.path||'.'});
+  if(name==='list_files' && Array.isArray(data?.entries))return t('agent.filesFound',{count:data.total,path:`${t(data.scope==='project'?'ui.projectFiles':'ui.chatFiles')}: ${data.path}`});
   if(name==='write_file' && data?.saved)return t('agent.fileSaved',{path:data.saved});
   if(name!=='call_archicad' || !data || typeof data!=='object')return;
   if(command==='TestConnection' && data.archicad_version)return t('agent.connectionConfirmed',{version:data.archicad_version});
@@ -34,6 +35,6 @@ export function toolSummary(name,args,result) {
 
 export function recoveryHint(name) {
   return name==='run_python'
-    ? 'Inspect the traceback and a small real data sample before another script. Use get_api_catalog to read the exact Graphisoft method signature, SDK type constructors or Tapir JSON schema for this connection. Prefer discovered call_archicad commands for Archicad operations. The Graphisoft SDK uses typed objects and to_dict(); Tapir commands use archicad_mcp.tapir.client.run_tapir_command(name, arguments). Probe imports before using optional libraries. After two failures with the same approach, explain and use a different approach. Never replay a mutation with an unknown outcome.'
+    ? 'Inspect error, termination, stderr and the full log before another script; stdout progress is not a failure reason. For missing files, list their actual directory and scope rather than guessing another path. Python cwd is the chat workspace; original inputs are under ARCHI_PROJECT_DIR and migrated service results under ARCHI_LEGACY_DIR. Verify that every prerequisite exists before a mutation. For timeout/cancellation the outcome may be unknown: inspect state first, then use bounded smaller batches and checkpoints, or a justified timeout_seconds. Use get_api_catalog for exact schemas and prefer discovered call_archicad commands. Probe imports before using optional libraries. After two failures with the same approach, explain and use a different approach. Never replay a mutation with an unknown outcome.'
     : 'Inspect the actual error. For an Archicad command, search find_tools with its exact name and follow the returned inputSchema. Do not guess argument names or response fields. After two failures with the same approach, explain and use a different approach. Never replay a mutation with an unknown outcome.';
 }

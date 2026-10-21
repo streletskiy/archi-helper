@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import {uid,projectPath} from './store.mjs';
+import {uid} from './store.mjs';
 import {t} from '../locales/index.mjs';
 
 // One owner for the live session and its persisted inbox. Queue edits and
@@ -37,7 +37,7 @@ export class MessageQueue {
     if(!['queue','steer',undefined].includes(input.delivery)||!['read','review','full'].includes(input.mode))throw new Error(t('errors.invalidQueuedMessage'));
     this.store.getProvider(input.providerId);
     if(typeof input.model!=='string'||!input.model.trim())throw new Error(t('ui.chooseAModel'));
-    for(const relative of attachments){const file=await projectPath(this.store.project(input.projectId).path,relative);if(!(await fs.stat(file)).isFile())throw new Error(t('errors.expectedAFileName'));}
+    for(const relative of attachments){const {file}=await this.store.resolveFile(input.projectId,input.sessionId,relative);if(!(await fs.stat(file)).isFile())throw new Error(t('errors.expectedAFileName'));}
     const paused=session.queuePaused;
     if(!this.running)session.queuePaused=session.pendingMessages.length>0;
     const delivery=input.delivery==='steer'&&this.running&&this.steerable&&!session.queuePaused?'steer':'queue';
