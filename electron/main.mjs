@@ -103,6 +103,13 @@ const handlers={
   connectOAuth:async({definitionId,id})=>{
     if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
     const providerId=await store.oauthManager.connect(definitionId,id);
+    const provider=store.state.providers.find(p=>p.id===providerId),definition=providerDefinitions.find(d=>d.id===definitionId);
+    store.selectModel(providerId);await store.save();
+    if(provider.oauth.planEnabled&&!(store.state.planNotices||[]).includes(definitionId)) {
+      showAppWindow(win);
+      await dialog.showMessageBox(win,{type:'info',message:t(definition.planLabel),detail:t('ui.planWelcome'),buttons:[t('ui.gotIt')]});
+      store.state.planNotices=[...(store.state.planNotices||[]),definitionId];await store.save();
+    }
     showAppWindow(win);return {providerId,state:publicState()};
   },
   cancelOAuth:async()=>{store.oauthManager.cancel();return true;},
@@ -138,10 +145,12 @@ const handlers={
   models:async({id})=>{
     const p=store.getProvider(id),list=await models(p);
     const provider=store.state.providers.find(p=>p.id===id);if(!provider)return [];
+    if(p.oauth&&(provider.oauth?.connectionId!==p.oauth.connectionId||provider.oauth.status!=='connected'||provider.oauth.planEnabled===false))return [];
     provider.models=list;
     provider.catalogVersion=2;provider.catalogUpdatedAt=Date.now();
-    if(!provider.model)provider.model=list[0]?.id||'';
-    if(store.state.providerId===id&&!store.state.model)store.state.model=provider.model;
+    const accountCatalog=providerDefinitions.find(d=>d.id===provider.definitionId)?.accountCatalog;
+    if(!provider.model||(accountCatalog&&!list.some(m=>m.id===provider.model)))provider.model=list[0]?.id||'';
+    if(store.state.providerId===id&&(!store.state.model||accountCatalog))store.state.model=provider.model;
     await store.save();return list;
   },
   settings:async input=>{
@@ -174,7 +183,7 @@ const handlers={
     Object.assign(m,{text:JSON.stringify(result).slice(0,24000),status:result.isError?'error':'done',artifact});
     await store.saveSession(s);emit({type:'message',message:m,sessionId});return m;
   }),
-  send:async input=>agent.enqueue(input),
+  send:async input=>{if(store.oauthManager.pending||store.oauthManager.disconnecting.size)throw new Error(t('errors.oauthAlreadyConnecting'));return agent.enqueue(input);},
   queuedMessage:async input=>agent.changeQueued(input),
   resumeQueue:async input=>agent.resume(input),
   stop:async input=>agent.stop(input),
