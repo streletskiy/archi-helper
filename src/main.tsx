@@ -16,7 +16,7 @@ type Provider={id:string;name:string;baseURL:string;hasKey:boolean;catalogVersio
 type Message={id:string;role:string;text:string;name?:string;status?:string;summary?:string;args?:unknown;artifact?:{path:string;bytes:number};model?:string};
 type Session={id:string;title:string;messages:Message[];updatedAt:number};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
-type State={appVersion?:string;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;update?:any};
+type State={appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;update?:any};
 const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
 const emptyProvider=()=>({id:'',name:'',baseURL:'',apiKey:'',supportsImages:false,reasoningFormat:'auto',reasoningEfforts:''});
 const effortLabel=(value:string)=>t(({none:'ui.reasoningNone',minimal:'ui.reasoningMinimal',low:'ui.reasoningLow',medium:'ui.reasoningMedium',high:'ui.reasoningHigh',xhigh:'ui.reasoningXhigh',max:'ui.reasoningMax',ultra:'ui.reasoningUltra'} as const)[value as 'xhigh']);
@@ -38,6 +38,7 @@ function App(){
   const [state,setState]=useState<State|null>(null),[project,setProject]=useState<Project|null>(null),[sessions,setSessions]=useState<Session[]>([]),[session,setSession]=useState<Session|null>(null);
   const [draft,setDraft]=useState(''),[mode,setMode]=useState('review'),[busy,setBusy]=useState(false),[stream,setStream]=useState<Record<string,string>>({}),[approval,setApproval]=useState<any>(null);
   const [update,setUpdate]=useState<any>(null),[choosing,setChoosing]=useState(false);
+  const updateBlocking=!state||state.updateOnly===true||(!update?.deferred&&['checking','downloading','ready','countdown','installing','error'].includes(update?.status));
   const [modal,setModal]=useState(''),[notice,setNotice]=useState<{text:string;tone:'success'|'error'}|null>(null),[working,setWorking]=useState(''),[attachments,setAttachments]=useState<string[]>([]);
   const [projectName,setProjectName]=useState(''),[search,setSearch]=useState(''),[toolSearch,setToolSearch]=useState(''),[tools,setTools]=useState<Tool[]>([]),[selectedTool,setSelectedTool]=useState<Tool|null>(null),[toolArgs,setToolArgs]=useState('{}');
   const [providerForm,setProviderForm]=useState(emptyProvider),[manualModel,setManualModel]=useState(''),[port,setPort]=useState(''),[instances,setInstances]=useState<any[]>([]),[acVersion,setAcVersion]=useState('27');
@@ -51,10 +52,10 @@ function App(){
     catch{notify(t('ui.couldNotCopyMessage'),'error');}
   };
   useEffect(()=>{
-    if(notice?.tone!=='success')return;
+    if(notice?.tone!=='success'||updateBlocking)return;
     const timer=setTimeout(()=>setNotice(null),4000);
     return()=>clearTimeout(timer);
-  },[notice]);
+  },[notice,updateBlocking]);
   const refresh=async()=>{const s=await api('bootstrap');setLanguage(s.language);setState(s);setUpdate(s.update);setPort(s.archicadPort);setMode(s.permissionMode||'review');return s;};
   const refreshSessions=async(p=projectRef.current)=>{if(p)setSessions(await api('sessions',{projectId:p.id}));};
   const openProject=async(p:Project)=>{
@@ -65,7 +66,7 @@ function App(){
   };
   useEffect(()=>{
     guard(async()=>{
-      const s=await refresh();if(s.projects.length)await openProject(s.projects[0]);
+      const s=await refresh();if(s.updateApplied)notify(t('ui.updateApplied',{version:s.appVersion}));if(s.projects.length)await openProject(s.projects[0]);
       const provider=s.providers.find((p:Provider)=>p.id===s.providerId);
       if(provider && needsModelRefresh(provider))await syncModels(provider.id);
     });
@@ -99,11 +100,12 @@ function App(){
   });
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{
+      if(updateBlocking)return;
       if(event.ctrlKey && event.key.toLowerCase()==='n'){event.preventDefault();if(project&&!busy)newSession();}
       if(event.key==='Escape')setModal('');
     };
     window.addEventListener('keydown',handler);return()=>window.removeEventListener('keydown',handler);
-  },[project,busy]);
+  },[project,busy,updateBlocking]);
   useEffect(()=>{
     if(!modal)return;
     const previous=document.activeElement as HTMLElement|null;
@@ -113,7 +115,7 @@ function App(){
     const trap=(e:KeyboardEvent)=>{if(e.key!=='Tab')return;const items=focusable(),first=items[0],last=items[items.length-1];if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}};
     document.addEventListener('keydown',trap);return()=>{cancelAnimationFrame(frame);document.removeEventListener('keydown',trap);previous?.focus();};
   },[modal]);
-  useEffect(()=>{api('updateIdle',{idle:!busy&&!draft.trim()&&!attachments.length&&!modal&&!approval}).catch(()=>{});},[busy,draft,attachments.length,modal,approval]);
+  useEffect(()=>{api('updateIdle',{idle:!busy&&!draft.trim()&&!attachments.length&&(!modal||updateBlocking)&&!approval}).catch(()=>{});},[busy,draft,attachments.length,modal,approval,updateBlocking]);
   const connect=()=>guard(async()=>{await api('connect');await refresh();},t('ui.connecting'));
   const openTools=()=>guard(async()=>{setTools(await api('tools'));setModal('tools');});
   const chooseTool=(t:Tool)=>{
@@ -141,10 +143,10 @@ function App(){
   const projectLabel=projectInfo?.projectName||projectInfo?.name||projectInfo?.projectPath?.split(/[\\/]/).pop()||(projectInfo?.isUntitled?t('ui.untitledUnsaved'):t('ui.openProject'));
   const tapirVersion=connected?(typeof state?.connection.data?.tapir_installed==='string'?state.connection.data.tapir_installed:state?.connection.data?.tapir_installed===true?state.connection.data.tapir_definitions:''):'';
   const updateStatus=update?.status||'idle';
-  const updateDescription=updateStatus==='disabled'?t('ui.updatesAreAvailableOnGithubReleases'):updateStatus==='error'?t('ui.couldNotCheckForUpdates'):updateStatus==='current'?t('ui.youHaveTheLatestVersion'):updateStatus==='checking'?t('ui.checkingUpdates'):updateStatus==='downloading'?t('ui.downloadingUpdate',{value0:update?.percent||0}):['ready','countdown'].includes(updateStatus)?t('ui.updateReadyWaitingForWorkToFinish'):updateStatus==='installing'?t('ui.installingUpdate'):t('ui.updatesInstallAutomatically');
+  const updateDescription=updateStatus==='disabled'?t('ui.updatesAreAvailableOnGithubReleases'):updateStatus==='error'?t('ui.updateRetryDescription'):updateStatus==='current'?t('ui.youHaveTheLatestVersion'):updateStatus==='checking'?t('ui.checkingUpdates'):updateStatus==='downloading'?t('ui.downloadingUpdate',{value0:update?.percent||0}):['ready','countdown'].includes(updateStatus)?t('ui.updateReadyWaitingForWorkToFinish'):updateStatus==='installing'?t('ui.installingUpdate'):t('ui.updatesInstallAutomatically');
+  if(updateBlocking)return <UpdateNotice update={update||{status:'checking'}} updateOnly={state?.updateOnly===true} onLater={()=>guard(async()=>setUpdate(await api('deferUpdate')))} onRetry={()=>guard(async()=>setUpdate(await api('checkUpdates')))}/>;
   return <div className="app">
     <div className="titlebar"><div className="titlebar-brand"><img src="./helmet.png" alt="" width="32"/>Archi Helper</div><div className="titlebar-actions"><label className="language-switch" title={t('ui.language')}><Languages size={15}/><select aria-label={t('ui.language')} value={language} disabled={!state||busy||choosing} onChange={e=>{const language=e.target.value;guard(async()=>{setChoosing(true);try{const s=await api('settings',{language});setLanguage(s.language);setState(s);}finally{setChoosing(false);}});}}><option value="ru">RU</option><option value="en">EN</option></select></label><div className="window-controls"><IconButton title={t('ui.minimize')} onClick={()=>api('window',{action:'minimize'})}><Minus size={14}/></IconButton><IconButton title={t('ui.maximize')} onClick={()=>api('window',{action:'maximize'})}><Square size={11}/></IconButton><IconButton title={t('ui.close')} onClick={()=>api('window',{action:'close'})}><X size={15}/></IconButton></div></div></div>
-    <UpdateNotice update={update} onLater={()=>guard(()=>api('deferUpdate'))}/>
     <div className="workspace">
       <aside className="sidebar">
         <button className="project-select" onClick={()=>setModal('projects')} disabled={busy}><Folder size={18}/><strong>{project?.name||t('ui.chooseProject')}</strong><ChevronDown size={14}/></button>
@@ -259,11 +261,22 @@ function ToolGroup({messages,reveal}:{messages:Message[];reveal:(relative?:strin
   </div>;
 }
 function Rename({title,onSave}:{title:string;onSave:(s:string)=>void}){const [value,setValue]=useState(title);return <div className="modal-body"><label>{t('ui.name')}<input autoFocus value={value} onChange={e=>setValue(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')onSave(value);}}/></label><div className="form-actions"><button className="primary" onClick={()=>onSave(value)}>{t('ui.save')}</button></div></div>;}
-function UpdateNotice({update,onLater}:{update:any;onLater:()=>void}){
+function UpdateNotice({update,updateOnly,onLater,onRetry}:{update:any;updateOnly:boolean;onLater:()=>void;onRetry:()=>void}){
   const [now,setNow]=useState(Date.now());
   useEffect(()=>{if(update?.status!=='countdown')return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[update?.status,update?.restartAt]);
-  if(!['downloading','ready','countdown','installing'].includes(update?.status))return null;
-  const text=update.status==='downloading'?t('ui.downloadingUpdate',{value0:update.percent||0}):update.status==='countdown'?t('ui.updateReadyRestartingInS',{value0:Math.max(0,Math.ceil((update.restartAt-now)/1000))}):update.status==='installing'?t('ui.installingUpdate'):update.deferred?t('ui.willUpdateOnNextLaunch'):t('ui.updateReadyWaitingForWorkToFinish');
-  return <div className="update-notice" role="status"><span>{text}</span>{['ready','countdown'].includes(update.status)&&!update.deferred&&<button onClick={onLater}>{t('ui.later')}</button>}</div>;
+  const status=update.status,percent=Math.max(0,Math.min(100,Math.round(update.percent||0)));
+  const spinning=['checking','downloading','installing'].includes(status),indeterminate=['checking','installing'].includes(status);
+  const text=status==='checking'?t('ui.checkingUpdates'):status==='downloading'?t('ui.downloadingUpdate',{value0:percent}):status==='countdown'?t('ui.updateReadyRestartingInS',{value0:Math.max(0,Math.ceil((update.restartAt-now)/1000))}):status==='installing'?t(update.stage==='preparing'?'ui.updatePreparingTitle':update.stage==='restarting'?'ui.updateRestartingTitle':update.stage==='reopening'?'ui.reopenApplication':'ui.installingUpdate'):status==='error'?t('ui.updateFailed'):status==='current'?t('ui.youHaveTheLatestVersion'):update.deferred?t('ui.willUpdateOnNextLaunch'):t('ui.updateReadyWaitingForWorkToFinish');
+  const description=status==='checking'?t('ui.updateCheckingDescription'):status==='downloading'?t('ui.updateDownloadDescription'):status==='installing'?t(update.stage==='preparing'?'ui.updatePreparingDescription':update.stage==='restarting'?'ui.updateRestartingDescription':update.stage==='reopening'?'ui.updateReopeningDescription':'ui.updateInstallDescription'):status==='error'?t(updateOnly?'ui.updateInstallFailedDescription':'ui.updateRetryDescription'):status==='countdown'?t('ui.updateRestartDescription'):status==='ready'?t(update.deferred?'ui.updateDeferredDescription':'ui.updateWaitingDescription'):'';
+  const step=status==='checking'?0:status==='downloading'?1:update.stage==='restarting'?3:2;
+  const steps=[t('ui.updateCheckStage'),t('ui.updateDownloadStage'),t('ui.updateInstallStage'),t('ui.updateLaunchStage')];
+  return <div className="update-screen"><section className={`update-notice ${status==='error'?'has-error':''}`} aria-label={t('ui.updates')}>
+    <div className="update-screen-brand"><img src="./helmet.png" alt="" width="36" height="36"/><span>Archi Helper</span></div>
+    <div className="update-notice-heading"><span className="update-notice-icon" aria-hidden="true">{spinning?<RotateCw size={25} className="spin"/>:status==='error'?<CircleAlert size={25}/>:<Check size={25}/>}</span><div className="update-notice-copy" role="status"><strong>{text}</strong>{(update.nextVersion||update.version)&&<span>v{update.nextVersion||update.version}</span>}</div></div>
+    {!['error','current'].includes(status)&&<><ol className="update-steps">{steps.map((label,index)=><li key={label} className={index<step?'done':index===step?'active':''} aria-current={index===step?'step':undefined}><span aria-hidden="true">{index<step?<Check size={12}/>:index===step&&spinning?<RotateCw size={12} className="spin"/>:<Circle size={12}/>}</span>{label}</li>)}</ol><div className={`update-progress ${indeterminate?'is-indeterminate':''}`} role="progressbar" aria-label={text} aria-valuemin={0} aria-valuemax={100} aria-valuenow={indeterminate?undefined:status==='downloading'?percent:100}><span style={{width:indeterminate?'30%':`${status==='downloading'?percent:100}%`}}/></div></>}
+    {status==='downloading'&&<div className="update-transfer"><span>{update.total>0?t('ui.updateTransfer',{transferred:bytes(update.transferred||0),total:bytes(update.total)}):`${percent}%`}</span>{update.bytesPerSecond>0&&<span>{t('ui.updateSpeed',{speed:bytes(update.bytesPerSecond)})}</span>}</div>}
+    {description&&<p className="update-notice-description">{description}</p>}
+    {(['ready','countdown'].includes(status)&&!update.deferred||status==='error')&&<div className="update-notice-actions">{status==='error'&&!updateOnly&&<button className="text-button" onClick={onLater}>{t('ui.continueWithoutUpdate')}</button>}<button className="secondary" onClick={status==='error'?onRetry:onLater}>{status==='error'?t(updateOnly?'ui.reopenApplication':'ui.checkForUpdates'):t('ui.later')}</button></div>}
+  </section></div>;
 }
 createRoot(document.getElementById('root')!).render(<App/>);

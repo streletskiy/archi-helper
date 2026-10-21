@@ -12,6 +12,7 @@ import { MCP } from './mcp.mjs';
 import { Agent } from './agent.mjs';
 import updaterModule from 'electron-updater';
 import { createUpdates } from './updates.mjs';
+import { installUpdate, cleanupUpdateHelper } from './update-install.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWith('--archi-data-dir='))?.slice('--archi-data-dir='.length);
@@ -22,7 +23,7 @@ let win,store,mcp,agent,updates,connection={connected:false,message:t('ui.connec
 const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(here,'../runtime');
 const emit=data=>{if(win && !win.isDestroyed())win.webContents.send('archi:event',data);};
 const runtimeManifest=await fs.readFile(path.join(runtime,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({}));
-const publicState=()=>({...store.publicState(),appVersion:app.getVersion(),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,update:updates?.state});
+const publicState=()=>({...store.publicState(),appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,update:updates?.state});
 async function connect() {
   if(connecting)return connecting;
   connecting=(async()=>{
@@ -198,7 +199,7 @@ else {
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
   });
   await store.init(app.getLocale());connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);
-  updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>updaterModule.autoUpdater.quitAndInstall(true,true)});
+  updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>installUpdate({app,win,updater:updaterModule.autoUpdater,update:updates.state,language:store.state.language})});
   ipcMain.handle('archi:call',async(event,method,input={})=>{
     if(event.sender!==win?.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error(t('errors.untrustedRequest'));
     if(updates.state.status==='installing'&&!['bootstrap','window'].includes(method))throw new Error(t('errors.anUpdateIsBeingInstalled'));
@@ -213,12 +214,13 @@ else {
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',(event)=>event.preventDefault());
   if(!app.isPackaged && process.env.ARCHI_DEV_URL)await win.loadURL(process.env.ARCHI_DEV_URL);else await win.loadFile(path.resolve(here,'../dist/index.html'));
-  win.show();connect();
-  const updateTimer=setTimeout(()=>updates.check(),15000);updateTimer.unref();
+  win.show();process.send?.({type:'archi-ready'});
+  const cleanupTimer=setTimeout(()=>cleanupUpdateHelper(app),1000);cleanupTimer.unref();
+  updates.start();connect();
   win.on('close',event=>{
     if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop();setTimeout(()=>win.destroy(),500);}});}
   });
   app.on('window-all-closed',()=>app.quit());
-  let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;clearTimeout(updateTimer);updates.dispose();agent.stop();mcp.close().finally(()=>app.quit());}});
+  let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;updates.dispose();agent.stop();mcp.close().finally(()=>app.quit());}});
   }).catch(error=>{dialog.showErrorBox(t('errors.archiHelperStartupError'),error.message);app.quit();});
 }
