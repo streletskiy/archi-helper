@@ -50,6 +50,8 @@ function App(){
   const [providerForm,setProviderForm]=useState(emptyProvider),[manualModel,setManualModel]=useState(''),[port,setPort]=useState(''),[instances,setInstances]=useState<any[]>([]),[acVersion,setAcVersion]=useState('27');
   const providerEditor=useRef<HTMLDivElement>(null);
   const sessionRef=useRef<string|undefined>(undefined),projectRef=useRef<Project|null>(null),textInput=useRef<HTMLTextAreaElement>(null);
+  const draftSnapshot=useRef({text:draft,files:attachments});
+  draftSnapshot.current={text:draft,files:attachments};
   sessionRef.current=session?.id;projectRef.current=project;
   const projectId=project?.id||INBOX_ID,readOnly=!!project?.archivedAt||!!session?.archivedAt;
   const workspaceLocked=busy||submitting||navigating||!!working;
@@ -65,7 +67,7 @@ function App(){
     return()=>clearTimeout(timer);
   },[notice,updateBlocking]);
   const refresh=async()=>{const s=await api('bootstrap');setLanguage(s.language);setState(s);setBusy(s.busy);setApproval(s.approval&&s.approval.sessionId===s.activeSession?s.approval.approval:null);setUpdate(s.update);setPort(s.archicadPort);setMode(s.permissionMode||'review');return s;};
-  const rememberDraft=()=>savedDrafts.current.set(sessionRef.current||`draft:${projectRef.current?.id||INBOX_ID}`,{text:draft,files:[...attachments]});
+  const rememberDraft=()=>savedDrafts.current.set(sessionRef.current||`draft:${projectRef.current?.id||INBOX_ID}`,{text:draftSnapshot.current.text,files:[...draftSnapshot.current.files]});
   const restoreDraft=(p:Project|null,s?:Session|null)=>{const saved=savedDrafts.current.get(s?.id||`draft:${p?.id||INBOX_ID}`);setDraft(saved?.text||'');setAttachments(saved?.files||[]);};
   const refreshSessions=async(p=projectRef.current)=>{const id=p?.id||INBOX_ID,groups:SessionGroup[]=await api('sessionIndex'),list=groups.find(group=>group.projectId===id)?.sessions||[];setSessionGroups(groups);return list;};
   const openProject=async(p:Project|null,activeSession?:string)=>{
