@@ -213,9 +213,11 @@ else {
   win=new BrowserWindow({width:1440,height:950,minWidth:1000,minHeight:680,show:false,backgroundColor:'#f7f7f2',frame:false,title:'Archi Helper',icon:path.resolve(here,'../dist/icon.png'),webPreferences:{preload:path.join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',(event)=>event.preventDefault());
+  const painted=new Promise(resolve=>win.once('ready-to-show',resolve));
   if(!app.isPackaged && process.env.ARCHI_DEV_URL)await win.loadURL(process.env.ARCHI_DEV_URL);else await win.loadFile(path.resolve(here,'../dist/index.html'));
-  win.show();process.send?.({type:'archi-ready'});
-  const cleanupTimer=setTimeout(()=>cleanupUpdateHelper(app),1000);cleanupTimer.unref();
+  await painted;
+  win.show();process.send?.({type:'archi-ready',version:app.getVersion()});
+  const cleanupTimer=setTimeout(()=>cleanupUpdateHelper(app).catch(()=>{}),1000);cleanupTimer.unref();
   updates.start();connect();
   win.on('close',event=>{
     if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop();setTimeout(()=>win.destroy(),500);}});}
