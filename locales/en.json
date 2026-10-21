@@ -310,6 +310,7 @@
   "ui.notInstalled": "Not installed",
   "ui.statusUnknown": "Status unknown",
   "ui.updates": "Updates",
+  "ui.apiCatalog": "API command catalog",
   "ui.checkingUpdates": "Checking for updates…",
   "ui.openReleases": "View releases",
   "ui.dataAndPrivacy": "Data and privacy",

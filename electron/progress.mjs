@@ -34,6 +34,6 @@ export function toolSummary(name,args,result) {
 
 export function recoveryHint(name) {
   return name==='run_python'
-    ? 'Inspect the traceback and a small real data sample before another script. Prefer discovered call_archicad commands for Archicad operations. The Graphisoft SDK uses typed objects and to_dict(); Tapir commands use archicad_mcp.tapir.client.run_tapir_command(name, arguments). Probe imports before using optional libraries. After two failures with the same approach, explain and use a different approach. Never replay a mutation with an unknown outcome.'
+    ? 'Inspect the traceback and a small real data sample before another script. Use get_api_catalog to read the exact Graphisoft method signature, SDK type constructors or Tapir JSON schema for this connection. Prefer discovered call_archicad commands for Archicad operations. The Graphisoft SDK uses typed objects and to_dict(); Tapir commands use archicad_mcp.tapir.client.run_tapir_command(name, arguments). Probe imports before using optional libraries. After two failures with the same approach, explain and use a different approach. Never replay a mutation with an unknown outcome.'
     : 'Inspect the actual error. For an Archicad command, search find_tools with its exact name and follow the returned inputSchema. Do not guess argument names or response fields. After two failures with the same approach, explain and use a different approach. Never replay a mutation with an unknown outcome.';
 }

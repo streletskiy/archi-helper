@@ -42,6 +42,7 @@ export class MCP {
     if(tool.server==='archicad' && tool.name==='TestConnection' && !result.isError) {
       const data=result.structuredContent || result.content?.filter(c=>c.type==='text').map(c=>{try{return JSON.parse(c.text);}catch{return null;}}).find(c=>c?.port);
       if(Number.isInteger(data?.port) && data.port>=19723 && data.port<=19743)this.port=String(data.port);
+      if(data?.archicad_version)this.connectionInfo=data;
     }
     return result;
   }
@@ -53,5 +54,5 @@ export class MCP {
     return this.tools.map(t=>({t,score:words.reduce((n,w)=>n+(t.name.toLowerCase()===w?25:0)+(t.name.toLowerCase().includes(w)?8:0)+((t.description||'').toLowerCase().includes(w)?1:0),0)}))
       .filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,limit).map(({t})=>({...describe(t),schemaHint:'Search find_tools with this exact name to retrieve the complete inputSchema before calling it.'}));
   }
-  async close() { await Promise.allSettled([...this.clients.values()].map(c=>c.close())); this.clients.clear(); this.tools=[]; this.port=''; }
+  async close() { await Promise.allSettled([...this.clients.values()].map(c=>c.close())); this.clients.clear(); this.tools=[]; this.port=''; this.connectionInfo=null; }
 }

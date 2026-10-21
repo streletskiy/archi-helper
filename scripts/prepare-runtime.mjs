@@ -20,6 +20,7 @@ const sitePackages=path.join(path.dirname(python),'Lib','site-packages');
 run(uv,['pip','sync','--python',python,'--target',sitePackages,lock]);
 run(uv,['pip','install','--python',python,'--target',sitePackages,'--no-deps','./vendor/archicad-mcp']);
 run(python,['-c','import fastmcp,archicad_mcp,archicad,PIL,fitz,pypdf; print("Portable runtime: imports OK")']);
+run(python,[path.join(root,'electron','api_catalog.py'),path.join(runtime,'api-catalog.json')]);
 await fs.writeFile(path.join(runtime,'manifest.json'),JSON.stringify({python:path.relative(runtime,python),pythonVersion:'3.13.7',archicadMcpCommit:'13b8645cf9d6c59543a9c2f6b0021ac76e2b0b36',tapirDefinitions:'1.7.2'},null,2));
 await fs.copyFile(lock,path.join(runtime,'requirements.lock'));
 console.log('Portable runtime ready.');

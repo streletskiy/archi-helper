@@ -8,10 +8,12 @@ import { completion } from './provider.mjs';
 import { compactSession, estimateTokens, recordContextUsage, reduceContextLimit } from './context.mjs';
 import { enrichModels } from './model-catalog.mjs';
 import { resultData, toolSummary, recoveryHint } from './progress.mjs';
+import { saveApiCatalog, searchApiCatalog, catalogSummary, CATALOG_PATH } from './api-catalog.mjs';
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const str=description=>({type:'string',description});
 export const agentTools=[
+  fn('get_api_catalog','Inspect the authoritative local command catalog. Search MCP tools, direct Tapir JSON commands, version-matched Graphisoft SDK methods and SDK type constructors. Exact names return complete schemas/signatures. Never invent API names or arguments.',{source:{type:'string',enum:['all','mcp','tapir','graphisoft','types']},query:str('English keywords or an exact documented name'),limit:{type:'integer',minimum:1,maximum:30}}),
   fn('find_tools','Find Archicad/Tapir commands by English keywords. Keyword searches return a compact list; search an exact returned name to get its complete argument schema before calling it.',{query:str('English keywords, or an exact returned command name such as archicad:GetElementsByType')},['query']),
   fn('call_archicad','Run a discovered MCP command with exact schema. Results are saved in full locally. Permissions follow the current work mode. For changes, include purpose in the user\'s language.',{name:str('Exact tool key from find_tools'),arguments:{type:'object',additionalProperties:true},purpose:str('Explain exactly what will change, in the user\'s language')},['name','arguments']),
   fn('list_files','List files inside the current project folder.',{path:str('Relative directory, default .')}),
@@ -39,6 +41,7 @@ export class Agent {
   async execute(session,name,args,mode,signal) {
     signal.throwIfAborted();
     const root=this.store.project(session.projectId).path;
+    if(name==='get_api_catalog')return searchApiCatalog(await saveApiCatalog(this.mcp,root),args);
     if(name==='find_tools') return this.mcp.search(args.query);
     if(name==='call_archicad') {
       const tool=this.mcp.tools.find(t=>t.key===args.name || t.name===args.name);
@@ -49,7 +52,9 @@ export class Agent {
         const titles={CreatePolylines:t('agent.createPolylines'),CreateTexts:t('agent.addText'),DeleteElements:t('agent.deleteSelectedElements'),SaveProject:t('agent.saveProject'),SetPropertiesOfElements:t('agent.changeElementProperties'),SetDetailsOfElements:t('agent.changeElementParameters'),SetTextOfTextElements:t('agent.changeText')};
         if(mode!=='full')await this.confirm(session,'archicad',args.purpose||titles[tool.name]||tool.name,args.arguments,signal);
       }
-      return this.mcp.call(tool.key,args.arguments,signal);
+      const result=await this.mcp.call(tool.key,args.arguments,signal);
+      if(tool.name==='TestConnection'&&!result.isError)await saveApiCatalog(this.mcp,root);
+      return result;
     }
     if(name==='list_files') {
       const dir=await projectPath(root,args.path||'.');
@@ -93,9 +98,10 @@ export class Agent {
       const script=await projectPath(root,`.archi/scripts/${uid()}.py`);
       await fs.mkdir(path.dirname(script),{recursive:true});await fs.writeFile(script,args.code,'utf8');
       const log=script.replace(/\.py$/,'.log');
+      const catalogPath=await projectPath(root,CATALOG_PATH);
       return new Promise((resolve,reject)=>{
         const env={...process.env,PYTHONUTF8:'1',PYTHONIOENCODING:'utf-8',PYTHONFAULTHANDLER:'1',PYTHONNOUSERSITE:'1',NO_PROXY:'localhost,127.0.0.1',
-          ARCHI_UV:path.join(this.mcp.runtime,'uv.exe'),UV_PYTHON:this.mcp.python,UV_PYTHON_DOWNLOADS:'never'};
+          ARCHI_UV:path.join(this.mcp.runtime,'uv.exe'),UV_PYTHON:this.mcp.python,UV_PYTHON_DOWNLOADS:'never',ARCHI_API_CATALOG:catalogPath};
         if(this.mcp.port)env.ARCHICAD_PORT=String(this.mcp.port);else delete env.ARCHICAD_PORT;
         // Use our bundled executables even when Python/uv are absent from Windows.
         const pathKey=Object.keys(env).find(key=>key.toUpperCase()==='PATH')||'PATH';
@@ -140,7 +146,8 @@ export class Agent {
         if(saved){saved.models=provider.models;await this.store.save();}
       }
       delete session.contextLimit;
-      const system={role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode)};
+      const catalog=await saveApiCatalog(this.mcp,this.store.project(projectId).path);
+      const system={role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode,catalogSummary(catalog))};
       const tools=agentTools.filter(t=>provider.supportsImages||t.function.name!=='view_image');
       const overhead=estimateTokens(system)+estimateTokens(tools);
       while(true) {
