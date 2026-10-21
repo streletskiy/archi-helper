@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { Store, projectPath, imageFile } from './store.mjs';
+import { Store, projectPath } from './store.mjs';
 import { models } from './provider.mjs';
 import { EFFORTS } from './reasoning.mjs';
 import { MCP } from './mcp.mjs';
@@ -47,12 +47,13 @@ function parseResult(result) {
   const text=result.content?.filter(c=>c.type==='text').map(c=>c.text).join('\n') || '';
   try{return JSON.parse(text);}catch{return text;}
 }
-async function attachFiles(projectId) {
+async function attachFiles(projectId,sessionId) {
+  await store.session(projectId,sessionId);
   const chosen=await dialog.showOpenDialog(win,{title:t('errors.addProjectMaterials'),properties:['openFile','multiSelections']});
   if(chosen.canceled)return [];
-  const result=[],root=store.project(projectId).path;
+  const result=[],root=await store.workspace(projectId,sessionId);
   for(const file of chosen.filePaths) {
-    const name=path.basename(file),relative=`Materials/${Date.now()}-${name}`,destination=await projectPath(root,relative);
+    const name=path.basename(file),relative=`attachments/${crypto.randomUUID()}-${name}`,destination=await projectPath(root,relative);
     await fs.mkdir(path.dirname(destination),{recursive:true});await fs.copyFile(file,destination);result.push(relative);
   }
   return result;
@@ -165,20 +166,25 @@ const handlers={
   send:async input=>{if(agent.running)throw new Error(t('errors.aTaskIsAlreadyRunning'));if(!input.text?.trim())throw new Error(t('errors.enterATask'));await agent.run(input);return true;},
   stop:async()=>{agent.stop();return true;},
   approve:async({id,allowed})=>{agent.approve(id,allowed===true);return true;},
-  attach:async({projectId})=>attachFiles(projectId),
-  image:async({projectId,relative})=>{
-    const {mime,data}=await imageFile(store.project(projectId).path,decodeURIComponent(relative));
+  attach:async({projectId,sessionId})=>attachFiles(projectId,sessionId),
+  image:async({projectId,sessionId,relative})=>{
+    const {mime,data}=await store.image(projectId,sessionId,decodeURIComponent(relative));
     return `data:${mime};base64,${data.toString('base64')}`;
   },
-  reveal:async({projectId,relative})=>{
+  revealWorkspace:async({projectId,sessionId})=>{
+    await store.session(projectId,sessionId);const error=await shell.openPath(await store.workspace(projectId,sessionId));if(error)throw new Error(error);return true;
+  },
+  reveal:async({projectId,sessionId,relative})=>{
     const root=store.project(projectId).path;
     if(!relative){await shell.openPath(root);return true;}
-    const file=await projectPath(root,relative);await fs.access(file);shell.showItemInFolder(file);return true;
+    const {file}=await store.resolveFile(projectId,sessionId,decodeURIComponent(relative));shell.showItemInFolder(file);return true;
   },
   exportSession:async({projectId,id})=>{
-    const s=await store.session(projectId,id),root=store.project(projectId).path;
-    const relative=t('errors.reportMd',{value0:new Date().toISOString().slice(0,10),value1:id.slice(0,8)}),file=await projectPath(root,relative);
-    await fs.writeFile(file,`# ${s.title}\n\n`+s.messages.map(m=>`## ${m.role==='user'?t('ui.you'):m.role==='assistant'?'Archi Helper':m.name||t('errors.system')}\n\n${m.text}\n${m.artifact?t('errors.fullResult',{value0:m.artifact.path}):''}`).join('\n\n'),'utf8');shell.showItemInFolder(file);return relative;
+    const s=await store.session(projectId,id);
+    const relative=t('errors.reportMd',{value0:new Date().toISOString().slice(0,10),value1:id.slice(0,8)});
+    const chosen=await dialog.showSaveDialog(win,{defaultPath:path.join(app.getPath('documents'),relative),filters:[{name:'Markdown',extensions:['md']}]});
+    if(chosen.canceled||!chosen.filePath)return null;const file=chosen.filePath;
+    await fs.writeFile(file,`# ${s.title}\n\n`+s.messages.map(m=>`## ${m.role==='user'?t('ui.you'):m.role==='assistant'?'Archi Helper':m.name||t('errors.system')}\n\n${m.text}\n${m.artifact?t('errors.fullResult',{value0:m.artifact.path}):''}`).join('\n\n'),'utf8');shell.showItemInFolder(file);return file;
   },
   installTapir:async({version})=>installTapir(version),
   launchArchicad:async()=>{
