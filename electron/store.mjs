@@ -41,7 +41,8 @@ export class Store {
   constructor(directory, secrets) { this.directory = directory; this.secrets = secrets; }
   async init(defaultLanguage = 'en') {
     this.file = path.join(this.directory, 'settings.json');
-    this.state = await readJSON(this.file, { version: 1, projects: [], providers: [], model: '', providerId: '', archicadPort: '', maxContextChars: 180000 });
+    this.state = await readJSON(this.file, { version: 1, projects: [], providers: [], model: '', providerId: '', archicadPort: '' });
+    delete this.state.maxContextChars;
     this.state.language = normalizeLanguage(this.state.language || defaultLanguage);
     this.state.reasoningEffort ||= 'xhigh';
     setLanguage(this.state.language);
@@ -67,7 +68,7 @@ export class Store {
     const baseURL=url.toString().replace(/\/+$/, ''), sameEndpoint=old?.baseURL===baseURL;
     const reasoningFormat=input.reasoningFormat||'auto',reasoningEfforts=input.reasoningEfforts||[];
     if(!FORMATS.includes(reasoningFormat)||!Array.isArray(reasoningEfforts)||reasoningEfforts.some(e=>!EFFORTS.includes(e)))throw new Error(t('errors.invalidReasoning'));
-    const provider = { id, name: String(input.name || url.hostname).slice(0,80), baseURL, supportsImages:input.supportsImages===true, reasoningFormat,reasoningEfforts, catalogVersion:sameEndpoint?old?.catalogVersion:undefined, model:sameEndpoint?old?.model||'':'', models:sameEndpoint?old?.models||[]:[], encryptedKey: input.apiKey?.trim() ? this.secrets.encrypt(input.apiKey.trim()) : old?.encryptedKey };
+    const provider = { id, name: String(input.name || url.hostname).slice(0,80), baseURL, supportsImages:input.supportsImages===true, reasoningFormat,reasoningEfforts, catalogVersion:sameEndpoint?old?.catalogVersion:undefined, catalogUpdatedAt:sameEndpoint?old?.catalogUpdatedAt:undefined, model:sameEndpoint?old?.model||'':'', models:sameEndpoint?old?.models||[]:[], encryptedKey: input.apiKey?.trim() ? this.secrets.encrypt(input.apiKey.trim()) : old?.encryptedKey };
     if (!provider.encryptedKey && !['localhost','127.0.0.1','[::1]'].includes(url.hostname)) throw new Error(t('errors.enterAnApiKey'));
     this.state.providers = [...this.state.providers.filter(p => p.id !== id), provider];
     this.state.providerId ||= id;

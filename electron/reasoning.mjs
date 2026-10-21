@@ -1,5 +1,8 @@
 export const EFFORTS = ['none','minimal','low','medium','high','xhigh','max','ultra'];
 export const FORMATS = ['auto','effort','openrouter','deepseek','none'];
+export function needsModelRefresh(provider) {
+  return !provider.models?.length || provider.catalogVersion!==2 || !provider.catalogUpdatedAt || Date.now()-provider.catalogUpdatedAt>86400000;
+}
 const values = list => [...new Set((Array.isArray(list) ? list : []).map(v=>typeof v==='string'?v:v?.value||v?.id).filter(v=>EFFORTS.includes(v)))];
 
 export function reasoningProfile(provider, model) {
@@ -42,6 +45,7 @@ export function reasoningOptions(provider, model, preferred='xhigh') {
 export function modelInfo(model) {
   if(typeof model==='string')return {id:model,name:model};
   const advertised=model.reasoning_efforts??model.supported_reasoning_efforts??model.efforts??model.variants??model.fields?.find(f=>f.name==='reasoning_effort')?.options;
-  const contextWindow=Number(model.context_window??model.context_length??model.limit?.context??model.top_provider?.context_length);
-  return {id:model.id,name:model.name||model.id,...(Array.isArray(advertised)?{reasoningEfforts:values(advertised)}:{}),...(contextWindow>0?{contextWindow}:{}),...(model.supported_parameters?.includes('reasoning')?{supportsReasoning:true}:{})};
+  const contextWindow=Number(model.contextWindow??model.context_window??model.context_length??model.max_context_length??model.max_model_len??model.limit?.context??model.top_provider?.context_length);
+  const inputWindow=Number(model.inputWindow??model.max_input_tokens??model.input_token_limit??model.inputTokenLimit??model.limit?.input);
+  return {id:model.id,name:model.name||model.id,...(Array.isArray(advertised)?{reasoningEfforts:values(advertised)}:{}),...(Number.isSafeInteger(contextWindow)&&contextWindow>0?{contextWindow}:{}),...(Number.isSafeInteger(inputWindow)&&inputWindow>0?{inputWindow}:{}),...(model.supported_parameters?.includes('reasoning')?{supportsReasoning:true}:{})};
 }

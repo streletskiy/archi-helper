@@ -7,12 +7,12 @@ import remarkGfm from 'remark-gfm';
 import './style.css';
 import { suggestions } from './suggestions';
 import { Mascot } from './Mascot';
-import { reasoningProfile, selectedEffort } from '../electron/reasoning.mjs';
+import { needsModelRefresh, reasoningProfile, selectedEffort } from '../electron/reasoning.mjs';
 
 declare global { interface Window { archi: {call:(method:string,input?:unknown)=>Promise<any>;onEvent:(cb:(e:any)=>void)=>()=>void} } }
 type Project={id:string;name:string;path:string};
 type Model={id:string;name:string;reasoningEfforts?:string[];contextWindow?:number};
-type Provider={id:string;name:string;baseURL:string;hasKey:boolean;catalogVersion?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
+type Provider={id:string;name:string;baseURL:string;hasKey:boolean;catalogVersion?:number;catalogUpdatedAt?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
 type Message={id:string;role:string;text:string;name?:string;status?:string;args?:unknown;artifact?:{path:string;bytes:number};model?:string};
 type Session={id:string;title:string;messages:Message[];updatedAt:number};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
@@ -67,7 +67,7 @@ function App(){
     guard(async()=>{
       const s=await refresh();if(s.projects.length)await openProject(s.projects[0]);
       const provider=s.providers.find((p:Provider)=>p.id===s.providerId);
-      if(provider && (!provider.models.length||provider.catalogVersion!==1))await syncModels(provider.id);
+      if(provider && needsModelRefresh(provider))await syncModels(provider.id);
     });
     return window.archi.onEvent(e=>{
       if(e.type==='update')setUpdate(e.update);
@@ -87,7 +87,7 @@ function App(){
   const syncModels=async(id:string)=>{try{await api('models',{id});}finally{await refresh();}};
   const chooseSettings=(input:Record<string,string>)=>guard(async()=>{
     setChoosing(true);
-    try{const s=await api('settings',input);setState(s);if(input.providerId){const p=s.providers.find((p:Provider)=>p.id===input.providerId);if(p&&(!p.models.length||p.catalogVersion!==1))await syncModels(p.id);}}
+    try{const s=await api('settings',input);setState(s);if(input.providerId){const p=s.providers.find((p:Provider)=>p.id===input.providerId);if(p&&needsModelRefresh(p))await syncModels(p.id);}}
     finally{setChoosing(false);}
   });
   const newSession=()=>guard(async()=>{if(!project)return;const s=await api('newSession',{projectId:project.id});setSession(s);setDraft('');setAttachments([]);setStream({});await refreshSessions();textInput.current?.focus();});
