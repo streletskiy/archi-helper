@@ -38,7 +38,7 @@ export async function imageFile(root, relative) {
   return {mime,data};
 }
 export class Store {
-  constructor(directory, secrets) { this.directory = directory; this.secrets = secrets; }
+  constructor(directory, secrets) { this.directory = path.resolve(directory); this.secrets = secrets; this.migrations=new Map(); }
   async init(defaultLanguage = 'en') {
     this.file = path.join(this.directory, 'settings.json');
     this.state = await readJSON(this.file, { version: 1, projects: [], providers: [], model: '', providerId: '', archicadPort: '' });
@@ -101,29 +101,109 @@ export class Store {
     await fs.mkdir(directory, { recursive: true }); directory = await fs.realpath(directory);
     const exists = this.state.projects.find(p => p.path.toLowerCase() === directory.toLowerCase()); if (exists) return exists;
     const p = { id: uid(), name: name?.trim() || path.basename(directory), path: directory, createdAt: Date.now() };
-    await fs.mkdir(path.join(directory, '.archi', 'sessions'), { recursive: true });
     this.state.projects.push(p); await this.save(); return p;
+  }
+  projectStorage(projectId) {
+    this.project(projectId);
+    if(!/^[a-f0-9-]{36}$/.test(projectId))throw new Error(t('errors.projectNotFound'));
+    return path.join(this.directory,'projects',projectId);
+  }
+  async migrateProject(projectId) {
+    if(this.migrations.has(projectId))return this.migrations.get(projectId);
+    const migration=(async()=>{
+      const root=this.projectStorage(projectId),marker=path.join(root,'migration.json');
+      if(await readJSON(marker,null))return;
+      await fs.mkdir(path.join(root,'sessions'),{recursive:true});
+      const source=await projectPath(this.project(projectId).path,'.archi');
+      let exists=true;try{await fs.access(source);}catch(error){if(error.code!=='ENOENT')throw error;exists=false;}
+      if(exists) {
+        // Copy only; never remove old project data or overwrite newer profile data.
+        await fs.cp(source,path.join(root,'legacy','.archi'),{recursive:true,force:false,
+          filter:file=>path.relative(source,file).split(path.sep)[0]!=='sessions'});
+        const old=path.join(source,'sessions');
+        const names=await fs.readdir(old).catch(error=>{if(error.code==='ENOENT')return [];throw error;});
+        for(const name of names.filter(name=>/^[a-f0-9-]{36}\.json$/.test(name))) {
+          const id=name.slice(0,-5),target=this.sessionFile(projectId,id);
+          try{await fs.access(target);continue;}catch(error){if(error.code!=='ENOENT')throw error;}
+          const session=await readJSON(await projectPath(this.project(projectId).path,`.archi/sessions/${name}`));
+          if(session.id!==id)throw new Error(t('errors.invalidSession'));
+          await atomicJSON(target,{...session,projectId,legacyProjectFiles:true});
+        }
+      }
+      await atomicJSON(marker,{version:1,copiedAt:new Date().toISOString(),source:exists?source:null});
+    })();
+    this.migrations.set(projectId,migration);
+    try{await migration;}catch(error){this.migrations.delete(projectId);throw error;}
+  }
+  async workspace(projectId,id) {
+    this.sessionFile(projectId,id);
+    await this.migrateProject(projectId);
+    const root=path.join(this.projectStorage(projectId),'workspaces',id);
+    await fs.mkdir(root,{recursive:true});return root;
+  }
+  async resolveFile(projectId,id,relative='.',{scope='session',write=false}={}) {
+    if(typeof relative!=='string')throw new Error(t('errors.expectedAFileName'));
+    const prefix=/^(project|session):\//.exec(relative);
+    if(prefix){scope=prefix[1];relative=relative.slice(prefix[0].length);}
+    if(!['project','session'].includes(scope))throw new Error(t('errors.invalidFileScope'));
+    const workspace=await this.workspace(projectId,id),project=this.project(projectId).path;
+    if(path.isAbsolute(relative)) {
+      const child=path.relative(workspace,relative);
+      scope=!child.startsWith('..')&&!path.isAbsolute(child)?'session':'project';
+    }
+    const root=scope==='project'?project:workspace,file=await projectPath(root,relative);
+    if(write)return {file,root,scope};
+    try{await fs.access(file);return {file,root,scope};}catch(error){if(error.code!=='ENOENT')throw error;}
+    if(scope==='session') {
+      if(relative.replaceAll('\\','/').startsWith('.archi/')) {
+        const legacy=path.join(this.projectStorage(projectId),'legacy');
+        try{const old=await projectPath(legacy,relative);await fs.access(old);return {file:old,root:legacy,scope:'legacy'};}
+        catch(error){if(error.code!=='ENOENT')throw error;}
+      }
+      const session=await this.session(projectId,id);
+      if(session.legacyProjectFiles) {
+        const old=await projectPath(project,relative);
+        try{await fs.access(old);return {file:old,root:project,scope:'project'};}catch(error){if(error.code!=='ENOENT')throw error;}
+      }
+    }
+    throw new Error(t('errors.workspaceFileMissing',{path:relative,scope:t(scope==='project'?'ui.projectFiles':'ui.chatFiles')}));
+  }
+  async image(projectId,id,relative,options) {
+    const location=await this.resolveFile(projectId,id,relative,options);
+    return imageFile(location.root,location.file);
   }
   sessionFile(projectId, id) {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error(t('errors.invalidSession'));
-    return path.join(this.project(projectId).path, '.archi', 'sessions', `${id}.json`);
+    return path.join(this.projectStorage(projectId),'sessions',`${id}.json`);
   }
   async sessions(projectId) {
-    const dir = path.join(this.project(projectId).path, '.archi', 'sessions');
+    await this.migrateProject(projectId);
+    const dir = path.join(this.projectStorage(projectId),'sessions');
     await fs.mkdir(dir, { recursive: true });
     const all = await Promise.all((await fs.readdir(dir)).filter(x=>x.endsWith('.json')).map(async name=>{
       const s = await readJSON(path.join(dir, name)); return { id:s.id, title:s.title, updatedAt:s.updatedAt, count:s.messages.length };
     }));
     return all.sort((a,b)=>b.updatedAt-a.updatedAt);
   }
-  async session(projectId, id) { const s = await readJSON(this.sessionFile(projectId,id)); if (!s) throw new Error(t('errors.sessionNotFound')); return s; }
+  async session(projectId, id) {
+    const file=this.sessionFile(projectId,id);await this.migrateProject(projectId);
+    const s=await readJSON(file);if(!s)throw new Error(t('errors.sessionNotFound'));
+    if(s.id!==id||s.projectId!==projectId)throw new Error(t('errors.invalidSession'));return s;
+  }
   async newSession(projectId, title = t('ui.newSession')) {
+    await this.migrateProject(projectId);
     const s = { id:uid(), projectId, title, updatedAt:Date.now(), messages:[], history:[] }; await this.saveSession(s); return s;
   }
-  async saveSession(s) { s.updatedAt = Date.now(); await atomicJSON(this.sessionFile(s.projectId,s.id), s); }
+  async saveSession(s) {
+    s.updatedAt=Date.now();const file=this.sessionFile(s.projectId,s.id),snapshot=structuredClone(s);
+    this.sessionWrites??=new Map();
+    const write=(this.sessionWrites.get(file)||Promise.resolve()).catch(()=>{}).then(()=>atomicJSON(file,snapshot));
+    this.sessionWrites.set(file,write);
+    try{await write;}finally{if(this.sessionWrites.get(file)===write)this.sessionWrites.delete(file);}
+  }
   async artifact(projectId, sessionId, name, value) {
     const relative = `.archi/results/${sessionId}/${Date.now()}-${uid().slice(0,8)}-${name.replace(/[^a-z0-9_.-]/gi,'_')}.json`;
-    const file = await projectPath(this.project(projectId).path, relative);
+    const file = await projectPath(await this.workspace(projectId,sessionId), relative);
     await atomicJSON(file,value);
     const bytes=(await fs.stat(file)).size;
     return { path:relative, bytes };
