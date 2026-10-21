@@ -5,7 +5,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { uid, projectPath, imageFile } from './store.mjs';
 import { completion } from './provider.mjs';
-import { compactSession, contextBudget } from './context.mjs';
+import { compactSession, estimateTokens, recordContextUsage, reduceContextLimit } from './context.mjs';
+import { enrichModels } from './model-catalog.mjs';
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const str=description=>({type:'string',description});
@@ -128,26 +129,39 @@ export class Agent {
     await this.store.saveSession(session);emit({type:'message',message:user});emit({type:'busy',busy:true});
     let overflowRetries=0;
     try {
+      // Also resolve manually entered IDs, which need not appear in /models.
+      const info=provider.models?.find(m=>m.id===model);
+      if(!info?.contextWindow) {
+        const [resolved]=await enrichModels(provider,[info||{id:model,name:model}]);
+        provider.models=[...(provider.models||[]).filter(m=>m.id!==model),resolved];
+        const saved=this.store.state.providers.find(p=>p.id===provider.id);
+        if(saved){saved.models=provider.models;await this.store.save();}
+      }
+      delete session.contextLimit;
+      const system={role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode)};
+      const tools=agentTools.filter(t=>provider.supportsImages||t.function.name!=='view_image');
+      const overhead=estimateTokens(system)+estimateTokens(tools);
       while(true) {
         signal.throwIfAborted();
         this.repair(session.history);
-        if(await compactSession({store:this.store,session,provider,model,signal}))emit({type:'message',message:await this.contextNotice(session)});
+        if(await compactSession({store:this.store,session,provider,model,signal,overhead}))emit({type:'message',message:await this.contextNotice(session)});
         const history=await this.prepareMessages(session.history,this.store.project(projectId).path,provider.supportsImages===true);
         const id=uid();let streamed='';
-        let result;
+        let result,usage;
         try {
-          result=await completion(provider,model,[{role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode)},...history],agentTools.filter(t=>provider.supportsImages||t.function.name!=='view_image'),AbortSignal.any([signal,AbortSignal.timeout(180000)]),delta=>{
+          result=await completion(provider,model,[system,...history],tools,AbortSignal.any([signal,AbortSignal.timeout(180000)]),delta=>{
             streamed+=delta;emit({type:'delta',id,delta});
-          },this.store.state.reasoningEffort);
+          },this.store.state.reasoningEffort,value=>{usage=value;});
         } catch(error) {
           if(!error.contextOverflow||overflowRetries>=3)throw error;
           overflowRetries++;
-          session.contextLimit=Math.max(16000,Math.floor(contextBudget(this.store,provider,model,session)*.5));
-          if(await compactSession({store:this.store,session,provider,model,signal,force:true}))emit({type:'message',message:await this.contextNotice(session)});
+          reduceContextLimit(session,provider,model,error,overhead);
+          if(await compactSession({store:this.store,session,provider,model,signal,overhead,force:true}))emit({type:'message',message:await this.contextNotice(session)});
           continue;
         }
         overflowRetries=0;
         if(!result.content && !result.tool_calls?.length)throw new Error(t('agent.theModelReturnedAnEmptyResponseCheck'));
+        recordContextUsage(session,provider,model,usage,overhead);
         session.history.push(result);
         if(result.content) {const m={id,role:'assistant',text:result.content,at:Date.now(),model};session.messages.push(m);emit({type:'message',message:m});}
         if(!result.tool_calls?.length){await this.store.saveSession(session);return;}
