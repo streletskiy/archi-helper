@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {showAppWindow} from './window-visibility.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 const config=JSON.parse(await fs.readFile(path.join(here,'config.json'),'utf8'));
@@ -53,7 +54,8 @@ app.whenReady().then(async()=>{
   await win.loadFile(path.join(here,'ui','index.html'));
   await painted;
   if(config.maximized)win.maximize();
-  win.show();process.send?.({type:'archi-update-ready'});
+  if(!showAppWindow(win))throw new Error('Could not show the update window');
+  process.send?.({type:'archi-update-ready'});
   const started=Date.now();let reading=false;
   const timer=setInterval(async()=>{
     if(reading)return;
