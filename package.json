@@ -1,7 +1,7 @@
 {
   "name": "ac-helper",
   "productName": "Archi Helper",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Personal architect assistant for Archicad",
   "author": "streletskiy",
   "private": true,
@@ -21,6 +21,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
     "electron-updater": "6.8.9",
+    "jose": "6.2.13",
     "lucide-react": "^0.468.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
