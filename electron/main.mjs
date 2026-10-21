@@ -7,6 +7,8 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Store, projectPath, INBOX_ID } from './store.mjs';
 import { models } from './provider.mjs';
+import { providerDefinitions } from './provider-definitions.mjs';
+import { OAuthManager } from './oauth-manager.mjs';
 import { EFFORTS } from './reasoning.mjs';
 import { MCP } from './mcp.mjs';
 import { Agent } from './agent.mjs';
@@ -97,6 +99,13 @@ async function installTapir(version) {
 }
 const handlers={
   bootstrap:async()=>publicState(),
+  providerDefinitions:async()=>providerDefinitions,
+  connectOAuth:async({definitionId,id})=>{
+    if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
+    const providerId=await store.oauthManager.connect(definitionId,id);
+    showAppWindow(win);return {providerId,state:publicState()};
+  },
+  cancelOAuth:async()=>{store.oauthManager.cancel();return true;},
   updateIdle:async({idle})=>updates.setIdle(idle),
   checkUpdates:async()=>updates.check(),
   deferUpdate:async()=>updates.defer(),
@@ -125,7 +134,7 @@ const handlers={
   deleteProject:async({id})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.deleteProject(id);return publicState();}),
   moveDraft:async({projectId,id,targetProjectId})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));return store.moveDraft(projectId,id,targetProjectId||INBOX_ID);}),
   saveProvider:async input=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.provider(input);return publicState();},
-  deleteProvider:async({id})=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.deleteProvider(id);return publicState();},
+  deleteProvider:async({id})=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));if(store.state.providers.find(p=>p.id===id)?.oauth)await store.oauthManager.disconnect(id);else await store.deleteProvider(id);return publicState();},
   models:async({id})=>{
     const p=store.getProvider(id),list=await models(p);
     const provider=store.state.providers.find(p=>p.id===id);if(!provider)return [];
@@ -226,7 +235,7 @@ else {
     encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error(t('errors.windowsEncryptionIsUnavailable'));return safeStorage.encryptString(value).toString('base64');},
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
   });
-  await store.init(app.getLocale());connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);
+   await store.init(app.getLocale());store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);
   updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>installUpdate({app,win,updater:updaterModule.autoUpdater,update:updates.state,language:store.state.language})});
   ipcMain.handle('archi:call',async(event,method,input={})=>{
     if(event.sender!==win?.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error(t('errors.untrustedRequest'));
@@ -252,6 +261,6 @@ else {
     if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop().catch(()=>{});setTimeout(()=>win.destroy(),500);}});}
   });
   app.on('window-all-closed',()=>app.quit());
-  let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;updates.dispose();Promise.allSettled([agent.stop(),mcp.close()]).finally(()=>app.quit());}});
+   let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;updates.dispose();store.oauthManager.dispose();Promise.allSettled([agent.stop(),mcp.close()]).finally(()=>app.quit());}});
   }).catch(error=>{dialog.showErrorBox(t('errors.archiHelperStartupError'),error.message);app.quit();});
 }

@@ -1,9 +1,13 @@
 import { t } from '../locales/index.mjs';
 import { modelInfo, reasoningOptions, reasoningProfile } from './reasoning.mjs';
 import { enrichModels } from './model-catalog.mjs';
+import crypto from 'node:crypto';
+import { providerDefinition } from './provider-definitions.mjs';
 const noStreamUsage=new Set();
+const activeCredentials=new WeakMap();
 function providerError(provider,status,text) {
-  text=text.slice(0,1500).replaceAll(provider.apiKey || '\0',t('errors.redacted'));
+  for(const secret of [provider.apiKey,...(activeCredentials.get(provider)||[])])if(secret)text=text.replaceAll(secret,t('errors.redacted'));
+  text=text.slice(0,1500);
   const error=new Error(status?t('errors.providerHttp',{value0:status,value1:text}):text);
   error.status=status;
   error.contextOverflow=(!status||[400,413,422].includes(status)) && (status===413||/context[_\s-]*(length|window|size)|maximum (?:context|model) length|too many tokens|(?:prompt|input|request|sequence).{0,80}(?:too long|exceed|longer than)/i.test(text));
@@ -30,11 +34,20 @@ function completeCalls(calls) {
   });
 }
 export async function api(provider, endpoint, init = {}) {
-  const response = await fetch(`${provider.baseURL}/${endpoint}`, {
-    ...init, redirect:'error',
-    headers: { 'Content-Type':'application/json', ...(provider.apiKey ? { Authorization:`Bearer ${provider.apiKey}` } : {}), ...init.headers },
-    signal:init.signal || AbortSignal.timeout(60000)
-  });
+  if(provider.adapter&&provider.adapter!=='openai-compatible')throw new Error(t('errors.providerAdapterUnsupported'));
+  let token=provider.authorize?await provider.authorize():provider.apiKey;
+  const headers=new Headers(init.headers);
+  headers.set('Content-Type','application/json');
+  if(init.method==='POST'&&!headers.has('Idempotency-Key'))headers.set('Idempotency-Key',crypto.randomUUID());
+  const send=()=>{
+    if(token)activeCredentials.set(provider,[...new Set([token,...(activeCredentials.get(provider)||[])])].slice(0,2));
+    if(token)headers.set('Authorization',`Bearer ${token}`);
+    return fetch(`${provider.baseURL}/${endpoint}`,{...init,headers,redirect:'error',signal:init.signal||AbortSignal.timeout(60000)});
+  };
+  let response=await send();
+  if(response.status===401&&provider.authorize) {
+    await response.body?.cancel();token=await provider.authorize(token);response=await send();
+  }
   if (!response.ok) {
     throw providerError(provider,response.status,await response.text());
   }
@@ -45,12 +58,13 @@ export async function models(provider) {
   const items = data.data || data.models;
   if (!Array.isArray(items)) throw new Error(t('errors.theProviderReturnedAnInvalidModelList'));
   const list=items.map(modelInfo).filter(m=>m.id);
-  // lumv exposes the same per-model variants used by its OpenCode integration.
-  if(new URL(provider.baseURL).hostname==='lumv.app') {
+  const metadata=providerDefinition(provider)?.catalog;
+  if(metadata) {
     try {
-      const catalog=await (await api(provider,'opencode/catalog',{signal:AbortSignal.timeout(8000)})).json();
+      const catalog=await (await api(provider,metadata.path,{signal:AbortSignal.timeout(8000)})).json();
+      const entries=metadata.modelsPath.reduce((value,key)=>value?.[key],catalog);
       for(const model of list) {
-        const entry=catalog.providers?.lumv?.models?.[model.id];
+        const entry=entries?.[model.id];
         if(entry)Object.assign(model,modelInfo({...entry,id:model.id,variants:entry.variants||[]}));
       }
     } catch { /* Optional metadata must not prevent using the provider's model list. */ }
