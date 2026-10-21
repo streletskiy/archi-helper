@@ -3,14 +3,14 @@
 Var archiUpdateStatusFile
 
 !macro archiUpdateStatus VALUE
-  ${if} $archiUpdateStatusFile != ""
-    Push $0
-    FileOpen $0 "$archiUpdateStatusFile" w
-    FileWrite $0 "${VALUE}"
-    FileClose $0
-    Pop $0
-    ClearErrors
-  ${endif}
+  Push $0
+  ; The include is loaded before LogicLib: use only native instructions here.
+  StrCmp $archiUpdateStatusFile "" +5
+  FileOpen $0 "$archiUpdateStatusFile" w
+  FileWrite $0 "${VALUE}"
+  FileClose $0
+  ClearErrors
+  Pop $0
 !macroend
 
 !macro customInit
