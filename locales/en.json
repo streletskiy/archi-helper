@@ -1,4 +1,7 @@
 {
+  "ui.knowledge": "Reference wiki",
+  "agent.unknownKnowledge": "Unknown reference article: {id}",
+  "agent.zoneAreaLabelApproval": "Explicit approval is required: replace only the displayed text in zone stamps. Calculated areas and schedules will not change; zone contours and stamp positions must be preserved. Review the exact zones and target values before approving.",
   "ui.taskProgress": "Task progress",
   "agent.connectionConfirmed": "Connected to Archicad {version}.",
   "agent.projectConfirmed": "Project confirmed: {project}.",
