@@ -1,4 +1,6 @@
 {
+  "ui.scrollToLatest": "Go to the latest message",
+  "errors.couldNotShowWindow": "The application window could not be shown. Launch Archi Helper again to restore it.",
   "ui.knowledge": "Reference wiki",
   "agent.unknownKnowledge": "Unknown reference article: {id}",
   "agent.zoneAreaLabelApproval": "Explicit approval is required: replace only the displayed text in zone stamps. Calculated areas and schedules will not change; zone contours and stamp positions must be preserved. Review the exact zones and target values before approving.",

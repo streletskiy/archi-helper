@@ -1,7 +1,7 @@
 import { t, setLanguage, useLanguage } from './i18n';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Plus, Folder, FolderOpen, ArrowUp, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, LockKeyhole, Copy, CircleAlert } from 'lucide-react';
+import { Plus, Folder, FolderOpen, ArrowUp, ArrowDown, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, LockKeyhole, Copy, CircleAlert } from 'lucide-react';
 import './style.css';
 import { suggestions } from './suggestions';
 import { Mascot } from './Mascot';
@@ -34,13 +34,15 @@ function App(){
   const [draft,setDraft]=useState(''),[mode,setMode]=useState('review'),[busy,setBusy]=useState(false),[stream,setStream]=useState<Record<string,string>>({}),[approval,setApproval]=useState<any>(null);
   const [update,setUpdate]=useState<any>(null),[choosing,setChoosing]=useState(false);
   const [submitting,setSubmitting]=useState(false);
+  const [showScrollToLatest,setShowScrollToLatest]=useState(false);
+  const followLatest=useRef(true),conversation=useRef<HTMLDivElement>(null),conversationContent=useRef<HTMLDivElement>(null);
   const sending=useRef(false),retryRequest=useRef<{key:string;id:string}|null>(null);
   const updateBlocking=!state||state.updateOnly===true||(!update?.deferred&&['checking','downloading','ready','countdown','installing','error'].includes(update?.status));
   const [modal,setModal]=useState(''),[notice,setNotice]=useState<{text:string;tone:'success'|'error'}|null>(null),[working,setWorking]=useState(''),[attachments,setAttachments]=useState<string[]>([]);
   const [projectName,setProjectName]=useState(''),[search,setSearch]=useState(''),[toolSearch,setToolSearch]=useState(''),[tools,setTools]=useState<Tool[]>([]),[selectedTool,setSelectedTool]=useState<Tool|null>(null),[toolArgs,setToolArgs]=useState('{}');
   const [providerForm,setProviderForm]=useState(emptyProvider),[manualModel,setManualModel]=useState(''),[port,setPort]=useState(''),[instances,setInstances]=useState<any[]>([]),[acVersion,setAcVersion]=useState('27');
   const providerEditor=useRef<HTMLDivElement>(null);
-  const sessionRef=useRef<string|undefined>(undefined),projectRef=useRef<Project|null>(null),bottom=useRef<HTMLDivElement>(null),textInput=useRef<HTMLTextAreaElement>(null);
+  const sessionRef=useRef<string|undefined>(undefined),projectRef=useRef<Project|null>(null),textInput=useRef<HTMLTextAreaElement>(null);
   sessionRef.current=session?.id;projectRef.current=project;
   const notify=useCallback((text:string,tone:'success'|'error'='success')=>setNotice({text,tone}),[]);
   const guard=useCallback(async(fn:()=>Promise<any>,label='')=>{try{if(label)setWorking(label);return await fn();}catch(e){notify((e as Error).message,'error');}finally{if(label)setWorking('');}},[notify]);
@@ -84,7 +86,27 @@ function App(){
       if(e.type==='approval-done')setApproval(null);
     });
   },[]);
-  useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth'});},[session?.messages,stream,approval]);
+  const scrollToLatest=useCallback(()=>{
+    const element=conversation.current;if(!element)return;
+    followLatest.current=true;
+    element.scrollTop=element.scrollHeight;
+    setShowScrollToLatest(false);
+  },[]);
+  useLayoutEffect(()=>{
+    const element=conversation.current,content=conversationContent.current;
+    if(!element||!content)return;
+    // Opening a chat starts at the latest message, before the first paint.
+    // Follow later image/layout changes only while the reader stays at the end.
+    scrollToLatest();
+    const onScroll=()=>{
+      const atEnd=element.scrollHeight-element.clientHeight-element.scrollTop<=48;
+      followLatest.current=atEnd;setShowScrollToLatest(!atEnd);
+    };
+    const observer=new ResizeObserver(()=>{if(followLatest.current)scrollToLatest();else onScroll();});
+    observer.observe(content);observer.observe(element);
+    element.addEventListener('scroll',onScroll,{passive:true});
+    return()=>{observer.disconnect();element.removeEventListener('scroll',onScroll);};
+  },[project?.id,session?.id,updateBlocking,scrollToLatest]);
   const syncModels=async(id:string)=>{try{await api('models',{id});}finally{await refresh();}};
   const chooseSettings=(input:Record<string,string>)=>guard(async()=>{
     setChoosing(true);
@@ -171,7 +193,9 @@ function App(){
       </aside>
       <main className="main">
         <header className="chat-header"><strong className="session-title">{session?.title||t('ui.newProject')}</strong><div className="header-actions"><button className={`connection-pill ${connected?'online':''}`} onClick={()=>setModal('archicad')} title={connected?projectLabel:t('ui.connectionSettings')}><span/>{connected?`Archicad ${state?.connection.data?.archicad_version||''}`:t('ui.connectArchicad')}</button>{session&&<><IconButton title={t('ui.renameSession')} disabled={busy} onClick={()=>setModal('rename')}><Pencil size={15}/></IconButton><IconButton title={t('ui.exportConversation')} onClick={()=>guard(()=>api('exportSession',{projectId:project?.id,id:session.id}))}><Download size={16}/></IconButton></>}</div></header>
-        <div className="conversation">
+        <div className="conversation-wrap">
+        <div className="conversation" ref={conversation}>
+          <div className="conversation-content" ref={conversationContent}>
           {!hasMessages?<div className="welcome">
             <Mascot/>
             <h1>{project?t('ui.whatShallWeDo'):t('ui.startWithAProject')}</h1>
@@ -184,7 +208,9 @@ function App(){
             {busy&&!Object.keys(stream).length&&<div className="working-indicator"><Mascot size={32} working/>{t('ui.working')}</div>}
             {approval&&<div className="approval-card"><div className="approval-title"><ShieldCheck size={21}/><div><strong>{approval.kind==='python'?t('ui.runProcessing'):t('ui.confirmAction')}</strong><p>{approval.description}</p></div></div><details className="approval-details" open={approval.kind==='python'}><summary>{approval.kind==='python'?t('ui.codeToRun'):t('ui.viewExactParameters')}</summary><pre>{pretty(approval.args)}</pre></details>{approval.kind==='python'&&<p className="muted">{t('ui.theScriptRunsLocallyWithYourPermissions')}</p>}<div className="approval-actions"><button className="secondary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:false}))}>{t('ui.cancel')}</button><button className="primary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:true}))}><Check size={15}/>{t('ui.run')}</button></div></div>}
           </div>}
-          <div ref={bottom}/>
+          </div>
+        </div>
+        {showScrollToLatest&&<button className="scroll-to-latest" title={t('ui.scrollToLatest')} aria-label={t('ui.scrollToLatest')} onClick={scrollToLatest}><ArrowDown size={19}/></button>}
         </div>
         <div className="composer-wrap">
           {!!session?.pendingMessages?.length&&<section className="message-queue" aria-label={t('ui.messageQueue')}>
