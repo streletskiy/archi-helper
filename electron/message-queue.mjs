@@ -11,6 +11,7 @@ export class MessageQueue {
   async load(projectId,sessionId){
     if(this.running&&!this.sameSession(projectId,sessionId))throw new Error(t('errors.anotherSessionRunning'));
     const session=this.sameSession(projectId,sessionId)?this.liveSession:await this.store.session(projectId,sessionId);
+    this.store.assertActive(projectId, session);
     session.pendingMessages??=[];return session;
   }
   publishQueue(session){this.emit({type:'queue',sessionId:session.id,pendingMessages:structuredClone(session.pendingMessages),queuePaused:session.queuePaused===true});}
@@ -50,7 +51,7 @@ export class MessageQueue {
     return {id};
   });}
   appendUser(session,item){
-    const text=item.text+(item.attachments.length?t('ui.materialsInTheProjectFolder',{value0:item.attachments.map(file=>`- ${file}`).join('\n')}):'');
+    const text=item.text+(item.attachments.length?t('ui.materialsInTheProjectFolder',{value0:item.attachments.map(file=>`- [${file.replace(/([\\[\]\\])/g,'\\$1')}](<${file.split('/').map(encodeURIComponent).join('/')}>)`).join('\n')}):'');
     const message={id:uid(),requestId:item.id,role:'user',text,at:Date.now()};
     session.messages.push(message);session.history.push({role:'user',content:text});
     if(session.messages.filter(message=>message.role==='user').length===1)session.title=(item.text||item.attachments[0]).slice(0,55);

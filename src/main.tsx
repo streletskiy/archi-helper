@@ -1,20 +1,22 @@
 import { t, setLanguage, useLanguage } from './i18n';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Plus, Folder, FolderOpen, ArrowUp, ArrowDown, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, LockKeyhole, Copy, CircleAlert } from 'lucide-react';
+import { Plus, Folder, FolderOpen, ArrowUp, ArrowDown, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Share, Archive, ArchiveRestore, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, Copy, CircleAlert } from 'lucide-react';
 import './style.css';
 import { suggestions } from './suggestions';
 import { Mascot } from './Mascot';
 import { MessageContent } from './MessageContent';
+import { ActionMenu, ProjectPicker, type Project } from './WorkspaceControls';
 import { needsModelRefresh, reasoningProfile, selectedEffort } from '../electron/reasoning.mjs';
 
 declare global { interface Window { archi: {call:(method:string,input?:unknown)=>Promise<any>;onEvent:(cb:(e:any)=>void)=>()=>void} } }
-type Project={id:string;name:string;path:string};
+const INBOX_ID='00000000-0000-0000-0000-000000000000';
 type Model={id:string;name:string;reasoningEfforts?:string[];contextWindow?:number};
 type Provider={id:string;name:string;baseURL:string;hasKey:boolean;catalogVersion?:number;catalogUpdatedAt?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
 type Message={id:string;role:string;text:string;name?:string;status?:string;summary?:string;args?:unknown;artifact?:{path:string;bytes:number};model?:string};
 type QueuedMessage={id:string;text:string;attachments:string[];model:string;delivery:'queue'|'steer'};
-type Session={id:string;title:string;messages:Message[];updatedAt:number;pendingMessages?:QueuedMessage[];queuePaused?:boolean};
+type Session={id:string;title:string;messages:Message[];updatedAt:number;archivedAt?:number;count?:number;pendingMessages?:QueuedMessage[];queuePaused?:boolean};
+type SessionGroup={projectId:string;sessions:Session[];error?:string};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
 type State={appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any};
 const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
@@ -30,7 +32,7 @@ function IconButton({title,onClick,children,disabled=false}:{title:string;onClic
 function App(){
   const language=useLanguage();
   useEffect(()=>{document.documentElement.lang=language;document.title=`Archi Helper — ${t('ui.architectSAssistant')}`;},[language]);
-  const [state,setState]=useState<State|null>(null),[project,setProject]=useState<Project|null>(null),[sessions,setSessions]=useState<Session[]>([]),[session,setSession]=useState<Session|null>(null);
+  const [state,setState]=useState<State|null>(null),[project,setProject]=useState<Project|null>(null),[session,setSession]=useState<Session|null>(null);
   const [draft,setDraft]=useState(''),[mode,setMode]=useState('review'),[busy,setBusy]=useState(false),[stream,setStream]=useState<Record<string,string>>({}),[approval,setApproval]=useState<any>(null);
   const [update,setUpdate]=useState<any>(null),[choosing,setChoosing]=useState(false);
   const [submitting,setSubmitting]=useState(false);
@@ -40,10 +42,17 @@ function App(){
   const updateBlocking=!state||state.updateOnly===true||(!update?.deferred&&['checking','downloading','ready','countdown','installing','error'].includes(update?.status));
   const [modal,setModal]=useState(''),[notice,setNotice]=useState<{text:string;tone:'success'|'error'}|null>(null),[working,setWorking]=useState(''),[attachments,setAttachments]=useState<string[]>([]);
   const [projectName,setProjectName]=useState(''),[search,setSearch]=useState(''),[toolSearch,setToolSearch]=useState(''),[tools,setTools]=useState<Tool[]>([]),[selectedTool,setSelectedTool]=useState<Tool|null>(null),[toolArgs,setToolArgs]=useState('{}');
+  const [archivedSessions,setArchivedSessions]=useState(false),[projectArchive,setProjectArchive]=useState(false),[projectSearch,setProjectSearch]=useState(''),[projectIntent,setProjectIntent]=useState<'browse'|'draft'>('browse');
+  const [renamingProject,setRenamingProject]=useState<Project|null>(null),[deletion,setDeletion]=useState<{kind:'project'|'session';id:string;name:string;count?:number;projectId?:string}|null>(null),[navigating,setNavigating]=useState(false);
+  const [sessionGroups,setSessionGroups]=useState<SessionGroup[]>([]),[collapsedProjects,setCollapsedProjects]=useState<Record<string,boolean>>({}),[shownSessions,setShownSessions]=useState<Record<string,number>>({});
+  const savedDrafts=useRef(new Map<string,{text:string;files:string[]}>());
+  const navigation=useRef(false);
   const [providerForm,setProviderForm]=useState(emptyProvider),[manualModel,setManualModel]=useState(''),[port,setPort]=useState(''),[instances,setInstances]=useState<any[]>([]),[acVersion,setAcVersion]=useState('27');
   const providerEditor=useRef<HTMLDivElement>(null);
   const sessionRef=useRef<string|undefined>(undefined),projectRef=useRef<Project|null>(null),textInput=useRef<HTMLTextAreaElement>(null);
   sessionRef.current=session?.id;projectRef.current=project;
+  const projectId=project?.id||INBOX_ID,readOnly=!!project?.archivedAt||!!session?.archivedAt;
+  const workspaceLocked=busy||submitting||navigating||!!working;
   const notify=useCallback((text:string,tone:'success'|'error'='success')=>setNotice({text,tone}),[]);
   const guard=useCallback(async(fn:()=>Promise<any>,label='')=>{try{if(label)setWorking(label);return await fn();}catch(e){notify((e as Error).message,'error');}finally{if(label)setWorking('');}},[notify]);
   const copyMessage=async(text:string)=>{
@@ -56,16 +65,23 @@ function App(){
     return()=>clearTimeout(timer);
   },[notice,updateBlocking]);
   const refresh=async()=>{const s=await api('bootstrap');setLanguage(s.language);setState(s);setBusy(s.busy);setApproval(s.approval&&s.approval.sessionId===s.activeSession?s.approval.approval:null);setUpdate(s.update);setPort(s.archicadPort);setMode(s.permissionMode||'review');return s;};
-  const refreshSessions=async(p=projectRef.current)=>{if(p)setSessions(await api('sessions',{projectId:p.id}));};
-  const openProject=async(p:Project,activeSession?:string)=>{
-    if(busy||sending.current)return;setProject(p);setStream({});setDraft('');setAttachments([]);
-    const list=await api('sessions',{projectId:p.id});setSessions(list);
-    const s=list.length?await api('session',{projectId:p.id,id:list.find((s:Session)=>s.id===activeSession)?.id||list[0].id}):await api('newSession',{projectId:p.id});
-    setSession(s);if(!list.length)setSessions([s]);
+  const rememberDraft=()=>savedDrafts.current.set(sessionRef.current||`draft:${projectRef.current?.id||INBOX_ID}`,{text:draft,files:[...attachments]});
+  const restoreDraft=(p:Project|null,s?:Session|null)=>{const saved=savedDrafts.current.get(s?.id||`draft:${p?.id||INBOX_ID}`);setDraft(saved?.text||'');setAttachments(saved?.files||[]);};
+  const refreshSessions=async(p=projectRef.current)=>{const id=p?.id||INBOX_ID,groups:SessionGroup[]=await api('sessionIndex'),list=groups.find(group=>group.projectId===id)?.sessions||[];setSessionGroups(groups);return list;};
+  const openProject=async(p:Project|null,activeSession?:string)=>{
+    if(busy||sending.current||navigation.current)return;
+    rememberDraft();
+    navigation.current=true;setNavigating(true);
+    try{
+      const id=p?.id||INBOX_ID,list:Session[]=await api('sessions',{projectId:id}),target=activeSession?list.find(s=>s.id===activeSession):list.find(s=>!s.archivedAt);
+      const next=target?await api('session',{projectId:id,id:target.id}):null;
+      projectRef.current=p;sessionRef.current=next?.id;setProject(p);setSession(next);setArchivedSessions(!!p?.archivedAt||!!next?.archivedAt);setSearch('');setStream({});restoreDraft(p,next);
+    }finally{navigation.current=false;setNavigating(false);}
   };
   useEffect(()=>{
     guard(async()=>{
-      const s=await refresh();if(s.updateApplied)notify(t('ui.updateApplied',{version:s.appVersion}));if(s.projects.length)await openProject(s.projects.find((p:Project)=>p.id===s.activeProject)||s.projects[0],s.activeSession);
+      const s=await refresh();if(s.updateApplied)notify(t('ui.updateApplied',{version:s.appVersion}));
+      await refreshSessions(null);if(s.activeSession)await openProject(s.projects.find((p:Project)=>p.id===s.activeProject)||null,s.activeSession);
       const provider=s.providers.find((p:Provider)=>p.id===s.providerId);
       if(provider && needsModelRefresh(provider))await syncModels(provider.id);
     });
@@ -89,7 +105,7 @@ function App(){
   const scrollToLatest=useCallback(()=>{
     const element=conversation.current;if(!element)return;
     followLatest.current=true;
-    element.scrollTop=element.scrollHeight;
+    element.scrollTo({top:element.scrollHeight,behavior:'instant'});
     setShowScrollToLatest(false);
   },[]);
   useLayoutEffect(()=>{
@@ -97,26 +113,45 @@ function App(){
     if(!element||!content)return;
     // Opening a chat starts at the latest message, before the first paint.
     // Follow later image/layout changes only while the reader stays at the end.
-    scrollToLatest();
+    let frame=0;
+    const settle=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(()=>{if(followLatest.current)scrollToLatest();});};
+    scrollToLatest();settle();
     const onScroll=()=>{
       const atEnd=element.scrollHeight-element.clientHeight-element.scrollTop<=48;
       followLatest.current=atEnd;setShowScrollToLatest(!atEnd);
     };
-    const observer=new ResizeObserver(()=>{if(followLatest.current)scrollToLatest();else onScroll();});
+    const observer=new ResizeObserver(()=>{if(followLatest.current){scrollToLatest();settle();}else onScroll();});
     observer.observe(content);observer.observe(element);
     element.addEventListener('scroll',onScroll,{passive:true});
-    return()=>{observer.disconnect();element.removeEventListener('scroll',onScroll);};
+    return()=>{cancelAnimationFrame(frame);observer.disconnect();element.removeEventListener('scroll',onScroll);};
   },[project?.id,session?.id,updateBlocking,scrollToLatest]);
+  useLayoutEffect(()=>{if(followLatest.current)scrollToLatest();},[session?.messages,stream,approval,scrollToLatest]);
   const syncModels=async(id:string)=>{try{await api('models',{id});}finally{await refresh();}};
   const chooseSettings=(input:Record<string,string>)=>guard(async()=>{
     setChoosing(true);
     try{const s=await api('settings',input);setState(s);if(input.providerId){const p=s.providers.find((p:Provider)=>p.id===input.providerId);if(p&&needsModelRefresh(p))await syncModels(p.id);}}
     finally{setChoosing(false);}
   });
-  const newSession=()=>guard(async()=>{if(!project||busy||sending.current)return;const s=await api('newSession',{projectId:project.id});setSession(s);setDraft('');setAttachments([]);setStream({});await refreshSessions();textInput.current?.focus();});
+  const newSession=(p:Project|null=null)=>guard(async()=>{if(workspaceLocked||sending.current||p?.archivedAt)return;rememberDraft();setProject(p);projectRef.current=p;setSession(null);sessionRef.current=undefined;restoreDraft(p);setStream({});setArchivedSessions(false);setSearch('');await refreshSessions(p);textInput.current?.focus();});
+  const ensureSession=async()=>{
+    if(session)return session;
+    const s=await api('newSession',{projectId});savedDrafts.current.delete(`draft:${projectId}`);setSession(s);sessionRef.current=s.id;await refreshSessions();return s as Session;
+  };
+  const chooseDraftProject=(p:Project|null)=>guard(async()=>{
+    if(workspaceLocked||sending.current||navigation.current)return;
+    navigation.current=true;setNavigating(true);
+    try{
+      if(session){const next=await api('moveDraft',{projectId,id:session.id,targetProjectId:p?.id||INBOX_ID});setSession(next);}
+      projectRef.current=p;setProject(p);setSearch('');setArchivedSessions(false);await refreshSessions(p);textInput.current?.focus();
+    }finally{navigation.current=false;setNavigating(false);}
+  });
+  const openProjects=(intent:'browse'|'draft'='browse')=>{setProjectIntent(intent);setProjectArchive(false);setProjectSearch('');setProjectName('');setModal('projects');};
   const send=(delivery:'queue'|'steer'='queue')=>guard(async()=>{
-    if(!project||!session||(!draft.trim()&&!attachments.length)||sending.current||choosing||!state?.providerId||!state?.model)return;
-    const text=draft,files=[...attachments],input={projectId:project.id,sessionId:session.id,text,attachments:files,providerId:state.providerId,model:state.model,mode,delivery};
+    if(readOnly||navigating||(!draft.trim()&&!attachments.length)||sending.current||choosing||!state?.providerId||!state?.model)return;
+    sending.current=true;setSubmitting(true);
+    const text=draft,files=[...attachments];
+    let current;try{current=await ensureSession();}catch(error){sending.current=false;setSubmitting(false);throw error;}
+    const input={projectId,sessionId:current.id,text,attachments:files,providerId:state.providerId,model:state.model,mode,delivery};
     const key=JSON.stringify(input),id=retryRequest.current?.key===key?retryRequest.current.id:crypto.randomUUID();
     retryRequest.current={key,id};sending.current=true;setSubmitting(true);setDraft('');setAttachments([]);
     try{await api('send',{...input,id});retryRequest.current=null;}
@@ -124,27 +159,27 @@ function App(){
     finally{sending.current=false;setSubmitting(false);textInput.current?.focus();}
   });
   const changeQueued=(item:QueuedMessage,action:'steer'|'remove'|'edit')=>guard(async()=>{
-    if(!project||!session||sending.current)return;
+    if(!session||sending.current)return;
     sending.current=true;setSubmitting(true);
     try{
-      const value=await api('queuedMessage',{projectId:project.id,sessionId:session.id,id:item.id,action:action==='edit'?'remove':action});
+      const value=await api('queuedMessage',{projectId,sessionId:session.id,id:item.id,action:action==='edit'?'remove':action});
       if(action==='edit'){setDraft(current=>current?`${value.text}\n\n${current}`:value.text);setAttachments(current=>[...new Set<string>([...value.attachments,...current])]);textInput.current?.focus();}
     }finally{sending.current=false;setSubmitting(false);}
   });
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{
       if(updateBlocking)return;
-      if(event.ctrlKey && event.key.toLowerCase()==='n'){event.preventDefault();if(project&&!busy)newSession();}
-      if(event.key==='Escape')setModal('');
+      if(event.ctrlKey && event.key.toLowerCase()==='n'){event.preventDefault();if(!workspaceLocked)newSession();}
+      if(event.key==='Escape'&&!working)setModal('');
     };
     window.addEventListener('keydown',handler);return()=>window.removeEventListener('keydown',handler);
-  },[project,busy,updateBlocking]);
+  },[project,workspaceLocked,updateBlocking,working]);
   useEffect(()=>{
     if(!modal)return;
     const previous=document.activeElement as HTMLElement|null;
     const dialog=document.querySelector<HTMLElement>('[role="dialog"]');
     const focusable=()=>Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary')||[]).filter(x=>x.getClientRects().length>0);
-    const frame=requestAnimationFrame(()=>focusable()[0]?.focus());
+    const frame=requestAnimationFrame(()=>(dialog?.querySelector<HTMLElement>('.delete-confirm .secondary, input:not(:disabled), textarea:not(:disabled)')||focusable()[0])?.focus());
     const trap=(e:KeyboardEvent)=>{if(e.key!=='Tab')return;const items=focusable(),first=items[0],last=items[items.length-1];if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}};
     document.addEventListener('keydown',trap);return()=>{cancelAnimationFrame(frame);document.removeEventListener('keydown',trap);previous?.focus();};
   },[modal]);
@@ -156,8 +191,54 @@ function App(){
     for(const k of t.inputSchema.required||[]) {const prop=t.inputSchema.properties?.[k];args[k]=prop?.enum?.[0]??(prop?.type==='array'?[]:prop?.type==='object'?{}:prop?.type==='number'||prop?.type==='integer'?0:prop?.type==='boolean'?false:'');}
     setToolArgs(JSON.stringify(args,null,2));
   };
-  const reveal=(relative?:string)=>guard(()=>api('reveal',{projectId:project?.id,sessionId:session?.id,relative}));
-  const openMessageLink=useCallback((href?:string)=>guard(()=>href?.startsWith('https:')?api('external',{url:href}):api('reveal',{projectId:project?.id,sessionId:session?.id,relative:href})),[guard,project?.id,session?.id]);
+  const reveal=(relative?:string)=>guard(()=>api('reveal',{projectId,sessionId:session?.id,relative}));
+  const openMessageLink=useCallback((href?:string)=>{if(href)return guard(()=>/^https:/i.test(href)?api('external',{url:href}):api('reveal',{projectId,sessionId:session?.id,relative:href}));},[guard,projectId,session?.id]);
+  const selectSession=(id:string,p:Project|null=projectRef.current)=>guard(async()=>{
+    if(workspaceLocked||sending.current||navigation.current)return;
+    rememberDraft();
+    navigation.current=true;setNavigating(true);
+    try{const next=await api('session',{projectId:p?.id||INBOX_ID,id});setProject(p);projectRef.current=p;setSession(next);sessionRef.current=id;setStream({});restoreDraft(p,next);}
+    finally{navigation.current=false;setNavigating(false);}
+  });
+  const archiveSession=(item:Session,p:Project|null=projectRef.current)=>guard(async()=>{
+    if(workspaceLocked)return;
+    await api('archiveSession',{projectId:p?.id||INBOX_ID,id:item.id,archived:!item.archivedAt});
+    if(session?.id===item.id){setSession({...session,archivedAt:item.archivedAt?undefined:Date.now()});setArchivedSessions(!!p?.archivedAt||!item.archivedAt);}
+    await refreshSessions();notify(t(item.archivedAt?'ui.sessionRestored':'ui.sessionArchived'));
+  },t('ui.savingChanges'));
+  const archiveProject=(item:Project)=>guard(async()=>{
+    const next=await api('archiveProject',{id:item.id,archived:!item.archivedAt});setState(next);
+    if(project?.id===item.id){const p=next.projects.find((p:Project)=>p.id===item.id);projectRef.current=p;setProject(p);setArchivedSessions(!!p.archivedAt||!!session?.archivedAt);}
+    notify(t(item.archivedAt?'ui.projectRestored':'ui.projectArchived'));
+  },t('ui.savingChanges'));
+  const requestProjectDeletion=(item:Project)=>guard(async()=>{
+    const list=await api('sessions',{projectId:item.id}).catch(()=>null);setDeletion({kind:'project',id:item.id,name:item.name,count:list?.length});setModal('delete');
+  });
+  const deleteItem=()=>guard(async()=>{
+    if(!deletion||busy||sending.current)return;
+    if(deletion.kind==='project'){
+      setState(await api('deleteProject',{id:deletion.id}));
+      if(project?.id===deletion.id)await openProject(null);
+      await refreshSessions();
+    }else{
+      await api('deleteSession',{projectId:deletion.projectId||projectId,id:deletion.id});savedDrafts.current.delete(deletion.id);
+      const list=await refreshSessions();
+      if(session?.id===deletion.id){const next=list.find(s=>!!s.archivedAt===archivedSessions);setSession(next?await api('session',{projectId,id:next.id}):null);setDraft('');setAttachments([]);setStream({});}
+    }
+    setDeletion(null);setModal('');notify(t('ui.deleted'));
+  },t('ui.deleting'));
+  const createProject=(existing=false)=>guard(async()=>{
+    const p=await api('createProject',{existing,name:projectName.trim()});
+    if(!p)return;
+    await refresh();
+    if(projectIntent==='draft')await chooseDraftProject(p);else await openProject(p);
+    await refreshSessions(p);
+    setProjectName('');setModal('');
+  },t('ui.creatingProject'));
+  const sessionActions=(item:Session,p:Project|null=projectRef.current)=>[
+    {label:t(item.archivedAt?'ui.restoreSession':'ui.archiveSession'),icon:item.archivedAt?<ArchiveRestore size={15}/>:<Archive size={15}/>,onClick:()=>archiveSession(item,p)},
+    {label:t('ui.deleteSession'),icon:<Trash2 size={15}/>,danger:true,onClick:()=>{setDeletion({kind:'session',projectId:p?.id||INBOX_ID,id:item.id,name:item.title});setModal('delete');}}
+  ];
   const selectedProvider=state?.providers.find(p=>p.id===state.providerId);
   const reasoning=reasoningProfile(selectedProvider,state?.model||'');
   const effort=selectedEffort(reasoning.efforts,state?.reasoningEffort||'xhigh');
@@ -172,6 +253,9 @@ function App(){
   },[modal]);
   const filteredTools=tools.filter(t=>`${t.name} ${t.description}`.toLowerCase().includes(toolSearch.toLowerCase()));
   const hasMessages=!!session?.messages.length||!!approval;
+  const sidebarProjects:(Project|null)[]=[...(state?.projects.filter(p=>archivedSessions||!p.archivedAt)||[]),null];
+  const archiveCount=sessionGroups.reduce((count,g)=>count+g.sessions.filter(s=>s.archivedAt).length,0)+(state?.projects.filter(p=>p.archivedAt).length||0);
+  const visibleProjects=state?.projects.filter(p=>!!p.archivedAt===projectArchive&&`${p.name} ${p.path}`.toLowerCase().includes(projectSearch.toLowerCase()))||[];
   const connected=state?.connection?.connected;
   const projectInfo=state?.connection.project;
   const projectLabel=projectInfo?.projectName||projectInfo?.name||projectInfo?.projectPath?.split(/[\\/]/).pop()||(projectInfo?.isUntitled?t('ui.untitledUnsaved'):t('ui.openProject'));
@@ -183,28 +267,55 @@ function App(){
     <div className="titlebar"><div className="titlebar-brand"><img src="./helmet.png" alt="" width="32"/>Archi Helper</div><div className="titlebar-actions"><label className="language-switch" title={t('ui.language')}><Languages size={15}/><select aria-label={t('ui.language')} value={language} disabled={!state||busy||choosing} onChange={e=>{const language=e.target.value;guard(async()=>{setChoosing(true);try{const s=await api('settings',{language});setLanguage(s.language);setState(s);}finally{setChoosing(false);}});}}><option value="ru">RU</option><option value="en">EN</option></select></label><div className="window-controls"><IconButton title={t('ui.minimize')} onClick={()=>api('window',{action:'minimize'})}><Minus size={14}/></IconButton><IconButton title={t('ui.maximize')} onClick={()=>api('window',{action:'maximize'})}><Square size={11}/></IconButton><IconButton title={t('ui.close')} onClick={()=>api('window',{action:'close'})}><X size={15}/></IconButton></div></div></div>
     <div className="workspace">
       <aside className="sidebar">
-        <button className="project-select" onClick={()=>setModal('projects')} disabled={busy||submitting}><Folder size={18}/><strong>{project?.name||t('ui.chooseProject')}</strong><ChevronDown size={14}/></button>
-        <button className="new-chat" aria-label={t('ui.createANewSession')} title="Ctrl + N" onClick={newSession} disabled={!project||busy||submitting}><Plus size={17}/>{t('ui.newSession')}</button>
-        {sessions.length>6&&<div className="sidebar-search"><Search size={14}/><input aria-label={t('ui.findSession')} placeholder={t('ui.search')} value={search} onChange={e=>setSearch(e.target.value)}/></div>}
-        <div className="session-list">
-          {sessions.filter(s=>s.title.toLowerCase().includes(search.toLowerCase())).map(s=><button className={`session-row ${session?.id===s.id?'selected':''}`} disabled={busy||submitting} key={s.id} onClick={()=>guard(async()=>{if(sending.current)return;setSession(await api('session',{projectId:project?.id,id:s.id}));setStream({});setDraft('');setAttachments([]);})}><MessageSquare size={15}/><span>{s.title}</span></button>)}
+        <button className="new-chat" aria-label={t('ui.createANewSession')} title="Ctrl + N" onClick={()=>newSession()} disabled={workspaceLocked}><Plus size={17}/>{t('ui.newSession')}</button>
+        <div className="sidebar-search"><Search size={14}/><input aria-label={t('ui.searchProjectsAndSessions')} placeholder={t('ui.search')} value={search} onChange={e=>setSearch(e.target.value)}/></div>
+        <div className="session-list-heading"><button className="manage-projects" disabled={workspaceLocked} onClick={()=>openProjects()}>{t(archivedSessions?'ui.archive':'ui.yourProjects')}<ChevronDown size={12}/></button><div><button title={t('ui.newProject')} aria-label={t('ui.newProject')} disabled={workspaceLocked} onClick={()=>openProjects()}><Plus size={15}/></button><button className={archivedSessions?'active':''} title={t(archivedSessions?'ui.showActiveSessions':'ui.showArchive')} aria-label={t(archivedSessions?'ui.showActiveSessions':'ui.showArchive')} aria-pressed={archivedSessions} onClick={()=>{setArchivedSessions(value=>!value);setSearch('');}}><Archive size={15}/>{archiveCount||''}</button></div></div>
+        <div className="session-list grouped-session-list">
+          {sidebarProjects.map(p=>{
+            const id=p?.id||INBOX_ID,group=sessionGroups.find(g=>g.projectId===id),query=search.trim().toLowerCase(),name=p?.name||t('ui.withoutProject');
+            const all=(group?.sessions||[]).filter(s=>archivedSessions?(p?.archivedAt||s.archivedAt):!s.archivedAt);
+            const matches=all.filter(s=>name.toLowerCase().includes(query)||s.title.toLowerCase().includes(query));
+            if(query&&!matches.length&&!name.toLowerCase().includes(query)||archivedSessions&&!p?.archivedAt&&!matches.length)return null;
+            const visible=query?matches:matches.slice(0,shownSessions[id]||5),collapsed=!query&&collapsedProjects[id];
+            return <section className="sidebar-project-group" key={id} aria-label={name}>
+              <div className={`sidebar-project-heading ${projectId===id?'current-project':''}`}>
+                <button className="project-collapse" aria-label={t(collapsed?'ui.expandProject':'ui.collapseProject',{name})} aria-expanded={!collapsed} onClick={()=>setCollapsedProjects(value=>({...value,[id]:!value[id]}))}><ChevronRight size={12} className={collapsed?'':'expanded'}/></button>
+                <button className="sidebar-project-open" disabled={workspaceLocked} title={p?.path||name} onClick={()=>guard(()=>openProject(p))}>{p?.archivedAt?<Archive size={17}/>:<Folder size={17}/>}<span>{name}</span></button>
+                {!p?.archivedAt&&<IconButton title={t('ui.newSessionInProject',{name})} disabled={workspaceLocked} onClick={()=>newSession(p)}><Plus size={14}/></IconButton>}
+                {p&&<ActionMenu label={t('ui.projectActions',{name})} disabled={workspaceLocked} actions={[
+                  {label:t('ui.renameProject'),icon:<Pencil size={15}/>,onClick:()=>{setRenamingProject(p);setModal('renameProject');}},
+                  {label:t(p.archivedAt?'ui.restoreProject':'ui.archiveProject'),icon:p.archivedAt?<ArchiveRestore size={15}/>:<Archive size={15}/>,onClick:()=>archiveProject(p)},
+                  {label:t('ui.deleteProject'),icon:<Trash2 size={15}/>,danger:true,onClick:()=>requestProjectDeletion(p)}
+                ]}/>}
+              </div>
+              {!collapsed&&<div className="sidebar-project-sessions">{visible.map(s=><div className={`session-row ${session?.id===s.id?'selected':''}`} key={s.id}><button className="session-open" disabled={workspaceLocked} title={s.title} aria-current={session?.id===s.id?'page':undefined} onClick={()=>selectSession(s.id,p)}><span>{s.title}</span></button><ActionMenu label={t('ui.sessionActions',{name:s.title})} disabled={workspaceLocked} actions={sessionActions(s,p)}/></div>)}
+                {group?.error&&<p className="sidebar-load-error" title={group.error}>{group.error}</p>}
+                {!query&&matches.length>visible.length&&<button className="show-more-sessions" onClick={()=>setShownSessions(value=>({...value,[id]:(value[id]||5)+5}))}>{t('ui.showMore')}</button>}
+                {!matches.length&&!group?.error&&!query&&<p className="sidebar-project-empty">{t('ui.noSessionsYet')}</p>}
+              </div>}
+            </section>;
+          })}
+          {archivedSessions&&!archiveCount&&<p className="workspace-empty">{t('ui.archiveEmpty')}</p>}
+          {!!search&&!sidebarProjects.some(p=>{const id=p?.id||INBOX_ID;return (p?.name||t('ui.withoutProject')).toLowerCase().includes(search.toLowerCase())||sessionGroups.find(g=>g.projectId===id)?.sessions.some(s=>s.title.toLowerCase().includes(search.toLowerCase())&&(archivedSessions?(p?.archivedAt||s.archivedAt):!s.archivedAt));})&&<p className="workspace-empty">{t('ui.noSessionsFound')}</p>}
         </div>
-        <div className="sidebar-bottom"><button className="sidebar-link" disabled={!project} onClick={()=>reveal()}><FolderOpen size={17}/>{t('ui.projectFiles')}</button><button className="sidebar-link" disabled={!session} onClick={()=>guard(()=>api('revealWorkspace',{projectId:project?.id,sessionId:session?.id}))}><FileText size={17}/>{t('ui.chatFiles')}</button><button className="sidebar-link" onClick={()=>setModal('providers')}><Settings size={17}/>{t('ui.settings')}</button></div>
+        <div className="sidebar-bottom"><button className="sidebar-link" disabled={!project} onClick={()=>reveal()}><FolderOpen size={17}/>{t('ui.projectFiles')}</button><button className="sidebar-link" disabled={!session} onClick={()=>guard(()=>api('revealWorkspace',{projectId,sessionId:session?.id}))}><FileText size={17}/>{t('ui.chatFiles')}</button><button className="sidebar-link" onClick={()=>setModal('providers')}><Settings size={17}/>{t('ui.settings')}</button></div>
       </aside>
       <main className="main">
-        <header className="chat-header"><strong className="session-title">{session?.title||t('ui.newProject')}</strong><div className="header-actions"><button className={`connection-pill ${connected?'online':''}`} onClick={()=>setModal('archicad')} title={connected?projectLabel:t('ui.connectionSettings')}><span/>{connected?`Archicad ${state?.connection.data?.archicad_version||''}`:t('ui.connectArchicad')}</button>{session&&<><IconButton title={t('ui.renameSession')} disabled={busy} onClick={()=>setModal('rename')}><Pencil size={15}/></IconButton><IconButton title={t('ui.exportConversation')} onClick={()=>guard(()=>api('exportSession',{projectId:project?.id,id:session.id}))}><Download size={16}/></IconButton></>}</div></header>
+        <header className="chat-header"><strong className="session-title">{session?.title||t('ui.newSession')}</strong><div className="header-actions"><button className={`connection-pill ${connected?'online':''}`} onClick={()=>setModal('archicad')} title={connected?projectLabel:t('ui.connectionSettings')}><span/>{connected?`Archicad ${state?.connection.data?.archicad_version||''}`:t('ui.connectArchicad')}</button>{session&&<><IconButton title={t('ui.renameSession')} disabled={workspaceLocked} onClick={()=>setModal('rename')}><Pencil size={15}/></IconButton><IconButton title={t('ui.exportConversation')} onClick={()=>guard(()=>api('exportSession',{projectId,id:session.id}))}><Share size={16}/></IconButton><ActionMenu label={t('ui.sessionActions',{name:session.title})} disabled={workspaceLocked} actions={sessionActions(session)}/></>}</div></header>
+        {readOnly&&<div className="archive-banner"><Archive size={17}/><span>{t(project?.archivedAt?'ui.projectIsArchived':'ui.sessionIsArchived')}</span><button disabled={workspaceLocked} onClick={()=>project?.archivedAt?archiveProject(project):session&&archiveSession(session)}><ArchiveRestore size={15}/>{t('ui.restore')}</button></div>}
         <div className="conversation-wrap">
         <div className="conversation" ref={conversation}>
           <div className="conversation-content" ref={conversationContent}>
           {!hasMessages?<div className="welcome">
             <Mascot/>
-            <h1>{project?t('ui.whatShallWeDo'):t('ui.startWithAProject')}</h1>
-            {!project?<button className="primary welcome-create" onClick={()=>setModal('projects')}><Plus size={17}/>{t('ui.createProject')}</button>:<div className="suggestions">
+            <h1>{t('ui.whatShallWeDo')}</h1>
+            <p className="welcome-hint">{t('ui.startSessionHint')}</p>
+            <div className="suggestions">
               {suggestions().map(s=><button key={s.id} data-preset={s.id} title={s.description} onClick={()=>{setDraft(s.prompt);textInput.current?.focus();}}><Layers size={16}/><span>{s.title}</span></button>)}
-            </div>}
+            </div>
           </div>:<div className="messages">
-            {groupMessages(session?.messages||[]).map(group=>{const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<article key={m.id} className={`message ${m.role}`}><div className="message-author">{m.role==='assistant'?<><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong></>:m.role==='user'?<><span className="user-avatar">{t('ui.y')}</span><strong>{t('ui.you')}</strong></>:<><Circle size={13}/><strong>{t('ui.pleaseNote')}</strong></>}{(m.role==='user'||m.role==='assistant')&&<span className="message-actions"><IconButton title={t('ui.copyMessage')} disabled={!m.text} onClick={()=>copyMessage(m.text)}><Copy size={15}/></IconButton></span>}</div><div className="prose"><MessageContent text={m.text} projectId={project?.id} sessionId={session?.id} onLink={openMessageLink}/></div></article>;})}
-            {Object.entries(stream).filter(([,text])=>text.length>0).map(([id,text])=><article key={id} className="message assistant"><div className="message-author"><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong><span className="thinking-dot"/><span className="message-actions"><IconButton title={t('ui.copyMessage')} onClick={()=>copyMessage(text)}><Copy size={15}/></IconButton></span></div><div className="prose"><MessageContent text={text} projectId={project?.id} sessionId={session?.id} onLink={openMessageLink}/></div></article>)}
+            {groupMessages(session?.messages||[]).map(group=>{const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<article key={m.id} className={`message ${m.role}`}><div className="message-author">{m.role==='assistant'?<><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong></>:m.role==='user'?<><span className="user-avatar">{t('ui.y')}</span><strong>{t('ui.you')}</strong></>:<><Circle size={13}/><strong>{t('ui.pleaseNote')}</strong></>}{(m.role==='user'||m.role==='assistant')&&<span className="message-actions"><IconButton title={t('ui.copyMessage')} disabled={!m.text} onClick={()=>copyMessage(m.text)}><Copy size={15}/></IconButton></span>}</div><div className="prose"><MessageContent text={m.text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/></div></article>;})}
+            {Object.entries(stream).filter(([,text])=>text.length>0).map(([id,text])=><article key={id} className="message assistant"><div className="message-author"><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong><span className="thinking-dot"/><span className="message-actions"><IconButton title={t('ui.copyMessage')} onClick={()=>copyMessage(text)}><Copy size={15}/></IconButton></span></div><div className="prose"><MessageContent text={text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/></div></article>)}
             {busy&&!Object.keys(stream).length&&<div className="working-indicator"><Mascot size={32} working/>{t('ui.working')}</div>}
             {approval&&<div className="approval-card"><div className="approval-title"><ShieldCheck size={21}/><div><strong>{approval.kind==='python'?t('ui.runProcessing'):t('ui.confirmAction')}</strong><p>{approval.description}</p></div></div><details className="approval-details" open={approval.kind==='python'}><summary>{approval.kind==='python'?t('ui.codeToRun'):t('ui.viewExactParameters')}</summary><pre>{pretty(approval.args)}</pre></details>{approval.kind==='python'&&<p className="muted">{t('ui.theScriptRunsLocallyWithYourPermissions')}</p>}<div className="approval-actions"><button className="secondary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:false}))}>{t('ui.cancel')}</button><button className="primary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:true}))}><Check size={15}/>{t('ui.run')}</button></div></div>}
           </div>}
@@ -214,7 +325,7 @@ function App(){
         </div>
         <div className="composer-wrap">
           {!!session?.pendingMessages?.length&&<section className="message-queue" aria-label={t('ui.messageQueue')}>
-            <div className="message-queue-heading"><span role="status">{session.queuePaused?t('ui.queuePaused'):t('ui.queuedMessageCount',{count:session.pendingMessages.length})}</span>{session.queuePaused&&<button className="text-button" disabled={busy||submitting} onClick={()=>guard(()=>api('resumeQueue',{projectId:project?.id,sessionId:session.id}))}><Play size={13}/>{t('ui.resumeQueue')}</button>}</div>
+            <div className="message-queue-heading"><span role="status">{session.queuePaused?t('ui.queuePaused'):t('ui.queuedMessageCount',{count:session.pendingMessages.length})}</span>{session.queuePaused&&<button className="text-button" disabled={busy||submitting} onClick={()=>guard(()=>api('resumeQueue',{projectId,sessionId:session.id}))}><Play size={13}/>{t('ui.resumeQueue')}</button>}</div>
             <ol>{session.pendingMessages.map(item=><li key={item.id}>
               <span className="queued-message-icon" aria-hidden="true">{item.delivery==='steer'?<RotateCw size={15}/>:<ArrowUpRight size={15}/>}</span>
               <div className="queued-message-copy" title={[item.text,...item.attachments].join('\n')}><span>{item.text||t('ui.attachedMaterials')}</span>{item.attachments.length>0&&<small><Paperclip size={11}/>{item.attachments.map(file=>file.split('/').pop()).join(', ')}</small>}</div>
@@ -223,19 +334,29 @@ function App(){
               <IconButton title={t('ui.removeQueuedMessage')} disabled={submitting} onClick={()=>changeQueued(item,'remove')}><Trash2 size={14}/></IconButton>
             </li>)}</ol>
           </section>}
-          {attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a}><Paperclip size={12}/>{a.split('/').pop()}<button onClick={()=>setAttachments(v=>v.filter(x=>x!==a))}><X size={12}/></button></span>)}</div>}
-          <div className={`composer ${busy?'is-busy':''}`}><textarea ref={textInput} aria-label={t('ui.taskForArchiHelper')} placeholder={project?t(busy?'ui.describeFollowUp':'ui.describeYourTask'):t('ui.chooseAProjectFirst')} value={draft} onChange={e=>setDraft(e.target.value)} disabled={!project} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send((e.ctrlKey||e.metaKey)&&busy&&state?.canSteer?'steer':'queue');}}}/>
+          {attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a}><button className="attachment-file" title={t('ui.revealFile',{path:a})} onClick={()=>reveal(a)}><Paperclip size={12}/>{a.split('/').pop()}</button><button disabled={submitting} aria-label={t('ui.removeAttachment',{name:a.split('/').pop()})} onClick={()=>setAttachments(v=>v.filter(x=>x!==a))}><X size={12}/></button></span>)}</div>}
+          <div className={`composer ${busy?'is-busy':''}`}><textarea ref={textInput} aria-label={t('ui.taskForArchiHelper')} placeholder={t(readOnly?'ui.archivedComposerHint':busy?'ui.describeFollowUp':'ui.describeYourTask')} value={draft} onChange={e=>setDraft(e.target.value)} disabled={readOnly||navigating} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send((e.ctrlKey||e.metaKey)&&busy&&state?.canSteer?'steer':'queue');}}}/>
             {busy&&<div className="composer-follow-up"><span>{t(state?.canSteer?'ui.queueHint':'ui.queueHintNoSteering')}</span>{state?.canSteer&&<button disabled={submitting||(!draft.trim()&&!attachments.length)||choosing} onClick={()=>send('steer')}><ArrowUpRight size={13}/>{t('ui.steerTask')}</button>}</div>}
 
-            <div className="composer-toolbar"><div className="composer-options"><IconButton title={t('ui.attachAPdfImageOrFile')} disabled={!project||submitting} onClick={()=>guard(async()=>{const projectId=project?.id,sessionId=session?.id,files=await api('attach',{projectId,sessionId});if(projectRef.current?.id===projectId&&sessionRef.current===sessionId)setAttachments(v=>[...new Set<string>([...v,...files])]);})}><Plus size={20}/></IconButton><span className={`permission-control ${mode==='full'?'full-access':''}`} title={`${t('ui.workMode')}: ${mode==='full'?t('ui.fullAccess'):mode==='read'?t('ui.readOnly'):t('ui.askForApproval')}${mode==='full'?' · '+t('ui.commandsFilesAndPythonWithoutConfirmation'):''}`}>{mode==='full'?<ShieldAlert size={16}/>:mode==='read'?<Eye size={16}/>:<ShieldCheck size={16}/>}<select aria-label={t('ui.workMode')} value={mode} disabled={busy} onChange={e=>{const next=e.target.value;guard(async()=>{const s=await api('settings',{permissionMode:next});setState(s);setMode(next);});}}><option value="review">{t('ui.askForApproval')}</option><option value="full">{t('ui.fullAccess')}</option><option value="read">{t('ui.readOnly')}</option></select></span></div><div className="composer-ai"><select className="provider-select" title={selectedProvider?.name||t('ui.provider')} aria-label={t('ui.provider')} value={state?.providerId||''} disabled={busy||choosing||!state?.providers.length} onChange={e=>chooseSettings({providerId:e.target.value})}><option value="" disabled>{t('ui.connectAi')}</option>{state?.providers.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><select className="model-select" title={selectedProvider?.models.find(m=>m.id===state?.model)?.name||state?.model||t('ui.chooseAModel')} aria-label={t('ui.model')} value={state?.model||''} disabled={busy||choosing||!selectedProvider} onChange={e=>chooseSettings({model:e.target.value})}><option value="">{t('ui.chooseAModel')}</option>{selectedProvider?.models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}{state?.model&&!selectedProvider?.models.some(m=>m.id===state.model)&&<option value={state.model}>{state.model}</option>}</select><IconButton title={t('ui.providerSettings')} onClick={()=>setModal('providers')}><Settings size={15}/></IconButton></div><div className="composer-reasoning" title={`${t('ui.reasoningLevel')}: ${effort?effortLabel(effort):t('ui.reasoningDefault')} · ${reasoning.toolRestricted?t('ui.reasoningToolsRestricted'):reasoning.efforts.length?t('ui.reasoningHint'):t('ui.reasoningUnavailable')}`}><Brain size={15}/><span className="effort-value" aria-hidden="true">{effort?effort.charAt(0).toUpperCase()+effort.slice(1):'—'}</span><select aria-label={t('ui.reasoningLevel')} value={effort} disabled={busy||choosing||!reasoning.efforts.length} onChange={e=>chooseSettings({reasoningEffort:e.target.value})}>{reasoning.efforts.length?reasoning.efforts.map(value=><option key={value} value={value}>{effortLabel(value)}</option>):<option value="">{t('ui.reasoningDefault')}</option>}</select></div>
-            <div className="composer-actions">{busy&&<button className="send-button stop" title={t('ui.stop')} aria-label={t('ui.stop')} onClick={()=>guard(()=>api('stop',{projectId:project?.id,sessionId:session?.id}))}><Square size={14} fill="currentColor"/></button>}<button className="send-button" title={t(busy||session?.pendingMessages?.length?'ui.addToQueue':'ui.sendTask')} aria-label={t(busy||session?.pendingMessages?.length?'ui.addToQueue':'ui.sendTask')} onClick={()=>send()} disabled={(!draft.trim()&&!attachments.length)||!project||!session||!state?.providerId||!state?.model||choosing||submitting}><ArrowUp size={20}/></button></div></div>
+            <div className="composer-toolbar"><div className="composer-options"><IconButton title={t('ui.attachAPdfImageOrFile')} disabled={readOnly||workspaceLocked} onClick={()=>guard(async()=>{if(sending.current)return;sending.current=true;setSubmitting(true);try{const hadSession=!!session,current=await ensureSession(),files=await api('attach',{projectId,sessionId:current.id});if(!files.length&&!hadSession){await api('deleteSession',{projectId,id:current.id});setSession(null);sessionRef.current=undefined;await refreshSessions();}else setAttachments(v=>[...new Set<string>([...v,...files])]);}finally{sending.current=false;setSubmitting(false);}})}><Plus size={20}/></IconButton><span className={`permission-control ${mode==='full'?'full-access':''}`} title={`${t('ui.workMode')}: ${mode==='full'?t('ui.fullAccess'):mode==='read'?t('ui.readOnly'):t('ui.askForApproval')}${mode==='full'?' · '+t('ui.commandsFilesAndPythonWithoutConfirmation'):''}`}>{mode==='full'?<ShieldAlert size={16}/>:mode==='read'?<Eye size={16}/>:<ShieldCheck size={16}/>}<select aria-label={t('ui.workMode')} value={mode} disabled={busy} onChange={e=>{const next=e.target.value;guard(async()=>{const s=await api('settings',{permissionMode:next});setState(s);setMode(next);});}}><option value="review">{t('ui.askForApproval')}</option><option value="full">{t('ui.fullAccess')}</option><option value="read">{t('ui.readOnly')}</option></select></span></div><div className="composer-ai"><select className="provider-select" title={selectedProvider?.name||t('ui.provider')} aria-label={t('ui.provider')} value={state?.providerId||''} disabled={busy||choosing||!state?.providers.length} onChange={e=>chooseSettings({providerId:e.target.value})}><option value="" disabled>{t('ui.connectAi')}</option>{state?.providers.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><select className="model-select" title={selectedProvider?.models.find(m=>m.id===state?.model)?.name||state?.model||t('ui.chooseAModel')} aria-label={t('ui.model')} value={state?.model||''} disabled={busy||choosing||!selectedProvider} onChange={e=>chooseSettings({model:e.target.value})}><option value="">{t('ui.chooseAModel')}</option>{selectedProvider?.models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}{state?.model&&!selectedProvider?.models.some(m=>m.id===state.model)&&<option value={state.model}>{state.model}</option>}</select><IconButton title={t('ui.providerSettings')} onClick={()=>setModal('providers')}><Settings size={15}/></IconButton></div><div className="composer-reasoning" title={`${t('ui.reasoningLevel')}: ${effort?effortLabel(effort):t('ui.reasoningDefault')} · ${reasoning.toolRestricted?t('ui.reasoningToolsRestricted'):reasoning.efforts.length?t('ui.reasoningHint'):t('ui.reasoningUnavailable')}`}><Brain size={15}/><span className="effort-value" aria-hidden="true">{effort?effort.charAt(0).toUpperCase()+effort.slice(1):'—'}</span><select aria-label={t('ui.reasoningLevel')} value={effort} disabled={busy||choosing||!reasoning.efforts.length} onChange={e=>chooseSettings({reasoningEffort:e.target.value})}>{reasoning.efforts.length?reasoning.efforts.map(value=><option key={value} value={value}>{effortLabel(value)}</option>):<option value="">{t('ui.reasoningDefault')}</option>}</select></div>
+            <div className="composer-actions">{busy&&<button className="send-button stop" title={t('ui.stop')} aria-label={t('ui.stop')} onClick={()=>guard(()=>api('stop',{projectId,sessionId:session?.id}))}><Square size={14} fill="currentColor"/></button>}<button className="send-button" title={t(busy||session?.pendingMessages?.length?'ui.addToQueue':'ui.sendTask')} aria-label={t(busy||session?.pendingMessages?.length?'ui.addToQueue':'ui.sendTask')} onClick={()=>send()} disabled={(!draft.trim()&&!attachments.length)||readOnly||navigating||!state?.providerId||!state?.model||choosing||submitting}><ArrowUp size={20}/></button></div></div>
           </div>
+          <div className="composer-project-bar">{!hasMessages&&!readOnly?<ProjectPicker projects={state?.projects||[]} project={project} disabled={workspaceLocked} onSelect={chooseDraftProject} onCreate={()=>openProjects('draft')}/>:<button className="project-context-trigger" disabled={workspaceLocked} onClick={()=>openProjects()} title={project?.path}><Folder size={16}/><span>{project?.name||t('ui.withoutProject')}</span><ChevronDown size={13}/></button>}<span className="composer-project-hint">{t('ui.sessionProjectHint')}</span></div>
         </div>
       </main>
     </div>
     {notice&&<div className={`toast ${notice.tone}`} role={notice.tone==='error'?'alert':'status'} aria-atomic="true">{notice.tone==='error'?<CircleAlert size={17}/>:<Check size={17}/>}<span>{notice.text}</span><IconButton title={t('ui.dismissMessage')} onClick={()=>setNotice(null)}><X size={15}/></IconButton></div>}
-    {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setModal('');}}><section className={`modal ${modal==='tools'?'wide':isSettings?'settings-modal':''}`} role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div className="modal-header"><div><h2 id="dialog-title">{modal==='projects'?t('ui.yourProjects'):modal==='tools'?t('ui.archicadTools'):modal==='rename'?t('ui.sessionTitle'):t('ui.settings')}</h2></div><IconButton title={t('ui.closeDialog')} onClick={()=>setModal('')}><X size={19}/></IconButton></div>
-      {modal==='projects'&&<div className="modal-body"><div className="project-list">{state?.projects.map(p=><button key={p.id} onClick={()=>guard(async()=>{await openProject(p);setModal('');})}><Folder size={21}/><span><strong>{p.name}</strong><small>{p.path}</small></span><ChevronRight size={16}/></button>)}</div><label>{t('ui.newProject')}<input value={projectName} onChange={e=>setProjectName(e.target.value)} placeholder={t('ui.projectName')}/></label><div className="form-actions"><button className="secondary" onClick={()=>guard(async()=>{const p=await api('createProject',{existing:true});if(p){await refresh();await openProject(p);setModal('');}},t('ui.choosingFolder'))}><FolderOpen size={16}/>{t('ui.openFolder')}</button><button className="primary" disabled={!!working} onClick={()=>guard(async()=>{const p=await api('createProject',{name:projectName.trim()||t('ui.newProject')});if(p){await refresh();await openProject(p);setModal('');}},t('ui.creatingProject'))}><Plus size={16}/>{t('ui.createProject')}</button></div></div>}
+    {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!working)setModal('');}}><section className={`modal ${modal==='tools'?'wide':isSettings?'settings-modal':''}`} role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div className="modal-header"><div><h2 id="dialog-title">{modal==='projects'?t('ui.yourProjects'):modal==='tools'?t('ui.archicadTools'):modal==='rename'?t('ui.sessionTitle'):modal==='renameProject'?t('ui.renameProject'):modal==='delete'?t('ui.confirmDeletion'):t('ui.settings')}</h2></div><IconButton title={t('ui.closeDialog')} disabled={!!working} onClick={()=>setModal('')}><X size={19}/></IconButton></div>
+      {modal==='projects'&&<div className="modal-body projects-body">
+        <div className="project-manager-top"><div className="workspace-tabs"><button aria-pressed={!projectArchive} onClick={()=>setProjectArchive(false)}>{t('ui.activeProjects')}</button><button aria-pressed={projectArchive} onClick={()=>setProjectArchive(true)}><Archive size={14}/>{t('ui.archive')}</button></div><label className="project-manager-search"><Search size={15}/><input aria-label={t('ui.searchProjects')} placeholder={t('ui.searchProjects')} value={projectSearch} onChange={e=>setProjectSearch(e.target.value)}/></label></div>
+        {!projectArchive&&<button className="unassigned-project" disabled={workspaceLocked} onClick={()=>guard(async()=>{if(projectIntent==='draft')await chooseDraftProject(null);else await openProject(null);setModal('');})}><MessageSquare size={18}/><span>{t('ui.withoutProject')}</span>{!project&&<Check size={16}/>}</button>}
+        <div className="project-manager-list">{visibleProjects.map(p=><div className="project-manager-row" key={p.id}><button className="project-open" disabled={workspaceLocked} title={p.path} onClick={()=>guard(async()=>{if(projectIntent==='draft'&&!p.archivedAt)await chooseDraftProject(p);else await openProject(p);setModal('');})}>{p.archivedAt?<Archive size={21}/>:<Folder size={21}/>}<span><strong>{p.name}</strong><small>{p.path}</small></span>{project?.id===p.id&&<Check size={16}/>}</button><ActionMenu label={t('ui.projectActions',{name:p.name})} disabled={workspaceLocked} actions={[
+          {label:t('ui.renameProject'),icon:<Pencil size={15}/>,onClick:()=>{setRenamingProject(p);setModal('renameProject');}},
+          {label:t(p.archivedAt?'ui.restoreProject':'ui.archiveProject'),icon:p.archivedAt?<ArchiveRestore size={15}/>:<Archive size={15}/>,onClick:()=>archiveProject(p)},
+          {label:t('ui.deleteProject'),icon:<Trash2 size={15}/>,danger:true,onClick:()=>requestProjectDeletion(p)}
+        ]}/></div>)}{!visibleProjects.length&&<p className="workspace-empty">{t(projectArchive?'ui.archiveEmpty':'ui.noProjectsFound')}</p>}</div>
+        {!projectArchive&&<div className="project-create-form"><label>{t('ui.newProject')}<input maxLength={100} value={projectName} onChange={e=>setProjectName(e.target.value)} placeholder={t('ui.projectName')} onKeyDown={e=>{if(e.key==='Enter'&&projectName.trim()&&!workspaceLocked)createProject();}}/></label><p className="muted">{t('ui.projectFolderHint')}</p><div className="form-actions"><button className="secondary" disabled={workspaceLocked} onClick={()=>createProject(true)}><FolderOpen size={16}/>{t('ui.openFolder')}</button><button className="primary" disabled={workspaceLocked||!projectName.trim()} onClick={()=>createProject()}><Plus size={16}/>{t('ui.createProject')}</button></div></div>}
+      </div>}
       {isSettings&&<div className="settings-layout">
         <nav className="settings-nav" aria-label={t('ui.settingsSections')}>
           <button aria-current={modal==='providers'?'page':undefined} onClick={()=>setModal('providers')}><Sparkles size={18}/>{t('ui.aiProviders')}</button>
@@ -284,14 +405,15 @@ function App(){
             <div className="settings-page-header"><div><h3 id="about-heading">{t('ui.about')}</h3><p>{t('ui.aboutSectionDescription')}</p></div></div>
             <div className="settings-card settings-app-identity"><img src="./helmet.png" alt={t('ui.yellowHardHat')} width="48" height="48"/><div><h4>Archi Helper</h4><p>{t('ui.architectSAssistant')}</p></div><span className="settings-version">v{state?.appVersion||update?.version||'—'}</span></div>
             <div className={`settings-card settings-update ${updateStatus==='error'?'has-error':''}`}><span className="settings-update-icon"><RotateCw size={23} className={['checking','downloading'].includes(updateStatus)?'spin':undefined}/></span><div className="settings-update-copy"><h4>{t('ui.updates')}</h4><p role="status">{updateDescription}</p></div>{updateStatus==='disabled'?<button className="secondary" onClick={()=>guard(()=>api('external',{url:'https://github.com/streletskiy/archi-helper/releases'}))}><ExternalLink size={15}/>{t('ui.openReleases')}</button>:<button className="secondary" disabled={!!working||['checking','downloading','ready','countdown','installing'].includes(updateStatus)} onClick={()=>guard(async()=>setUpdate(await api('checkUpdates')))}>{t('ui.checkForUpdates')}</button>}</div>
-            <section className="settings-info-section"><h4><LockKeyhole size={16}/>{t('ui.dataAndPrivacy')}</h4><dl className="settings-data"><div><dt>{t('ui.historyAndMaterials')}</dt><dd>{t('ui.inProjectFolder')}</dd></div><div><dt>{t('ui.apiKeys')}</dt><dd>{t('ui.windowsEncrypted')}</dd></div><div><dt>{t('ui.aiRequests')}</dt><dd>{t('ui.toSelectedProvider')}</dd></div></dl></section>
             <section className="settings-info-section"><h4>{t('ui.bundledComponents')}</h4><div className="settings-components">{[`Python${state?.runtimeInfo?.pythonVersion?' '+state.runtimeInfo.pythonVersion:''}`,'uv','MCP'].map(name=><span key={name}><Check size={14}/>{name}</span>)}</div></section>
             <footer className="settings-links"><button onClick={()=>guard(()=>api('external',{url:'https://github.com/streletskiy/archi-helper'}))}><ExternalLink size={14}/>{t('ui.projectOnGithub')}</button><button onClick={()=>guard(()=>api('external',{url:'https://github.com/ENZYME-APD/tapir-archicad-automation'}))}><ExternalLink size={14}/>Tapir Archicad Automation</button></footer>
           </section>}
         </div>
       </div>}
-      {modal==='tools'&&<div className="tool-browser"><div className="tool-browser-list"><div className="sidebar-search"><Search size={15}/><input aria-label={t('ui.findTool')} placeholder={t('ui.nameOrDescription')} value={toolSearch} onChange={e=>setToolSearch(e.target.value)}/></div><small>{t('ui.toolCount',{count:filteredTools.length})}</small><div>{filteredTools.map(t=><button key={t.key} className={selectedTool?.key===t.key?'selected':''} onClick={()=>chooseTool(t)}><span>{t.readOnly?<Search size={13}/>:<Wrench size={13}/>}</span>{t.name}</button>)}</div></div><div className="tool-browser-detail">{selectedTool?<><div className="tool-name"><h3>{selectedTool.name}</h3><span className={`tag ${selectedTool.readOnly?'green':''}`}>{selectedTool.readOnly?t('ui.read'):t('ui.modify')}</span></div><p className="muted">{selectedTool.description}</p><details><summary>{t('ui.parameterSchema')}</summary><pre>{pretty(selectedTool.inputSchema)}</pre></details><label>{t('ui.jsonParameters')}<textarea className="code-input" value={toolArgs} onChange={e=>setToolArgs(e.target.value)} rows={9}/></label><button className="primary" disabled={!project||!session||busy} onClick={()=>guard(async()=>{const args=JSON.parse(toolArgs);setModal('');await api('directTool',{projectId:project?.id,sessionId:session?.id,key:selectedTool.key,args,mode});})}><Play size={15}/>{t('ui.run')}</button></>:<div className="tool-placeholder"><Wrench size={30}/><p>{t('ui.chooseAToolOnTheLeft')}</p></div>}</div></div>}
-      {modal==='rename'&&<Rename title={session?.title||''} onSave={title=>guard(async()=>{await api('renameSession',{projectId:project?.id,id:session?.id,title});setSession(s=>s?{...s,title}:s);await refreshSessions();setModal('');})}/>}
+      {modal==='tools'&&<div className="tool-browser"><div className="tool-browser-list"><div className="sidebar-search"><Search size={15}/><input aria-label={t('ui.findTool')} placeholder={t('ui.nameOrDescription')} value={toolSearch} onChange={e=>setToolSearch(e.target.value)}/></div><small>{t('ui.toolCount',{count:filteredTools.length})}</small><div>{filteredTools.map(t=><button key={t.key} className={selectedTool?.key===t.key?'selected':''} onClick={()=>chooseTool(t)}><span>{t.readOnly?<Search size={13}/>:<Wrench size={13}/>}</span>{t.name}</button>)}</div></div><div className="tool-browser-detail">{selectedTool?<><div className="tool-name"><h3>{selectedTool.name}</h3><span className={`tag ${selectedTool.readOnly?'green':''}`}>{selectedTool.readOnly?t('ui.read'):t('ui.modify')}</span></div><p className="muted">{selectedTool.description}</p><details><summary>{t('ui.parameterSchema')}</summary><pre>{pretty(selectedTool.inputSchema)}</pre></details><label>{t('ui.jsonParameters')}<textarea className="code-input" value={toolArgs} onChange={e=>setToolArgs(e.target.value)} rows={9}/></label><button className="primary" disabled={!session||busy||readOnly} onClick={()=>guard(async()=>{const args=JSON.parse(toolArgs);setModal('');await api('directTool',{projectId,sessionId:session?.id,key:selectedTool.key,args,mode});})}><Play size={15}/>{t('ui.run')}</button></>:<div className="tool-placeholder"><Wrench size={30}/><p>{t('ui.chooseAToolOnTheLeft')}</p></div>}</div></div>}
+      {modal==='rename'&&<Rename title={session?.title||''} onSave={title=>guard(async()=>{await api('renameSession',{projectId,id:session?.id,title});setSession(s=>s?{...s,title}:s);await refreshSessions();setModal('');})}/>}
+      {modal==='renameProject'&&renamingProject&&<Rename title={renamingProject.name} onSave={name=>guard(async()=>{const next=await api('renameProject',{id:renamingProject.id,name});setState(next);if(project?.id===renamingProject.id){const p=next.projects.find((p:Project)=>p.id===renamingProject.id);projectRef.current=p;setProject(p);}setModal('');})}/>}
+      {modal==='delete'&&deletion&&<div className="modal-body delete-confirm"><div className="delete-symbol"><Trash2 size={24}/></div><h3>{t(deletion.kind==='project'?'ui.deleteProjectQuestion':'ui.deleteSessionQuestion',{name:deletion.name})}</h3><p>{t(deletion.kind==='project'?'ui.deleteProjectDescription':'ui.deleteSessionDescription',{count:deletion.count??'—'})}</p><div className="form-actions"><button className="secondary" disabled={!!working} onClick={()=>setModal('')}>{t('ui.cancel')}</button><button className="danger-button" disabled={!!working||busy} onClick={deleteItem}><Trash2 size={16}/>{working||t('ui.deletePermanently')}</button></div></div>}
     </section></div>}
   </div>;
 }
@@ -309,7 +431,7 @@ function ToolGroup({messages,reveal}:{messages:Message[];reveal:(relative?:strin
     <details className={`tool-group ${running?'is-running':''} ${errors?'has-errors':''}`}><summary>{running?<RotateCw className="spin" size={14}/>:<Wrench size={14}/>}<strong>{active?title(active):t('ui.toolGroup',{count:messages.length})}</strong><span>{running?t('ui.running'):errors?t('ui.toolGroupErrors',{count:errors}):t('ui.toolGroupDone')}</span><ChevronDown size={14}/></summary><div className="tool-group-content">{messages.map(m=><details key={m.id} className={`tool-message ${m.status}`}><summary><span className="tool-state">{m.status==='running'?<RotateCw className="spin" size={14}/>:m.status==='error'?<X size={14}/>:<Check size={14}/>}</span><strong>{title(m)}</strong><span>{m.status==='running'?t('ui.running'):m.artifact?bytes(m.artifact.bytes):''}</span><ChevronDown size={13}/></summary><div className="tool-detail">{m.args!==undefined&&<><label>{t('ui.parameters')}</label><pre>{pretty(m.args)}</pre></>}<label>{t('ui.result')}</label><pre>{m.text}</pre>{m.artifact&&<button className="text-button" onClick={()=>reveal(m.artifact?.path)}><FileText size={14}/>{t('ui.fullResult')}{' '}{bytes(m.artifact.bytes)}<ArrowUpRight size={13}/></button>}</div></details>)}</div></details>
   </div>;
 }
-function Rename({title,onSave}:{title:string;onSave:(s:string)=>void}){const [value,setValue]=useState(title);return <div className="modal-body"><label>{t('ui.name')}<input autoFocus value={value} onChange={e=>setValue(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')onSave(value);}}/></label><div className="form-actions"><button className="primary" onClick={()=>onSave(value)}>{t('ui.save')}</button></div></div>;}
+function Rename({title,onSave}:{title:string;onSave:(s:string)=>void}){const [value,setValue]=useState(title);return <div className="modal-body"><label>{t('ui.name')}<input autoFocus maxLength={100} value={value} onChange={e=>setValue(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&value.trim())onSave(value.trim());}}/></label><div className="form-actions"><button className="primary" disabled={!value.trim()} onClick={()=>onSave(value.trim())}>{t('ui.save')}</button></div></div>;}
 function UpdateNotice({update,updateOnly,onLater,onRetry}:{update:any;updateOnly:boolean;onLater:()=>void;onRetry:()=>void}){
   const [now,setNow]=useState(Date.now());
   useEffect(()=>{if(update?.status!=='countdown')return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[update?.status,update?.restartAt]);
