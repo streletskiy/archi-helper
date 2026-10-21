@@ -58,9 +58,9 @@ export class Store {
     try { await this.save(); } catch (error) { this.state.language = previous; throw error; }
     setLanguage(value);
   }
-  async save() { await atomicJSON(this.file, this.state); }
+  async save() { this.saving=(this.saving||Promise.resolve()).catch(()=>{}).then(()=>atomicJSON(this.file,this.state));await this.saving; }
   publicState() {
-    return { ...this.state, providers: this.state.providers.map(({ encryptedKey, ...p }) => ({ ...p, hasKey: !!encryptedKey })) };
+    return { ...this.state, providers: this.state.providers.map(({ encryptedKey, encryptedOAuth, ...p }) => ({ ...p, hasKey: !!encryptedKey || !!encryptedOAuth })) };
   }
   async provider(input) {
     const id = input.id || uid();
@@ -72,7 +72,13 @@ export class Store {
     const baseURL=url.toString().replace(/\/+$/, ''), sameEndpoint=old?.baseURL===baseURL;
     const reasoningFormat=input.reasoningFormat||'auto',reasoningEfforts=input.reasoningEfforts||[];
     if(!FORMATS.includes(reasoningFormat)||!Array.isArray(reasoningEfforts)||reasoningEfforts.some(e=>!EFFORTS.includes(e)))throw new Error(t('errors.invalidReasoning'));
-    const provider = { id, name: String(input.name || url.hostname).slice(0,80), baseURL, supportsImages:input.supportsImages===true, reasoningFormat,reasoningEfforts, catalogVersion:sameEndpoint?old?.catalogVersion:undefined, catalogUpdatedAt:sameEndpoint?old?.catalogUpdatedAt:undefined, model:sameEndpoint?old?.model||'':'', models:sameEndpoint?old?.models||[]:[], encryptedKey: input.apiKey?.trim() ? this.secrets.encrypt(input.apiKey.trim()) : old?.encryptedKey };
+    if(old?.oauth) {
+      if(!sameEndpoint||input.apiKey?.trim())throw new Error(t('errors.oauthEndpointLocked'));
+      old.name=String(input.name||old.name).slice(0,80);old.supportsImages=input.supportsImages===true;
+      old.reasoningFormat=reasoningFormat;old.reasoningEfforts=reasoningEfforts;
+      await this.save();return this.publicState();
+    }
+    const provider = { id, name: String(input.name || url.hostname).slice(0,80), baseURL, supportsImages:input.supportsImages===true, reasoningFormat,reasoningEfforts, catalogVersion:sameEndpoint?old?.catalogVersion:undefined, catalogUpdatedAt:sameEndpoint?old?.catalogUpdatedAt:undefined, model:sameEndpoint?old?.model||'':'', models:sameEndpoint?old?.models||[]:[], encryptedKey: input.apiKey?.trim() ? this.secrets.encrypt(input.apiKey.trim()) : sameEndpoint?old?.encryptedKey:undefined };
     if (!provider.encryptedKey && !['localhost','127.0.0.1','[::1]'].includes(url.hostname)) throw new Error(t('errors.enterAnApiKey'));
     this.state.providers = [...this.state.providers.filter(p => p.id !== id), provider];
     this.state.providerId ||= id;
@@ -98,6 +104,7 @@ export class Store {
   getProvider(id) {
     const p = this.state.providers.find(p => p.id === id);
     if (!p) throw new Error(t('errors.addAProviderInSettings'));
+    if(p.oauth)return {...p,apiKey:'',authorize:rejected=>this.oauthManager.access(id,rejected)};
     return { ...p, apiKey: p.encryptedKey ? this.secrets.decrypt(p.encryptedKey) : '' };
   }
   project(id = INBOX_ID) {
