@@ -1,7 +1,7 @@
 {
   "name": "ac-helper",
   "productName": "Archi Helper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Personal architect assistant for Archicad",
   "author": "streletskiy",
   "private": true,
@@ -84,6 +84,8 @@
     "nsis": {
       "artifactName": "Archi-Helper-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
+      "useZip": true,
+      "differentialPackage": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,

@@ -2,6 +2,7 @@ import { t, normalizeLanguage, setLanguage } from '../locales/index.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { EFFORTS, FORMATS } from './reasoning.mjs';
 
 export const uid = () => crypto.randomUUID();
 export async function atomicJSON(file, value) {
@@ -42,6 +43,7 @@ export class Store {
     this.file = path.join(this.directory, 'settings.json');
     this.state = await readJSON(this.file, { version: 1, projects: [], providers: [], model: '', providerId: '', archicadPort: '', maxContextChars: 180000 });
     this.state.language = normalizeLanguage(this.state.language || defaultLanguage);
+    this.state.reasoningEffort ||= 'xhigh';
     setLanguage(this.state.language);
   }
   async setLanguage(value) {
@@ -62,11 +64,31 @@ export class Store {
     if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
       throw new Error(t('errors.useHttpsOrALocalServer'));
     if (url.username || url.password || url.search || url.hash) throw new Error(t('errors.enterABaseUrlWithoutCredentialsQuery'));
-    const provider = { id, name: String(input.name || url.hostname).slice(0,80), baseURL: url.toString().replace(/\/+$/, ''), supportsImages:input.supportsImages===true, models: old?.models || [], encryptedKey: input.apiKey ? this.secrets.encrypt(input.apiKey.trim()) : old?.encryptedKey };
+    const baseURL=url.toString().replace(/\/+$/, ''), sameEndpoint=old?.baseURL===baseURL;
+    const reasoningFormat=input.reasoningFormat||'auto',reasoningEfforts=input.reasoningEfforts||[];
+    if(!FORMATS.includes(reasoningFormat)||!Array.isArray(reasoningEfforts)||reasoningEfforts.some(e=>!EFFORTS.includes(e)))throw new Error(t('errors.invalidReasoning'));
+    const provider = { id, name: String(input.name || url.hostname).slice(0,80), baseURL, supportsImages:input.supportsImages===true, reasoningFormat,reasoningEfforts, catalogVersion:sameEndpoint?old?.catalogVersion:undefined, model:sameEndpoint?old?.model||'':'', models:sameEndpoint?old?.models||[]:[], encryptedKey: input.apiKey?.trim() ? this.secrets.encrypt(input.apiKey.trim()) : old?.encryptedKey };
     if (!provider.encryptedKey && !['localhost','127.0.0.1','[::1]'].includes(url.hostname)) throw new Error(t('errors.enterAnApiKey'));
     this.state.providers = [...this.state.providers.filter(p => p.id !== id), provider];
     this.state.providerId ||= id;
+    if(this.state.providerId===id&&!sameEndpoint)this.state.model='';
     await this.save(); return this.publicState();
+  }
+  selectModel(providerId=this.state.providerId, model) {
+    const provider=this.state.providers.find(p=>p.id===providerId);
+    if(!provider)throw new Error(t('errors.addAProviderInSettings'));
+    const previous=this.state.providers.find(p=>p.id===this.state.providerId);
+    if(previous)previous.model=this.state.model;
+    this.state.model=model!==undefined?String(model):providerId===this.state.providerId?this.state.model:provider.model||provider.models[0]?.id||'';
+    provider.model=this.state.model;this.state.providerId=providerId;
+  }
+  async deleteProvider(id) {
+    this.state.providers=this.state.providers.filter(p=>p.id!==id);
+    if(this.state.providerId===id) {
+      const next=this.state.providers[0];
+      this.state.providerId=next?.id||'';this.state.model=next?.model||next?.models[0]?.id||'';
+    }
+    await this.save();
   }
   getProvider(id) {
     const p = this.state.providers.find(p => p.id === id);
