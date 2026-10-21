@@ -6,7 +6,7 @@
 
 **[Скачать для Windows →](https://github.com/streletskiy/archi-helper/releases/latest)**
 
-![Главный экран Archi Helper](docs/screenshots/app.png)
+![Archi Helper — проверка макетов в Archicad](docs/screenshots/app.webp)
 
 ## Начало работы
 
