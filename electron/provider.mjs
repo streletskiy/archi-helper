@@ -3,13 +3,23 @@ import { modelInfo, reasoningOptions, reasoningProfile } from './reasoning.mjs';
 import { enrichModels } from './model-catalog.mjs';
 import crypto from 'node:crypto';
 import { providerDefinition } from './provider-definitions.mjs';
+import { responsesCompletion } from './provider-responses.mjs';
+import { providerFetch } from './provider-network.mjs';
 const noStreamUsage=new Set();
 const activeCredentials=new WeakMap();
 function providerError(provider,status,text) {
+  let detail;try{const body=JSON.parse(text);detail=body.error||body;}catch{}
+  const code=detail?.code;
+  const planError={subscription_sharing_usage_limit_exceeded:'errors.planUsageLimit',subscription_sharing_usage_unavailable:'errors.planUsageUnavailable',
+    subscription_sharing_user_unavailable:'errors.planUsageUnavailable',subscription_sharing_user_not_eligible:'errors.planNotEligible',
+    chatpass_v2_scope_not_authorized:'errors.oauthPlanPermission',chatpass_v2_invalid_authorization_context:'errors.oauthReconnect'}[code];
+  if(planError&&providerDefinition(provider)?.manageUsageURL)text=t(planError);
   for(const secret of [provider.apiKey,...(activeCredentials.get(provider)||[])])if(secret)text=text.replaceAll(secret,t('errors.redacted'));
   text=text.slice(0,1500);
   const error=new Error(status?t('errors.providerHttp',{value0:status,value1:text}):text);
   error.status=status;
+  error.code=code;
+  if(planError)error.usageAction=providerDefinition(provider)?.manageUsageURL;
   error.contextOverflow=(!status||[400,413,422].includes(status)) && (status===413||/context[_\s-]*(length|window|size)|maximum (?:context|model) length|too many tokens|(?:prompt|input|request|sequence).{0,80}(?:too long|exceed|longer than)/i.test(text));
   const match=text.match(/(?:maximum (?:context|model) length(?:\s+(?:is|of))?|context (?:window|limit|size)(?:\s+(?:is|of))?)[:\s(]+([\d,]+)/i)
     || text.match(/(?:max_context_length|context_window|model_max_length)["'\s:=]+([\d,]+)/i);
@@ -34,7 +44,7 @@ function completeCalls(calls) {
   });
 }
 export async function api(provider, endpoint, init = {}) {
-  if(provider.adapter&&provider.adapter!=='openai-compatible')throw new Error(t('errors.providerAdapterUnsupported'));
+  if(provider.adapter&&!['openai-compatible','openai-responses'].includes(provider.adapter))throw new Error(t('errors.providerAdapterUnsupported'));
   let token=provider.authorize?await provider.authorize():provider.apiKey;
   const headers=new Headers(init.headers);
   headers.set('Content-Type','application/json');
@@ -42,7 +52,7 @@ export async function api(provider, endpoint, init = {}) {
   const send=()=>{
     if(token)activeCredentials.set(provider,[...new Set([token,...(activeCredentials.get(provider)||[])])].slice(0,2));
     if(token)headers.set('Authorization',`Bearer ${token}`);
-    return fetch(`${provider.baseURL}/${endpoint}`,{...init,headers,redirect:'error',signal:init.signal||AbortSignal.timeout(60000)});
+    return providerFetch(`${provider.baseURL}/${endpoint}`,{...init,headers,redirect:'error',signal:init.signal||AbortSignal.timeout(60000)});
   };
   let response=await send();
   if(response.status===401&&provider.authorize) {
@@ -55,6 +65,11 @@ export async function api(provider, endpoint, init = {}) {
 }
 export async function models(provider) {
   const data=await (await api(provider,'models')).json();
+  if(providerDefinition(provider)?.accountCatalog) {
+    if(!Array.isArray(data.models))throw new Error(t('errors.theProviderReturnedAnInvalidModelList'));
+    return data.models.filter(m=>m.visibility==='list'&&typeof m.slug==='string'&&m.slug).map(m=>modelInfo({...m,id:m.slug,name:m.display_name||m.slug,
+      reasoning_efforts:m.supported_reasoning_levels?.map(v=>v.effort)||m.reasoning_efforts||m.supported_reasoning_efforts||[]}));
+  }
   const items = data.data || data.models;
   if (!Array.isArray(items)) throw new Error(t('errors.theProviderReturnedAnInvalidModelList'));
   const list=items.map(modelInfo).filter(m=>m.id);
@@ -77,9 +92,10 @@ export async function models(provider) {
 export function requestMessages(provider,model,messages) {
   // Reasoning state is provider-specific; never carry it into a different provider.
   const format=reasoningProfile(provider,model).format;
-  return messages.map(({_attachment,_checkpoint,reasoning_content,reasoning_details,...message})=>({...message,...(format==='deepseek'&&message.role==='assistant'?{reasoning_content:reasoning_content||''}:{}),...(format==='openrouter'&&reasoning_details?{reasoning_details}:{})}));
+  return messages.map(({_attachment,_checkpoint,_responseItems,_responseBinding,reasoning_content,reasoning_details,...message})=>({...message,...(format==='deepseek'&&message.role==='assistant'?{reasoning_content:reasoning_content||''}:{}),...(format==='openrouter'&&reasoning_details?{reasoning_details}:{})}));
 }
 export async function completion(provider, model, messages, tools, signal, onDelta, effort='xhigh', onUsage=()=>{}) {
+  if(provider.adapter==='openai-responses')return responsesCompletion(provider,model,messages,tools,signal,onDelta,effort,onUsage,api,providerError);
   const body={model,messages:requestMessages(provider,model,messages),stream:true,...reasoningOptions(provider,model,effort),...(tools.length?{tools,tool_choice:'auto'}:{})};
   if(!noStreamUsage.has(provider.baseURL))body.stream_options={include_usage:true};
   const send=()=>api(provider,'chat/completions',{method:'POST',signal,body:JSON.stringify(body)});

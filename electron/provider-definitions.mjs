@@ -12,6 +12,18 @@ export const providerDefinitions = [
       redirectPath:'/oauth/callback',installationParameter:'installation_id'},
   },
   {id:'openai',name:'OpenAI',baseURL:'https://api.openai.com/v1',adapter:'openai-compatible'},
+  {
+    id:'chatgpt',name:'ChatGPT',logo:'providers/chatgpt.svg',logoMonochrome:true,baseURL:'https://api.openai.com/v1',adapter:'openai-responses',supportsImages:true,
+    connectLabel:'ui.continueWithChatGPT',planLabel:'ui.usingChatGPTPlan',manageUsageURL:'https://chatgpt.com/settings/usage',
+    accountCatalog:true,
+    oauth:{clientId:'dynamic_agent_client',dynamicRegistration:true,agentName:'Archi Helper',
+      authorizationURL:'https://auth.openai.com/api/accounts/authorize',tokenURL:'https://auth.openai.com/api/accounts/oauth/token',
+      revocationURL:'https://auth.openai.com/api/accounts/oauth/revoke',resource:'https://api.openai.com/v1',
+      oidc:{issuer:'https://auth.openai.com',jwksURL:'https://auth.openai.com/.well-known/jwks.json'},
+      scopes:['openid','profile','email','offline_access','resource.invoke','chatgpt.tokens.use.direct'],
+      planScope:'chatgpt.tokens.use.direct',redirectPath:'/auth/callback',
+      installationParameter:'ext_agent_host_id',installationPrefix:'urn:uuid:',retainRegistration:true},
+  },
   {id:'deepseek',name:'DeepSeek',baseURL:'https://api.deepseek.com',adapter:'openai-compatible'},
   {id:'openrouter',name:'OpenRouter',baseURL:'https://openrouter.ai/api/v1',adapter:'openai-compatible'},
 ];
