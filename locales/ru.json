@@ -310,6 +310,7 @@
   "ui.notInstalled": "Не установлено",
   "ui.statusUnknown": "Статус неизвестен",
   "ui.updates": "Обновления",
+  "ui.apiCatalog": "Каталог API-команд",
   "ui.checkingUpdates": "Проверяем обновления…",
   "ui.openReleases": "Открыть релизы",
   "ui.dataAndPrivacy": "Данные и конфиденциальность",
