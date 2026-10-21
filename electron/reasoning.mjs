@@ -1,3 +1,4 @@
+import { providerDefinition } from './provider-definitions.mjs';
 export const EFFORTS = ['none','minimal','low','medium','high','xhigh','max','ultra'];
 export const FORMATS = ['auto','effort','openrouter','deepseek','none'];
 export function needsModelRefresh(provider) {
@@ -10,9 +11,8 @@ export function reasoningProfile(provider, model) {
   let format=provider?.reasoningFormat||'auto', efforts;
   if(format==='none')return {format,efforts:[]};
   if(format==='auto')format=host==='openrouter.ai'?'openrouter':host==='api.deepseek.com'?'deepseek':'effort';
-  // lumv's DeepSeek adapter explicitly rejects thinking combined with function tools.
-  // Archi Helper always sends tools; the general OpenCode catalog includes text-only variants.
-  if(host==='lumv.app'&&/deepseek/i.test(model))return {format,efforts:['none'],toolRestricted:true};
+  // Some provider/model combinations reject reasoning together with function tools.
+  if(providerDefinition(provider)?.toolReasoningRestrictions?.some(value=>String(model).toLowerCase().includes(value)))return {format,efforts:['none'],toolRestricted:true};
   if(provider?.reasoningEfforts?.length)efforts=values(provider.reasoningEfforts);
   else if(Array.isArray(info?.reasoningEfforts))efforts=values(info.reasoningEfforts);
   else {
