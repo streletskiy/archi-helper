@@ -1,11 +1,13 @@
 import { t, setLanguage, useLanguage } from './i18n';
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Plus, Folder, FolderOpen, ArrowUp, ArrowDown, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Share, Archive, ArchiveRestore, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, Copy, CircleAlert } from 'lucide-react';
 import './style.css';
 import { suggestions } from './suggestions';
 import { Mascot } from './Mascot';
 import { MessageContent } from './MessageContent';
+import {useStream} from './useStream';
+import {VirtualMessages} from './VirtualMessages';
 import { OAuthConnect, ProviderPrompt, type ProviderPromptData } from './ProviderConnections';
 import { providerDefinitions } from '../electron/provider-definitions.mjs';
 import { ActionMenu, ProjectPicker, type Project } from './WorkspaceControls';
@@ -35,7 +37,11 @@ function App(){
   const language=useLanguage();
   useEffect(()=>{document.documentElement.lang=language;document.title=`Archi Helper — ${t('ui.architectSAssistant')}`;},[language]);
   const [state,setState]=useState<State|null>(null),[project,setProject]=useState<Project|null>(null),[session,setSession]=useState<Session|null>(null);
-  const [draft,setDraft]=useState(''),[mode,setMode]=useState('review'),[busy,setBusy]=useState(false),[stream,setStream]=useState<Record<string,string>>({}),[approval,setApproval]=useState<any>(null);
+  const [draft,setDraft]=useState(''),[mode,setMode]=useState('review'),[busy,setBusy]=useState(false),[approval,setApproval]=useState<any>(null);
+  const {stream,appendStream,removeStream,resetStreams}=useStream();
+  const messageGroups=useMemo(()=>groupMessages(session?.messages||[]),[session?.messages]);
+  const streamed=Object.entries(stream).filter(([,text])=>text.length>0),streamKey=Object.keys(stream).join('\0');
+  const messageIds=useMemo(()=>[...messageGroups.map(group=>group.id),...Object.keys(stream)],[messageGroups,streamKey]);
   const [providerPrompt,setProviderPrompt]=useState<ProviderPromptData|null>(null);
   const [update,setUpdate]=useState<any>(null),[choosing,setChoosing]=useState(false);
   const [submitting,setSubmitting]=useState(false);
@@ -80,7 +86,7 @@ function App(){
     try{
       const id=p?.id||INBOX_ID,list:Session[]=await api('sessions',{projectId:id}),target=activeSession?list.find(s=>s.id===activeSession):list.find(s=>!s.archivedAt);
       const next=target?await api('session',{projectId:id,id:target.id}):null;
-      projectRef.current=p;sessionRef.current=next?.id;setProject(p);setSession(next);setArchivedSessions(!!p?.archivedAt||!!next?.archivedAt);setSearch('');setStream({});restoreDraft(p,next);
+      projectRef.current=p;sessionRef.current=next?.id;setProject(p);setSession(next);setArchivedSessions(!!p?.archivedAt||!!next?.archivedAt);setSearch('');resetStreams();restoreDraft(p,next);
     }finally{navigation.current=false;setNavigating(false);}
   };
   useEffect(()=>{
@@ -99,12 +105,12 @@ function App(){
       if(e.type==='queue-error')notify(e.message,'error');
       if(e.sessionId!==sessionRef.current)return;
       if(e.type==='queue')setSession(s=>s?{...s,pendingMessages:e.pendingMessages,queuePaused:e.queuePaused}:s);
-      if(e.type==='stream-reset')setStream(v=>{const next={...v};delete next[e.id];return next;});
+      if(e.type==='stream-reset')removeStream(e.id);
       if(e.type==='message'){
         setSession(s=>s?{...s,messages:[...s.messages.filter(m=>m.id!==e.message.id),e.message]}:s);
-        setStream(v=>{const n={...v};delete n[e.message.id];return n;});
+        removeStream(e.message.id);
       }
-      if(e.type==='delta')setStream(v=>({...v,[e.id]:(v[e.id]||'')+e.delta}));
+      if(e.type==='delta')appendStream(e.id,e.delta);
       if(e.type==='approval'){setApproval(e.approval);setModal('');}
       if(e.type==='approval-done')setApproval(null);
     });
@@ -143,7 +149,7 @@ function App(){
     try{const s=await api('settings',input);setState(s);if(input.providerId){const p=s.providers.find((p:Provider)=>p.id===input.providerId);if(p&&needsModelRefresh(p))await syncModels(p.id);}}
     finally{setChoosing(false);}
   });
-  const newSession=(p:Project|null=null)=>guard(async()=>{if(workspaceLocked||sending.current||p?.archivedAt)return;rememberDraft();setProject(p);projectRef.current=p;setSession(null);sessionRef.current=undefined;restoreDraft(p);setStream({});setArchivedSessions(false);setSearch('');await refreshSessions(p);textInput.current?.focus();});
+  const newSession=(p:Project|null=null)=>guard(async()=>{if(workspaceLocked||sending.current||p?.archivedAt)return;rememberDraft();setProject(p);projectRef.current=p;setSession(null);sessionRef.current=undefined;restoreDraft(p);resetStreams();setArchivedSessions(false);setSearch('');await refreshSessions(p);textInput.current?.focus();});
   const ensureSession=async()=>{
     if(session)return session;
     const s=await api('newSession',{projectId});savedDrafts.current.delete(`draft:${projectId}`);setSession(s);sessionRef.current=s.id;await refreshSessions();return s as Session;
@@ -208,7 +214,7 @@ function App(){
     if(workspaceLocked||sending.current||navigation.current)return;
     rememberDraft();
     navigation.current=true;setNavigating(true);
-    try{const next=await api('session',{projectId:p?.id||INBOX_ID,id});setProject(p);projectRef.current=p;setSession(next);sessionRef.current=id;setStream({});restoreDraft(p,next);}
+    try{const next=await api('session',{projectId:p?.id||INBOX_ID,id});setProject(p);projectRef.current=p;setSession(next);sessionRef.current=id;resetStreams();restoreDraft(p,next);}
     finally{navigation.current=false;setNavigating(false);}
   });
   const archiveSession=(item:Session,p:Project|null=projectRef.current)=>guard(async()=>{
@@ -234,7 +240,7 @@ function App(){
     }else{
       await api('deleteSession',{projectId:deletion.projectId||projectId,id:deletion.id});savedDrafts.current.delete(deletion.id);
       const list=await refreshSessions();
-      if(session?.id===deletion.id){const next=list.find(s=>!!s.archivedAt===archivedSessions);setSession(next?await api('session',{projectId,id:next.id}):null);setDraft('');setAttachments([]);setStream({});}
+      if(session?.id===deletion.id){const next=list.find(s=>!!s.archivedAt===archivedSessions);setSession(next?await api('session',{projectId,id:next.id}):null);setDraft('');setAttachments([]);resetStreams();}
     }
     setDeletion(null);setModal('');notify(t('ui.deleted'));
   },t('ui.deleting'));
@@ -327,8 +333,7 @@ function App(){
               {suggestions().map(s=><button key={s.id} data-preset={s.id} title={s.description} onClick={()=>{setDraft(s.prompt);textInput.current?.focus();}}><Layers size={16}/><span>{s.title}</span></button>)}
             </div>
           </div>:<div className="messages">
-            {groupMessages(session?.messages||[]).map(group=>{const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<article key={m.id} className={`message ${m.role}`}><div className="message-author">{m.role==='assistant'?<><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong></>:m.role==='user'?<><span className="user-avatar">{t('ui.y')}</span><strong>{t('ui.you')}</strong></>:<><Circle size={13}/><strong>{t('ui.pleaseNote')}</strong></>}{(m.role==='user'||m.role==='assistant')&&<span className="message-actions"><IconButton title={t('ui.copyMessage')} disabled={!m.text} onClick={()=>copyMessage(m.text)}><Copy size={15}/></IconButton></span>}</div><div className="prose"><MessageContent text={m.text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/>{m.usageAction&&<button className="primary" onClick={()=>guard(()=>api('external',{url:m.usageAction}))}>{t('ui.manageUsage')}<ExternalLink size={14}/></button>}</div></article>;})}
-            {Object.entries(stream).filter(([,text])=>text.length>0).map(([id,text])=><article key={id} className="message assistant"><div className="message-author"><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong><span className="thinking-dot"/><span className="message-actions"><IconButton title={t('ui.copyMessage')} onClick={()=>copyMessage(text)}><Copy size={15}/></IconButton></span></div><div className="prose"><MessageContent text={text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/></div></article>)}
+            <VirtualMessages key={`${projectId}:${session?.id}`} ids={messageIds} scrollRef={conversation} followLatest={followLatest} render={index=>{const group=messageGroups[index];if(group){const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<article key={m.id} className={`message ${m.role}`}><div className="message-author">{m.role==='assistant'?<><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong></>:m.role==='user'?<><span className="user-avatar">{t('ui.y')}</span><strong>{t('ui.you')}</strong></>:<><Circle size={13}/><strong>{t('ui.pleaseNote')}</strong></>}{(m.role==='user'||m.role==='assistant')&&<span className="message-actions"><IconButton title={t('ui.copyMessage')} disabled={!m.text} onClick={()=>copyMessage(m.text)}><Copy size={15}/></IconButton></span>}</div><div className="prose"><MessageContent text={m.text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/>{m.usageAction&&<button className="primary" onClick={()=>guard(()=>api('external',{url:m.usageAction}))}>{t('ui.manageUsage')}<ExternalLink size={14}/></button>}</div></article>;}const [id,text]=streamed[index-messageGroups.length];return <article key={id} className="message assistant"><div className="message-author"><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong><span className="thinking-dot"/><span className="message-actions"><IconButton title={t('ui.copyMessage')} onClick={()=>copyMessage(text)}><Copy size={15}/></IconButton></span></div><div className="prose"><MessageContent text={text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/></div></article>;}}/>
             {busy&&!Object.keys(stream).length&&<div className="working-indicator"><Mascot size={32} working/>{t('ui.working')}</div>}
             {approval&&<div className="approval-card"><div className="approval-title"><ShieldCheck size={21}/><div><strong>{approval.kind==='python'?t('ui.runProcessing'):t('ui.confirmAction')}</strong><p>{approval.description}</p></div></div><details className="approval-details" open={approval.kind==='python'}><summary>{approval.kind==='python'?t('ui.codeToRun'):t('ui.viewExactParameters')}</summary><pre>{pretty(approval.args)}</pre></details>{approval.kind==='python'&&<p className="muted">{t('ui.theScriptRunsLocallyWithYourPermissions')}</p>}<div className="approval-actions"><button className="secondary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:false}))}>{t('ui.cancel')}</button><button className="primary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:true}))}><Check size={15}/>{t('ui.run')}</button></div></div>}
           </div>}
@@ -440,12 +445,13 @@ function groupMessages(messages:Message[]){
   return groups;
 }
 function ToolGroup({messages,reveal}:{messages:Message[];reveal:(relative?:string)=>unknown}){
+  const [expanded,setExpanded]=useState(false);
   const active=messages.find(m=>m.status==='running'),running=!!active,errors=messages.filter(m=>m.status==='error').length;
   const title=(m:Message)=>{const args=m.args as {purpose?:string;name?:string;path?:string}|undefined;return [args?.purpose,args?.name,args?.path,labels()[m.name||''],m.name].find(value=>typeof value==='string'&&value.trim());};
   const milestones=messages.filter(m=>m.summary);
   return <div className="tool-activity">
     {milestones.length>0&&<ul className="tool-progress" aria-label={t('ui.taskProgress')} aria-live="polite" aria-relevant="additions text">{milestones.map(m=><li key={m.id} className={m.status==='error'?'has-error':''}>{m.status==='error'?<CircleAlert size={14}/>:<Check size={14}/>}<span>{m.summary}</span></li>)}</ul>}
-    <details className={`tool-group ${running?'is-running':''} ${errors?'has-errors':''}`}><summary>{running?<RotateCw className="spin" size={14}/>:<Wrench size={14}/>}<strong>{active?title(active):t('ui.toolGroup',{count:messages.length})}</strong><span>{running?t('ui.running'):errors?t('ui.toolGroupErrors',{count:errors}):t('ui.toolGroupDone')}</span><ChevronDown size={14}/></summary><div className="tool-group-content">{messages.map(m=><details key={m.id} className={`tool-message ${m.status}`}><summary><span className="tool-state">{m.status==='running'?<RotateCw className="spin" size={14}/>:m.status==='error'?<X size={14}/>:<Check size={14}/>}</span><strong>{title(m)}</strong><span>{m.status==='running'?t('ui.running'):m.artifact?bytes(m.artifact.bytes):''}</span><ChevronDown size={13}/></summary><div className="tool-detail">{m.args!==undefined&&<><label>{t('ui.parameters')}</label><pre>{pretty(m.args)}</pre></>}<label>{t('ui.result')}</label><pre>{m.text}</pre>{m.artifact&&<button className="text-button" onClick={()=>reveal(m.artifact?.path)}><FileText size={14}/>{t('ui.fullResult')}{' '}{bytes(m.artifact.bytes)}<ArrowUpRight size={13}/></button>}</div></details>)}</div></details>
+    <details onToggle={event=>setExpanded(event.currentTarget.open)} className={`tool-group ${running?'is-running':''} ${errors?'has-errors':''}`}><summary>{running?<RotateCw className="spin" size={14}/>:<Wrench size={14}/>}<strong>{active?title(active):t('ui.toolGroup',{count:messages.length})}</strong><span>{running?t('ui.running'):errors?t('ui.toolGroupErrors',{count:errors}):t('ui.toolGroupDone')}</span><ChevronDown size={14}/></summary>{expanded&&<div className="tool-group-content">{messages.map(m=><details key={m.id} className={`tool-message ${m.status}`}><summary><span className="tool-state">{m.status==='running'?<RotateCw className="spin" size={14}/>:m.status==='error'?<X size={14}/>:<Check size={14}/>}</span><strong>{title(m)}</strong><span>{m.status==='running'?t('ui.running'):m.artifact?bytes(m.artifact.bytes):''}</span><ChevronDown size={13}/></summary><div className="tool-detail">{m.args!==undefined&&<><label>{t('ui.parameters')}</label><pre>{pretty(m.args)}</pre></>}<label>{t('ui.result')}</label><pre>{m.text}</pre>{m.artifact&&<button className="text-button" onClick={()=>reveal(m.artifact?.path)}><FileText size={14}/>{t('ui.fullResult')}{' '}{bytes(m.artifact.bytes)}<ArrowUpRight size={13}/></button>}</div></details>)}</div>}</details>
   </div>;
 }
 function Rename({title,onSave}:{title:string;onSave:(s:string)=>void}){const [value,setValue]=useState(title);return <div className="modal-body"><label>{t('ui.name')}<input autoFocus maxLength={100} value={value} onChange={e=>setValue(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&value.trim())onSave(value.trim());}}/></label><div className="form-actions"><button className="primary" disabled={!value.trim()} onClick={()=>onSave(value.trim())}>{t('ui.save')}</button></div></div>;}
