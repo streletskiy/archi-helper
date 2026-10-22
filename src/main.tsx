@@ -22,7 +22,8 @@ type QueuedMessage={id:string;text:string;attachments:string[];model:string;deli
 type Session={id:string;title:string;messages:Message[];updatedAt:number;archivedAt?:number;count?:number;pendingMessages?:QueuedMessage[];queuePaused?:boolean};
 type SessionGroup={projectId:string;sessions:Session[];error?:string};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
-type State={appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any};
+type TapirDownloadProgress={status:'checking'|'downloading'|'verifying'|'installing'|'installed'|'manual'|'error';version:number;percent:number;transferred:number;total:number;bytesPerSecond:number;message:string};
+type State={appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
 const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',definitionId:p.definitionId||'',oauth:p.oauth,supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
 const emptyProvider=()=>({id:'',name:'',baseURL:'',apiKey:'',definitionId:'',oauth:undefined as Provider['oauth'],supportsImages:false,reasoningFormat:'auto',reasoningEfforts:''});
 const effortLabel=(value:string)=>t(({none:'ui.reasoningNone',minimal:'ui.reasoningMinimal',low:'ui.reasoningLow',medium:'ui.reasoningMedium',high:'ui.reasoningHigh',xhigh:'ui.reasoningXhigh',max:'ui.reasoningMax',ultra:'ui.reasoningUltra'} as const)[value as 'xhigh']);
@@ -44,6 +45,7 @@ function App(){
   const messageIds=useMemo(()=>[...messageGroups.map(group=>group.id),...Object.keys(stream)],[messageGroups,streamKey]);
   const [providerPrompt,setProviderPrompt]=useState<ProviderPromptData|null>(null);
   const [update,setUpdate]=useState<any>(null),[choosing,setChoosing]=useState(false);
+  const [tapirProgress,setTapirProgress]=useState<TapirDownloadProgress|null>(null);
   const [submitting,setSubmitting]=useState(false);
   const [showScrollToLatest,setShowScrollToLatest]=useState(false);
   const followLatest=useRef(true),conversation=useRef<HTMLDivElement>(null),conversationContent=useRef<HTMLDivElement>(null);
@@ -75,7 +77,7 @@ function App(){
     const timer=setTimeout(()=>setNotice(null),4000);
     return()=>clearTimeout(timer);
   },[notice,updateBlocking]);
-  const refresh=async()=>{const s=await api('bootstrap');setLanguage(s.language);setState(s);setBusy(s.busy);setProviderPrompt(s.providerPrompt||null);setApproval(s.approval&&s.approval.sessionId===s.activeSession?s.approval.approval:null);setUpdate(s.update);setPort(s.archicadPort);setMode(s.permissionMode||'review');return s;};
+  const refresh=async()=>{const s=await api('bootstrap');setLanguage(s.language);setState(s);setBusy(s.busy);setProviderPrompt(s.providerPrompt||null);setApproval(s.approval&&s.approval.sessionId===s.activeSession?s.approval.approval:null);setUpdate(s.update);setTapirProgress(s.tapirProgress||null);setPort(s.archicadPort);setMode(s.permissionMode||'review');return s;};
   const rememberDraft=()=>savedDrafts.current.set(sessionRef.current||`draft:${projectRef.current?.id||INBOX_ID}`,{text:draftSnapshot.current.text,files:[...draftSnapshot.current.files]});
   const restoreDraft=(p:Project|null,s?:Session|null)=>{const saved=savedDrafts.current.get(s?.id||`draft:${p?.id||INBOX_ID}`);setDraft(saved?.text||'');setAttachments(saved?.files||[]);};
   const refreshSessions=async(p=projectRef.current)=>{const id=p?.id||INBOX_ID,groups:SessionGroup[]=await api('sessionIndex'),list=groups.find(group=>group.projectId===id)?.sessions||[];setSessionGroups(groups);return list;};
@@ -100,6 +102,7 @@ function App(){
     return window.archi.onEvent(e=>{
       if(e.type==='provider-prompt')setProviderPrompt(e.prompt);
       if(e.type==='update')setUpdate(e.update);
+      if(e.type==='tapir-progress')setTapirProgress(e.progress);
       if(e.type==='connection')setState(s=>s?{...s,connection:e.connection,toolCount:e.toolCount,runtimeReady:e.runtimeReady}:s);
       if(e.type==='busy'){setBusy(e.busy);setState(s=>s?{...s,busy:e.busy,canSteer:e.canSteer,activeSession:e.busy?e.sessionId:undefined,activeProject:e.busy?e.projectId:undefined}:s);if(!e.busy){setApproval(null);guard(async()=>{await refresh();await refreshSessions();});}}
       if(e.type==='queue-error')notify(e.message,'error');
@@ -279,6 +282,7 @@ function App(){
   const projectInfo=state?.connection.project;
   const projectLabel=projectInfo?.projectName||projectInfo?.name||projectInfo?.projectPath?.split(/[\\/]/).pop()||(projectInfo?.isUntitled?t('ui.untitledUnsaved'):t('ui.openProject'));
   const tapirVersion=connected?(typeof state?.connection.data?.tapir_installed==='string'?state.connection.data.tapir_installed:state?.connection.data?.tapir_installed===true?state.connection.data.tapir_definitions:''):'';
+  const tapirActive=!!tapirProgress&&['checking','downloading','verifying','installing'].includes(tapirProgress.status);
   const updateStatus=update?.status||'idle';
   const updateDescription=updateStatus==='disabled'?t('ui.updatesAreAvailableOnGithubReleases'):updateStatus==='error'?t('ui.updateRetryDescription'):updateStatus==='current'?t('ui.youHaveTheLatestVersion'):updateStatus==='checking'?t('ui.checkingUpdates'):updateStatus==='downloading'?t('ui.downloadingUpdate',{value0:update?.percent||0}):['ready','countdown'].includes(updateStatus)?t('ui.updateReadyWaitingForWorkToFinish'):updateStatus==='installing'?t('ui.installingUpdate'):t('ui.updatesInstallAutomatically');
   if(updateBlocking)return <UpdateNotice update={update||{status:'checking'}} updateOnly={state?.updateOnly===true} onLater={()=>guard(async()=>setUpdate(await api('deferUpdate')))} onRetry={()=>guard(async()=>setUpdate(await api('checkUpdates')))}/>;
@@ -416,7 +420,8 @@ function App(){
             <div className="settings-card">
               <div className="settings-card-title"><h4>{t('ui.tapirExtension')}</h4><span className={`settings-badge ${tapirVersion?'':'neutral'}`}>{tapirVersion?t('ui.installed'):connected?t('ui.notInstalled'):t('ui.statusUnknown')}</span></div>
               <p className="settings-description">{t('ui.tapirDescription')}</p>
-              <div className="settings-control-row"><label className="settings-field"><span>{t('ui.archicadVersionForTapir')}</span><select value={acVersion} onChange={e=>setAcVersion(e.target.value)}>{[25,26,27,28,29,30].map(v=><option key={v} value={v}>Archicad {v}</option>)}</select></label><button className="secondary" disabled={!!working} onClick={()=>guard(async()=>{const result=await api('installTapir',{version:Number(acVersion)});notify(result.message);},t('ui.downloadingTapir'))}><Download size={16}/>{working===t('ui.downloadingTapir')?t('ui.downloading'):t('ui.installTapir')}</button></div>
+              <div className="settings-control-row"><label className="settings-field"><span>{t('ui.archicadVersionForTapir')}</span><select value={acVersion} disabled={tapirActive} onChange={e=>setAcVersion(e.target.value)}>{[25,26,27,28,29,30].map(v=><option key={v} value={v}>Archicad {v}</option>)}</select></label><button className="secondary" disabled={!!working||tapirActive} onClick={()=>guard(async()=>{setTapirProgress(null);const result=await api('installTapir',{version:Number(acVersion)});notify(result.message);},t('ui.downloadingTapir'))}>{tapirActive?<RotateCw size={16} className="spin"/>:<Download size={16}/>} {tapirActive||working===t('ui.downloadingTapir')?t('ui.downloading'):t('ui.installTapir')}</button></div>
+              {tapirProgress&&<TapirProgress progress={tapirProgress}/>}
             </div>
             <div className="settings-card settings-card-list">
               <details className="settings-advanced"><summary>{t('ui.chooseArchicadInstance')}<span>{state?.archicadPort||t('ui.automatic')}</span><ChevronRight size={16}/></summary><div className="settings-advanced-content"><div className="settings-control-row"><label className="settings-field"><span>{t('ui.port')}</span><select value={port} onChange={e=>setPort(e.target.value)}><option value="">{t('ui.automatic')}</option>{Array.from({length:21},(_,i)=>String(19723+i)).map(p=><option key={p} value={p}>{p}{instances.some(x=>String(x.port)===p)?t('ui.open'):''}</option>)}</select></label><button className="secondary" disabled={!!working||busy} onClick={()=>guard(async()=>{const found=await api('scan');setInstances(found);notify(found.length?t('ui.found',{value0:found.length}):t('ui.noRunningArchicadFound'));},t('ui.findingArchicad'))}>{t('ui.findRunningInstances')}</button><button className="primary" disabled={busy||!!working} onClick={()=>guard(async()=>{await api('settings',{archicadPort:port});await connect();})}>{t('ui.apply')}</button></div></div></details>
@@ -455,6 +460,17 @@ function ToolGroup({messages,reveal}:{messages:Message[];reveal:(relative?:strin
   </div>;
 }
 function Rename({title,onSave}:{title:string;onSave:(s:string)=>void}){const [value,setValue]=useState(title);return <div className="modal-body"><label>{t('ui.name')}<input autoFocus maxLength={100} value={value} onChange={e=>setValue(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&value.trim())onSave(value.trim());}}/></label><div className="form-actions"><button className="primary" disabled={!value.trim()} onClick={()=>onSave(value.trim())}>{t('ui.save')}</button></div></div>;}
+function TapirProgress({progress}:{progress:TapirDownloadProgress}) {
+  const {status,percent,total,transferred,bytesPerSecond,message,version}=progress;
+  const active=['checking','downloading','verifying','installing'].includes(status),indeterminate=status==='checking'||status==='downloading'&&total<=0;
+  const text=t(({checking:'ui.tapirCheckingRelease',downloading:'ui.downloadingTapir',verifying:'ui.tapirVerifying',installing:'ui.tapirInstalling',installed:'ui.tapirInstalled',manual:'ui.tapirManualInstall',error:'ui.tapirDownloadFailed'} as const)[status]);
+  return <div className={`tapir-progress ${status==='error'?'has-error':''}`} aria-busy={active}>
+    <div className="tapir-progress-heading"><span role="status">{text}</span><span>{status==='downloading'&&total>0?`${percent}%`:`Archicad ${version}`}</span></div>
+    {status!=='error'&&<div className={`update-progress ${indeterminate?'is-indeterminate':''}`} role="progressbar" aria-label={text} aria-valuemin={0} aria-valuemax={100} aria-valuenow={indeterminate?undefined:percent}><span style={{width:indeterminate?'30%':`${percent}%`}}/></div>}
+    {status==='downloading'&&<div className="update-transfer"><span>{total>0?t('ui.updateTransfer',{transferred:bytes(transferred),total:bytes(total)}):bytes(transferred)}</span>{bytesPerSecond>0&&<span>{t('ui.updateSpeed',{speed:bytes(bytesPerSecond)})}</span>}</div>}
+    {message&&<p className="tapir-progress-message">{message}</p>}
+  </div>;
+}
 function UpdateNotice({update,updateOnly,onLater,onRetry}:{update:any;updateOnly:boolean;onLater:()=>void;onRetry:()=>void}){
   const [now,setNow]=useState(Date.now());
   useEffect(()=>{if(update?.status!=='countdown')return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[update?.status,update?.restartAt]);

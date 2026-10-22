@@ -1,4 +1,5 @@
 import { modelInfo } from './reasoning.mjs';
+import { appFetch } from './network.mjs';
 
 let pending, refreshedAt=0;
 const normalized=id=>String(id).toLowerCase().replace(/[^a-z0-9/]/g,'');
@@ -6,7 +7,7 @@ async function catalog() {
   if(!pending || Date.now()-refreshedAt>86400000) {
     refreshedAt=Date.now();
     // Public metadata only: never send provider keys, endpoints or conversation data.
-    pending=fetch('https://models.dev/api.json',{redirect:'error',signal:AbortSignal.timeout(8000)})
+    pending=appFetch('https://models.dev/api.json',{redirect:'error',signal:AbortSignal.timeout(8000)})
       .then(response=>{if(!response.ok)throw new Error('Model catalog unavailable');return response.json();})
       .then(data=>data&&typeof data==='object'&&!Array.isArray(data)?data:{})
       .catch(()=>{refreshedAt=Date.now()-86340000;return {};});

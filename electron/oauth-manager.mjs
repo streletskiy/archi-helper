@@ -5,10 +5,10 @@ import { oauthDefinition,oauthPost,tokenResponse } from './oauth-config.mjs';
 import { loopbackAuthorization } from './oauth-loopback.mjs';
 import { readOAuthTokens,saveOAuthProvider,saveOAuthRegistration,archiveOAuthRegistration,updateOAuthTokens } from './oauth-store.mjs';
 import { identityVerifier } from './oauth-identity.mjs';
-import { providerFetch } from './provider-network.mjs';
+import { appFetch } from './network.mjs';
 
 export class OAuthManager {
-  constructor(store,{openExternal,fetcher=providerFetch,definitions=providerDefinitions,authorize=loopbackAuthorization}={}) {
+  constructor(store,{openExternal,fetcher=appFetch,definitions=providerDefinitions,authorize=loopbackAuthorization}={}) {
     Object.assign(this,{store,openExternal,fetcher,definitions,authorize});this.refreshing=new Map();this.disconnecting=new Set();
     this.verifyIdentity=identityVerifier(fetcher);this.retryAfter=new Map();
   }
