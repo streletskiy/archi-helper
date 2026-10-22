@@ -1,7 +1,7 @@
 {
   "name": "ac-helper",
   "productName": "Archi Helper",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Personal architect assistant for Archicad",
   "author": "streletskiy",
   "private": true,
@@ -21,12 +21,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
     "electron-updater": "6.8.9",
-    "jose": "6.2.13",
-    "lucide-react": "^0.468.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "jose": "6.2.13"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -35,13 +30,23 @@
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "44.9.2",
     "electron-builder": "26.15.3",
+    "lucide-react": "^0.468.0",
     "playwright": "^1.56.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.0"
   },
   "build": {
     "appId": "app.ac-helper.archi",
     "productName": "Archi Helper",
+    "compression": "maximum",
+    "electronLanguages": [
+      "en-US",
+      "ru"
+    ],
     "directories": {
       "output": "release"
     },
@@ -50,16 +55,23 @@
       "electron/**/*",
       "package.json",
       "locales/*.json",
-      "locales/*.mjs"
+      "locales/*.mjs",
+      "!**/*.map"
     ],
     "extraResources": [
       {
         "from": "runtime",
         "to": "runtime",
         "filter": [
-          "**/*",
+          "uv.exe",
+          "manifest.json",
+          "requirements.lock",
+          "api-catalog.json",
+          "python/cpython-3.13.7-windows-x86_64-none/**/*",
           "!**/__pycache__/**",
-          "!**/*.pyc"
+          "!**/*.pyc",
+          "!**/pymupdf/mupdf-devel/**",
+          "!**/PyWin32.chm"
         ]
       },
       {
@@ -86,8 +98,8 @@
       "include": "assets/installer.nsh",
       "artifactName": "Archi-Helper-Setup-${version}-${arch}.${ext}",
       "oneClick": false,
-      "useZip": true,
-      "differentialPackage": false,
+      "useZip": false,
+      "differentialPackage": true,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
