@@ -12,7 +12,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      ELECTRON_BUILDER_COMPRESSION_LEVEL: '1'
+      ELECTRON_BUILDER_COMPRESSION_LEVEL: '9'
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       PYTHONUTF8: '1'
     steps:
@@ -48,6 +48,8 @@ jobs:
         shell: pwsh
         run: |
           if (!(Test-Path release/latest.yml)) { throw 'Missing update manifest' }
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if (!(Test-Path "release/Archi-Helper-Setup-$version-x64.exe.blockmap")) { throw 'Missing differential update blockmap' }
           $files = Get-ChildItem release -File | Where-Object {
             $_.Name -match '\.(exe|blockmap|tar\.gz)$' -or $_.Name -eq 'latest.yml'
           }
