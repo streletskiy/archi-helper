@@ -8,6 +8,8 @@ export const uid = () => crypto.randomUUID();
 // A private workspace for chats started without a user project. Never expose it
 // as a regular project or let project deletion target it.
 export const INBOX_ID = '00000000-0000-0000-0000-000000000000';
+const sessionSummary=s=>({id:s.id,projectId:s.projectId,title:s.title,updatedAt:s.updatedAt,archivedAt:s.archivedAt,count:s.messages.length});
+const fileSignature=stat=>`${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}:${stat.ino}`;
 export async function atomicJSON(file, value) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.${uid()}.tmp`;
@@ -41,7 +43,7 @@ export async function imageFile(root, relative) {
   return {mime,data};
 }
 export class Store {
-  constructor(directory, secrets) { this.directory = path.resolve(directory); this.secrets = secrets; this.migrations=new Map(); }
+  constructor(directory, secrets) { this.directory = path.resolve(directory); this.secrets = secrets; this.migrations=new Map();this.sessionIndexes=new Map();this.indexWrites=new Map(); }
   async init(defaultLanguage = 'en') {
     this.file = path.join(this.directory, 'settings.json');
     this.state = await readJSON(this.file, { version: 1, projects: [], providers: [], model: '', providerId: '', archicadPort: '' });
@@ -139,6 +141,7 @@ export class Store {
     if (id === INBOX_ID) throw new Error(t('errors.projectNotFound'));
     const root = this.projectStorage(id);
     await Promise.all([...this.sessionWrites?.entries() || []].filter(([file]) => file.startsWith(root + path.sep)).map(([, write]) => write));
+    await this.indexWrites.get(id);
     // Detach storage before saving the registry. If saving fails, restore it.
     // Only UUID-validated profile storage is removed, never the source folder.
     const detached = path.join(this.directory, `deleted-project-${uid()}`);
@@ -149,6 +152,7 @@ export class Store {
     try { await this.save(); } catch (error) { this.state.projects = previous; if (moved) await fs.rename(detached, root); throw error; }
     if (moved) await fs.rm(detached, { recursive: true, force: true });
     this.migrations.delete(id);
+    this.sessionIndexes.delete(id);
   }
   projectStorage(projectId = INBOX_ID) {
     this.project(projectId);
@@ -230,10 +234,46 @@ export class Store {
     await this.migrateProject(projectId);
     const dir = path.join(this.projectStorage(projectId),'sessions');
     await fs.mkdir(dir, { recursive: true });
-    const all = await Promise.all((await fs.readdir(dir)).filter(x=>x.endsWith('.json')).map(async name=>{
-      const s = await readJSON(path.join(dir, name)); return { id:s.id, projectId, title:s.title, updatedAt:s.updatedAt, archivedAt:s.archivedAt, count:s.messages.length };
-    }));
-    return all.sort((a,b)=>b.updatedAt-a.updatedAt);
+    return this.withSessionIndex(projectId,async cache=>{
+      const names=(await fs.readdir(dir)).filter(name=>/^[a-f0-9-]{36}\.json$/.test(name)),present=new Set(names.map(name=>name.slice(0,-5)));
+      for(const id of Object.keys(cache.entries))if(!present.has(id)){delete cache.entries[id];cache.dirty=true;}
+      await Promise.all(names.map(async name=>{
+        const id=name.slice(0,-5),file=path.join(dir,name);
+        let stat;try{stat=await fs.stat(file,{bigint:true});}catch(error){if(error.code!=='ENOENT')throw error;delete cache.entries[id];cache.dirty=true;return;}
+        const signature=fileSignature(stat),entry=cache.entries[id];
+        if(entry?.signature===signature)return;
+        const session=await readJSON(file);
+        if(!session){delete cache.entries[id];cache.dirty=true;return;}
+        if(session.id!==id||session.projectId!==projectId||!Array.isArray(session.messages)||typeof session.title!=='string')throw new Error(t('errors.invalidSession'));
+        cache.entries[id]={...sessionSummary(session),signature};cache.dirty=true;
+      }));
+      return Object.values(cache.entries).map(({signature,...summary})=>summary).sort((a,b)=>b.updatedAt-a.updatedAt);
+    });
+  }
+  async withSessionIndex(projectId,operation) {
+    const file=path.join(this.projectStorage(projectId),'session-index.json');
+    const task=(this.indexWrites.get(projectId)||Promise.resolve()).catch(()=>{}).then(async()=>{
+      let cache=this.sessionIndexes.get(projectId);
+      if(!cache){
+        let saved;try{saved=await readJSON(file);}catch{}
+        const valid=saved?.version===1&&saved.entries&&typeof saved.entries==='object'&&!Array.isArray(saved.entries);
+        cache={entries:valid?saved.entries:{},dirty:!valid};
+        for(const [id,entry] of Object.entries(cache.entries))if(!/^[a-f0-9-]{36}$/.test(id)||entry?.id!==id||entry?.projectId!==projectId||typeof entry?.title!=='string'||!Number.isFinite(entry?.updatedAt)||!Number.isInteger(entry?.count)||entry.count<0||typeof entry?.signature!=='string'){delete cache.entries[id];cache.dirty=true;}
+        this.sessionIndexes.set(projectId,cache);
+      }
+      const result=await operation(cache);
+      if(cache.dirty)try{await atomicJSON(file,{version:1,entries:cache.entries});cache.dirty=false;}catch{/* The index is disposable; canonical session writes must remain usable. */}
+      return result;
+    });
+    this.indexWrites.set(projectId,task);
+    try{return await task;}finally{if(this.indexWrites.get(projectId)===task)this.indexWrites.delete(projectId);}
+  }
+  async indexSession(session,file) {
+    try{await this.withSessionIndex(session.projectId,async cache=>{cache.entries[session.id]={...sessionSummary(session),signature:fileSignature(await fs.stat(file,{bigint:true}))};cache.dirty=true;});}
+    catch{this.sessionIndexes.delete(session.projectId);}
+  }
+  async unindexSession(projectId,id) {
+    await this.withSessionIndex(projectId,cache=>{if(cache.entries[id]){delete cache.entries[id];cache.dirty=true;}});
   }
   async session(projectId, id) {
     const file=this.sessionFile(projectId,id);await this.migrateProject(projectId);
@@ -248,7 +288,7 @@ export class Store {
   async saveSession(s) {
     s.updatedAt=Date.now();const file=this.sessionFile(s.projectId,s.id),snapshot=structuredClone(s);
     this.sessionWrites??=new Map();
-    const write=(this.sessionWrites.get(file)||Promise.resolve()).catch(()=>{}).then(()=>atomicJSON(file,snapshot));
+    const write=(this.sessionWrites.get(file)||Promise.resolve()).catch(()=>{}).then(async()=>{await atomicJSON(file,snapshot);await this.indexSession(snapshot,file);});
     this.sessionWrites.set(file,write);
     try{await write;}finally{if(this.sessionWrites.get(file)===write)this.sessionWrites.delete(file);}
   }
@@ -263,6 +303,7 @@ export class Store {
     await this.sessionWrites?.get(file);
     await fs.rm(path.join(this.projectStorage(projectId), 'workspaces', id), { recursive: true, force: true });
     await fs.unlink(file);
+    await this.unindexSession(projectId,id);
   }
   async moveDraft(projectId, id, targetProjectId) {
     const session = await this.session(projectId, id);
@@ -278,6 +319,7 @@ export class Store {
     try { await this.saveSession(session); }
     catch (error) { await fs.rename(target, source); throw error; }
     await fs.unlink(this.sessionFile(projectId, id));
+    await this.unindexSession(projectId,id);
     return session;
   }
   async artifact(projectId, sessionId, name, value) {

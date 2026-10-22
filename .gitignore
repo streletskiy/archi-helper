@@ -1,4 +1,5 @@
 node_modules/
+electron/main.bundle.mjs
 dist/
 release/
 .cache/
