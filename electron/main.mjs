@@ -9,7 +9,7 @@ import { Store, projectPath, INBOX_ID } from './store.mjs';
 import { models } from './provider.mjs';
 import { providerDefinitions } from './provider-definitions.mjs';
 import { OAuthManager } from './oauth-manager.mjs';
-import { configureProviderFetch } from './provider-network.mjs';
+import { appFetch, configureAppFetch } from './network.mjs';
 import { EFFORTS } from './reasoning.mjs';
 import { MCP } from './mcp.mjs';
 import { Agent } from './agent.mjs';
@@ -23,9 +23,10 @@ const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWi
 if(dataOverride)app.setPath('userData',path.resolve(dataOverride));
 // Keep the original profile so renaming the application preserves keys and projects.
 else if(app.isPackaged)app.setPath('userData',path.join(app.getPath('appData'),'Archi'));
-let win,store,mcp,agent,updates,connection={connected:false,message:t('ui.connectingAlt')},connecting,activeCalls=0;
+let win,store,mcp,agent,updates,connection={connected:false,message:t('ui.connectingAlt')},connecting,activeCalls=0,tapirProgress=null,tapirInstalling=false;
 const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(here,'../runtime');
 const emit=data=>{if(win && !win.isDestroyed())win.webContents.send('archi:event',data);};
+const reportTapirProgress=patch=>{tapirProgress={...tapirProgress,...patch};emit({type:'tapir-progress',progress:tapirProgress});};
 let pendingProviderPrompt;
 function showProviderPrompt(options) {
   if(pendingProviderPrompt)throw new Error(t('errors.oauthAlreadyConnecting'));
@@ -40,7 +41,7 @@ function answerProviderPrompt({id,response}) {
   pendingProviderPrompt=undefined;emit({type:'provider-prompt',prompt:null});pending.resolve({response});
 }
 const runtimeManifest=await fs.readFile(path.join(runtime,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({}));
-const publicState=()=>({...store.publicState(),providerPrompt:pendingProviderPrompt?.prompt,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state});
+const publicState=()=>({...store.publicState(),providerPrompt:pendingProviderPrompt?.prompt,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state,tapirProgress});
 async function connect() {
   if(connecting)return connecting;
   connecting=(async()=>{
@@ -85,20 +86,31 @@ async function scan() {
 }
 async function installTapir(version) {
   if(!Number.isInteger(Number(version)) || Number(version)<25 || Number(version)>30)throw new Error(t('errors.chooseArchicad2530'));
-  const response=await fetch('https://api.github.com/repos/ENZYME-APD/tapir-archicad-automation/releases/latest',{headers:{'User-Agent':'Archi/0.1'},signal:AbortSignal.timeout(60000)});
+  reportTapirProgress({status:'checking',version:Number(version),percent:0,transferred:0,total:0,bytesPerSecond:0,message:''});
+  const response=await appFetch('https://api.github.com/repos/ENZYME-APD/tapir-archicad-automation/releases/latest',{headers:{'User-Agent':'Archi/0.1'},signal:AbortSignal.timeout(60000)});
   if(!response.ok)throw new Error(`GitHub HTTP ${response.status}`);
   const release=await response.json(),name=`TapirAddOn_AC${version}_Win.apx`,asset=release.assets.find(a=>a.name===name);
   if(!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest||''))throw new Error(t('errors.thisReleaseHasNoVerifiableFileFor'));
   const url=new URL(asset.browser_download_url);
   if(url.hostname!=='github.com' || !url.pathname.startsWith('/ENZYME-APD/tapir-archicad-automation/releases/download/'))throw new Error(t('errors.unexpectedReleaseUrl'));
-  const dataResponse=await fetch(url,{signal:AbortSignal.timeout(120000)});
+  reportTapirProgress({status:'downloading',total:Number(asset.size)||0});
+  const dataResponse=await appFetch(url,{signal:AbortSignal.timeout(120000)});
   if(!dataResponse.ok)throw new Error(t('errors.tapirDownloadHttp',{value0:dataResponse.status}));
-  const bytes=Buffer.from(await dataResponse.arrayBuffer());
+  const total=Number(asset.size)||Number(dataResponse.headers.get('content-length'))||0,chunks=[];
+  const startedAt=performance.now();let transferred=0,lastProgressAt=startedAt;
+  const transfer=()=>({transferred,total,percent:total>0?Math.min(100,Math.floor(transferred/total*100)):0,bytesPerSecond:Math.round(transferred/Math.max(.001,(performance.now()-startedAt)/1000))});
+  for await(const chunk of dataResponse.body) {
+    chunks.push(Buffer.from(chunk));transferred+=chunk.byteLength;
+    if(performance.now()-lastProgressAt>=150){reportTapirProgress(transfer());lastProgressAt=performance.now();}
+  }
+  reportTapirProgress({...transfer(),status:'verifying',percent:100});
+  const bytes=Buffer.concat(chunks,transferred);
   const digest=crypto.createHash('sha256').update(bytes).digest('hex');
   if(`sha256:${digest}`!==asset.digest)throw new Error(t('errors.tapirChecksumMismatch'));
   const folder=path.join(app.getPath('userData'),'addons',`AC${version}`,release.tag_name);
   await fs.mkdir(folder,{recursive:true});const file=path.join(folder,name);await fs.writeFile(file,bytes);
   const target=path.join(process.env.ProgramFiles||'C:\\Program Files','Graphisoft',`Archicad ${version}`,'Add-Ons','Archi',name);
+  reportTapirProgress({status:'installing',bytesPerSecond:0});
   let installed=false;
   try {
     // A loaded add-on must be updated only after Archicad closes.
@@ -109,7 +121,9 @@ async function installTapir(version) {
     await fs.copyFile(file,target);installed=true;
   }catch{}
   shell.showItemInFolder(installed?target:file);
-  return {version:release.tag_name,file:installed?target:file,installed,sha256:digest,message:installed?t('errors.tapirInstalledRestartArchicad'):t('errors.tapirDownloadedAndVerifiedInArchicadOpen')};
+  const result={version:release.tag_name,file:installed?target:file,installed,sha256:digest,message:installed?t('errors.tapirInstalledRestartArchicad'):t('errors.tapirDownloadedAndVerifiedInArchicadOpen')};
+  reportTapirProgress({status:installed?'installed':'manual',message:result.message});
+  return result;
 }
 const handlers={
   bootstrap:async()=>publicState(),
@@ -263,7 +277,13 @@ const handlers={
     if(chosen.canceled||!chosen.filePath)return null;const file=chosen.filePath;
     await fs.writeFile(file,`# ${s.title}\n\n`+s.messages.map(m=>`## ${m.role==='user'?t('ui.you'):m.role==='assistant'?'Archi Helper':m.name||t('errors.system')}\n\n${m.text}\n${m.artifact?t('errors.fullResult',{value0:m.artifact.path}):''}`).join('\n\n'),'utf8');shell.showItemInFolder(file);return file;
   },
-  installTapir:async({version})=>installTapir(version),
+  installTapir:async({version})=>{
+    if(tapirInstalling)throw new Error(t('errors.waitForTheTaskToFinish'));
+    tapirInstalling=true;
+    try{return await installTapir(version);}
+    catch(error){reportTapirProgress({status:'error',message:error.message});throw error;}
+    finally{tapirInstalling=false;}
+  },
   launchArchicad:async()=>{
     const chosen=await dialog.showOpenDialog(win,{title:t('errors.openProjectInArchicad'),filters:[{name:t('errors.archicadProject'),extensions:['pln','pla','tpl']}],properties:['openFile']});
     if(chosen.canceled)return false;const error=await shell.openPath(chosen.filePaths[0]);if(error)throw new Error(error);return true;
@@ -277,9 +297,9 @@ else {
   app.whenReady().then(async()=>{
   app.setAppUserModelId('app.ac-helper.archi');
   Menu.setApplicationMenu(null);
-  const providerSession=session.fromPartition('providers',{cache:false});
-  await providerSession.setProxy({mode:'system'});
-  configureProviderFetch((input,init)=>providerSession.fetch(input,{...init,credentials:'omit',cache:'no-store'}));
+  const networkSession=session.fromPartition('network',{cache:false});
+  await networkSession.setProxy({mode:'system'});
+  configureAppFetch((input,init)=>networkSession.fetch(input,{...init,credentials:'omit',cache:'no-store'}));
   store=new Store(app.getPath('userData'),{
     encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error(t('errors.windowsEncryptionIsUnavailable'));return safeStorage.encryptString(value).toString('base64');},
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
