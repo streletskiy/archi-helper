@@ -4,7 +4,7 @@
 
 | Компонент | Лицензия / источник |
 | --- | --- |
-| Electron, React, react-markdown, remark-gfm, MCP SDK, electron-updater, jose | MIT; лицензии включены в пакеты |
+| Electron, React, react-markdown, remark-gfm, TanStack Virtual, MCP SDK, electron-updater, jose | MIT; тексты лицензий поставляются с приложением |
 | lucide-react | ISC |
 | CPython 3.13.7 | PSF |
 | uv 0.11.26 | MIT; полный текст в `vendor/licenses/uv-MIT.txt` |
@@ -25,6 +25,8 @@
 Для воспроизведения загрузки: `npm run release:sources`. Исходники самого помощника соответствуют тегу релиза. При изменении или перераспространении компонентов сохраняйте их лицензии и выполняйте условия предоставления исходников. MIT-лицензия помощника не переопределяет AGPL или условия Graphisoft.
 
 Точные версии зависимостей записаны в `package-lock.json` и `vendor/requirements.lock`. Метаданные и лицензии Python-пакетов остаются в `site-packages`; лицензии Electron и Chromium поставляются рядом с EXE.
+
+Зависимости основного процесса включены в `electron/main.bundle.mjs`. Их тексты лицензий и компактные метаданные находятся в `resources/licenses/node`; дерево `node_modules` для запуска не требуется. Комментарии лицензий зависимостей интерфейса сохранены в собранных файлах Vite. Нативный экран обновления использует системный .NET Framework Windows; отдельная копия среды .NET в установщик не включена.
 
 Персонаж и каска — исходные изображения проекта. Они созданы через [Aseprite MCP](https://github.com/MalloyTheDev/aseprite-mcp); сам Aseprite и сервер генерации в приложение не включены.
 
