@@ -4,7 +4,7 @@ import { enrichModels } from './model-catalog.mjs';
 import crypto from 'node:crypto';
 import { providerDefinition } from './provider-definitions.mjs';
 import { responsesCompletion } from './provider-responses.mjs';
-import { providerFetch } from './provider-network.mjs';
+import { appFetch } from './network.mjs';
 const noStreamUsage=new Set();
 const activeCredentials=new WeakMap();
 function providerError(provider,status,text) {
@@ -52,7 +52,7 @@ export async function api(provider, endpoint, init = {}) {
   const send=()=>{
     if(token)activeCredentials.set(provider,[...new Set([token,...(activeCredentials.get(provider)||[])])].slice(0,2));
     if(token)headers.set('Authorization',`Bearer ${token}`);
-    return providerFetch(`${provider.baseURL}/${endpoint}`,{...init,headers,redirect:'error',signal:init.signal||AbortSignal.timeout(60000)});
+    return appFetch(`${provider.baseURL}/${endpoint}`,{...init,headers,redirect:'error',signal:init.signal||AbortSignal.timeout(60000)});
   };
   let response=await send();
   if(response.status===401&&provider.authorize) {
