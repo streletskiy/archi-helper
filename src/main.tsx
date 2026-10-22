@@ -22,7 +22,7 @@ type QueuedMessage={id:string;text:string;attachments:string[];model:string;deli
 type Session={id:string;title:string;messages:Message[];updatedAt:number;archivedAt?:number;count?:number;pendingMessages?:QueuedMessage[];queuePaused?:boolean};
 type SessionGroup={projectId:string;sessions:Session[];error?:string};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
-type TapirDownloadProgress={status:'checking'|'downloading'|'verifying'|'installing'|'installed'|'manual'|'error';version:number;percent:number;transferred:number;total:number;bytesPerSecond:number;message:string};
+type TapirDownloadProgress={status:'checking'|'downloading'|'verifying'|'installing'|'launched'|'error';version:string;percent:number;transferred:number;total:number;bytesPerSecond:number;message:string};
 type State={appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
 const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',definitionId:p.definitionId||'',oauth:p.oauth,supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
 const emptyProvider=()=>({id:'',name:'',baseURL:'',apiKey:'',definitionId:'',oauth:undefined as Provider['oauth'],supportsImages:false,reasoningFormat:'auto',reasoningEfforts:''});
@@ -30,7 +30,7 @@ const effortLabel=(value:string)=>t(({none:'ui.reasoningNone',minimal:'ui.reason
 const api=(method:string,input?:unknown)=>window.archi.call(method,input);
 const pretty=(v:unknown)=>typeof v==='string'?v:JSON.stringify(v,null,2);
 const bytes=(n:number)=>n>1048576?t('ui.mb',{value0:(n/1048576).toFixed(1)}):n>1024?t('ui.kb',{value0:Math.round(n/1024)}):t('ui.b',{value0:n});
-const labels=():Record<string,string>=>({get_knowledge:t('ui.knowledge'),get_api_catalog:t('ui.apiCatalog'),find_tools:t('ui.findTools'),call_archicad:t('ui.archicadCommand'),list_files:t('ui.projectFiles'),read_file:t('ui.readResult'),view_image:t('ui.viewImage'),write_file:t('ui.saveFile'),run_python:t('ui.processData')});
+const labels=():Record<string,string>=>({get_knowledge:t('ui.knowledge'),get_api_catalog:t('ui.apiCatalog'),export_layouts_pdf:t('ui.exportLayoutsPdf'),find_tools:t('ui.findTools'),call_archicad:t('ui.archicadCommand'),list_files:t('ui.projectFiles'),read_file:t('ui.readResult'),view_image:t('ui.viewImage'),write_file:t('ui.saveFile'),run_python:t('ui.processData')});
 function IconButton({title,onClick,children,disabled=false}:{title:string;onClick:()=>void;children:React.ReactNode;disabled?:boolean}) {
   return <button className="icon-button" title={title} aria-label={title} onClick={onClick} disabled={disabled}>{children}</button>;
 }
@@ -58,7 +58,7 @@ function App(){
   const [sessionGroups,setSessionGroups]=useState<SessionGroup[]>([]),[collapsedProjects,setCollapsedProjects]=useState<Record<string,boolean>>({}),[shownSessions,setShownSessions]=useState<Record<string,number>>({});
   const savedDrafts=useRef(new Map<string,{text:string;files:string[]}>());
   const navigation=useRef(false);
-  const [providerForm,setProviderForm]=useState(emptyProvider),[manualModel,setManualModel]=useState(''),[port,setPort]=useState(''),[instances,setInstances]=useState<any[]>([]),[acVersion,setAcVersion]=useState('27');
+  const [providerForm,setProviderForm]=useState(emptyProvider),[manualModel,setManualModel]=useState(''),[port,setPort]=useState(''),[instances,setInstances]=useState<any[]>([]);
   const providerEditor=useRef<HTMLDivElement>(null);
   const sessionRef=useRef<string|undefined>(undefined),projectRef=useRef<Project|null>(null),textInput=useRef<HTMLTextAreaElement>(null);
   const draftSnapshot=useRef({text:draft,files:attachments});
@@ -420,7 +420,7 @@ function App(){
             <div className="settings-card">
               <div className="settings-card-title"><h4>{t('ui.tapirExtension')}</h4><span className={`settings-badge ${tapirVersion?'':'neutral'}`}>{tapirVersion?t('ui.installed'):connected?t('ui.notInstalled'):t('ui.statusUnknown')}</span></div>
               <p className="settings-description">{t('ui.tapirDescription')}</p>
-              <div className="settings-control-row"><label className="settings-field"><span>{t('ui.archicadVersionForTapir')}</span><select value={acVersion} disabled={tapirActive} onChange={e=>setAcVersion(e.target.value)}>{[25,26,27,28,29,30].map(v=><option key={v} value={v}>Archicad {v}</option>)}</select></label><button className="secondary" disabled={!!working||tapirActive} onClick={()=>guard(async()=>{setTapirProgress(null);const result=await api('installTapir',{version:Number(acVersion)});notify(result.message);},t('ui.downloadingTapir'))}>{tapirActive?<RotateCw size={16} className="spin"/>:<Download size={16}/>} {tapirActive||working===t('ui.downloadingTapir')?t('ui.downloading'):t('ui.installTapir')}</button></div>
+              <div className="settings-control-row"><button className="secondary" disabled={!!working||tapirActive} onClick={()=>guard(async()=>{setTapirProgress(null);const result=await api('installTapir');notify(result.message);},t('ui.downloadingTapir'))}>{tapirActive?<RotateCw size={16} className="spin"/>:<Download size={16}/>} {tapirActive||working===t('ui.downloadingTapir')?t('ui.downloading'):t('ui.installTapir')}</button></div>
               {tapirProgress&&<TapirProgress progress={tapirProgress}/>}
             </div>
             <div className="settings-card settings-card-list">
@@ -463,9 +463,9 @@ function Rename({title,onSave}:{title:string;onSave:(s:string)=>void}){const [va
 function TapirProgress({progress}:{progress:TapirDownloadProgress}) {
   const {status,percent,total,transferred,bytesPerSecond,message,version}=progress;
   const active=['checking','downloading','verifying','installing'].includes(status),indeterminate=status==='checking'||status==='downloading'&&total<=0;
-  const text=t(({checking:'ui.tapirCheckingRelease',downloading:'ui.downloadingTapir',verifying:'ui.tapirVerifying',installing:'ui.tapirInstalling',installed:'ui.tapirInstalled',manual:'ui.tapirManualInstall',error:'ui.tapirDownloadFailed'} as const)[status]);
+  const text=t(({checking:'ui.tapirCheckingRelease',downloading:'ui.downloadingTapir',verifying:'ui.tapirVerifying',installing:'ui.tapirInstalling',launched:'ui.tapirInstallerLaunched',error:'ui.tapirDownloadFailed'} as const)[status]);
   return <div className={`tapir-progress ${status==='error'?'has-error':''}`} aria-busy={active}>
-    <div className="tapir-progress-heading"><span role="status">{text}</span><span>{status==='downloading'&&total>0?`${percent}%`:`Archicad ${version}`}</span></div>
+    <div className="tapir-progress-heading"><span role="status">{text}</span><span>{status==='downloading'&&total>0?`${percent}%`:version?`Tapir ${version}`:''}</span></div>
     {status!=='error'&&<div className={`update-progress ${indeterminate?'is-indeterminate':''}`} role="progressbar" aria-label={text} aria-valuemin={0} aria-valuemax={100} aria-valuenow={indeterminate?undefined:percent}><span style={{width:indeterminate?'30%':`${percent}%`}}/></div>}
     {status==='downloading'&&<div className="update-transfer"><span>{total>0?t('ui.updateTransfer',{transferred:bytes(transferred),total:bytes(total)}):bytes(transferred)}</span>{bytesPerSecond>0&&<span>{t('ui.updateSpeed',{speed:bytes(bytesPerSecond)})}</span>}</div>}
     {message&&<p className="tapir-progress-message">{message}</p>}

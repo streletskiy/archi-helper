@@ -17,6 +17,7 @@ export function toolSummary(name,args,result) {
   if(name==='list_files' && Array.isArray(data))return t('agent.filesFound',{count:data.length,path:args.path||'.'});
   if(name==='list_files' && Array.isArray(data?.entries))return t('agent.filesFound',{count:data.total,path:`${t(data.scope==='project'?'ui.projectFiles':'ui.chatFiles')}: ${data.path}`});
   if(name==='write_file' && data?.saved)return t('agent.fileSaved',{path:data.saved});
+  if(name==='export_layouts_pdf' && data?.pdfs?.length)return t('agent.pdfsExported',{count:data.pdfs.length,path:data.outputDirectory});
   if(name!=='call_archicad' || !data || typeof data!=='object')return;
   if(command==='TestConnection' && data.archicad_version)return t('agent.connectionConfirmed',{version:data.archicad_version});
   if(command==='GetProjectInfo') {
