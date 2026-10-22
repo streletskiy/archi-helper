@@ -23,13 +23,26 @@ async def test_connection() -> dict:
     return await anyio.to_thread.run_sync(connection_info)
 
 
-def init_tools(mcp):
-    tool = Tool.from_function(
-        test_connection,
-        name="TestConnection",
-        title="TestConnection",
-        tags={"readonly"},
-        annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+async def get_publisher_set_names() -> dict:
+    """Return existing publisher set names through the built-in Graphisoft JSON API."""
+    return await anyio.to_thread.run_sync(
+        lambda: client.run_command("API.GetPublisherSetNames")
     )
-    mcp.add_tool(tool)
-    return [tool]
+
+
+def init_tools(mcp):
+    tools = []
+    for function, name in (
+        (test_connection, "TestConnection"),
+        (get_publisher_set_names, "GetPublisherSetNames"),
+    ):
+        tool = Tool.from_function(
+            function,
+            name=name,
+            title=name,
+            tags={"readonly"},
+            annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+        )
+        mcp.add_tool(tool)
+        tools.append(tool)
+    return tools
