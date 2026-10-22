@@ -3,7 +3,6 @@ import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, Menu, session 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { Store, projectPath, INBOX_ID } from './store.mjs';
 import { models } from './provider.mjs';
@@ -17,6 +16,7 @@ import updaterModule from 'electron-updater';
 import { createUpdates } from './updates.mjs';
 import { installUpdate, cleanupUpdateHelper } from './update-install.mjs';
 import { showAppWindow } from './window-visibility.mjs';
+import { installTapir } from './tapir-installer.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWith('--archi-data-dir='))?.slice('--archi-data-dir='.length);
@@ -83,47 +83,6 @@ async function scan() {
       const data=await r.json();if(data.succeeded)return {port,...data.result};
     }catch{}return null;
   }))).filter(Boolean);
-}
-async function installTapir(version) {
-  if(!Number.isInteger(Number(version)) || Number(version)<25 || Number(version)>30)throw new Error(t('errors.chooseArchicad2530'));
-  reportTapirProgress({status:'checking',version:Number(version),percent:0,transferred:0,total:0,bytesPerSecond:0,message:''});
-  const response=await appFetch('https://api.github.com/repos/ENZYME-APD/tapir-archicad-automation/releases/latest',{headers:{'User-Agent':'Archi/0.1'},signal:AbortSignal.timeout(60000)});
-  if(!response.ok)throw new Error(`GitHub HTTP ${response.status}`);
-  const release=await response.json(),name=`TapirAddOn_AC${version}_Win.apx`,asset=release.assets.find(a=>a.name===name);
-  if(!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest||''))throw new Error(t('errors.thisReleaseHasNoVerifiableFileFor'));
-  const url=new URL(asset.browser_download_url);
-  if(url.hostname!=='github.com' || !url.pathname.startsWith('/ENZYME-APD/tapir-archicad-automation/releases/download/'))throw new Error(t('errors.unexpectedReleaseUrl'));
-  reportTapirProgress({status:'downloading',total:Number(asset.size)||0});
-  const dataResponse=await appFetch(url,{signal:AbortSignal.timeout(120000)});
-  if(!dataResponse.ok)throw new Error(t('errors.tapirDownloadHttp',{value0:dataResponse.status}));
-  const total=Number(asset.size)||Number(dataResponse.headers.get('content-length'))||0,chunks=[];
-  const startedAt=performance.now();let transferred=0,lastProgressAt=startedAt;
-  const transfer=()=>({transferred,total,percent:total>0?Math.min(100,Math.floor(transferred/total*100)):0,bytesPerSecond:Math.round(transferred/Math.max(.001,(performance.now()-startedAt)/1000))});
-  for await(const chunk of dataResponse.body) {
-    chunks.push(Buffer.from(chunk));transferred+=chunk.byteLength;
-    if(performance.now()-lastProgressAt>=150){reportTapirProgress(transfer());lastProgressAt=performance.now();}
-  }
-  reportTapirProgress({...transfer(),status:'verifying',percent:100});
-  const bytes=Buffer.concat(chunks,transferred);
-  const digest=crypto.createHash('sha256').update(bytes).digest('hex');
-  if(`sha256:${digest}`!==asset.digest)throw new Error(t('errors.tapirChecksumMismatch'));
-  const folder=path.join(app.getPath('userData'),'addons',`AC${version}`,release.tag_name);
-  await fs.mkdir(folder,{recursive:true});const file=path.join(folder,name);await fs.writeFile(file,bytes);
-  const target=path.join(process.env.ProgramFiles||'C:\\Program Files','Graphisoft',`Archicad ${version}`,'Add-Ons','Archi',name);
-  reportTapirProgress({status:'installing',bytesPerSecond:0});
-  let installed=false;
-  try {
-    // A loaded add-on must be updated only after Archicad closes.
-    if((await scan()).some(x=>Number(x.version)===Number(version)))throw new Error(t('errors.archicadIsOpen'));
-    await fs.access(path.dirname(path.dirname(target)));
-    await fs.mkdir(path.dirname(target),{recursive:true});
-    try {await fs.access(target);await fs.copyFile(target,`${target}.${Date.now()}.bak`);}catch{}
-    await fs.copyFile(file,target);installed=true;
-  }catch{}
-  shell.showItemInFolder(installed?target:file);
-  const result={version:release.tag_name,file:installed?target:file,installed,sha256:digest,message:installed?t('errors.tapirInstalledRestartArchicad'):t('errors.tapirDownloadedAndVerifiedInArchicadOpen')};
-  reportTapirProgress({status:installed?'installed':'manual',message:result.message});
-  return result;
 }
 const handlers={
   bootstrap:async()=>publicState(),
@@ -277,10 +236,10 @@ const handlers={
     if(chosen.canceled||!chosen.filePath)return null;const file=chosen.filePath;
     await fs.writeFile(file,`# ${s.title}\n\n`+s.messages.map(m=>`## ${m.role==='user'?t('ui.you'):m.role==='assistant'?'Archi Helper':m.name||t('errors.system')}\n\n${m.text}\n${m.artifact?t('errors.fullResult',{value0:m.artifact.path}):''}`).join('\n\n'),'utf8');shell.showItemInFolder(file);return file;
   },
-  installTapir:async({version})=>{
+  installTapir:async()=>{
     if(tapirInstalling)throw new Error(t('errors.waitForTheTaskToFinish'));
     tapirInstalling=true;
-    try{return await installTapir(version);}
+    try{return await installTapir({fetch:appFetch,folder:path.join(app.getPath('userData'),'addons'),openPath:file=>shell.openPath(file),onProgress:reportTapirProgress});}
     catch(error){reportTapirProgress({status:'error',message:error.message});throw error;}
     finally{tapirInstalling=false;}
   },

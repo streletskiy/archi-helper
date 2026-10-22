@@ -10,7 +10,8 @@ import { enrichModels } from './model-catalog.mjs';
 import { resultData, toolSummary, recoveryHint } from './progress.mjs';
 import { saveApiCatalog, searchApiCatalog, catalogSummary } from './api-catalog.mjs';
 import { MessageQueue } from './message-queue.mjs';
-import { getKnowledge, zoneAreaLabelApproval, ZONE_AREA_LABEL_RECIPE } from './knowledge.mjs';
+import { getKnowledge, knowledgeIndex, zoneAreaLabelApproval, ZONE_AREA_LABEL_RECIPE } from './knowledge.mjs';
+import { exportLayoutsPdf } from './layout-export.mjs';
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const str=description=>({type:'string',description});
@@ -20,6 +21,7 @@ export const agentTools=[
   fn('get_knowledge','Read the bundled reference wiki. Omit id for a compact index, then request the relevant article. Procedures do not grant permission or replace the live API catalog.',{id:str('Article ID from the index, e.g. zone-stamp-area-label')}),
   fn('get_api_catalog','Inspect the authoritative local command catalog. Search MCP tools, direct Tapir JSON commands, version-matched Graphisoft SDK methods and SDK type constructors. Exact names return complete schemas/signatures. Never invent API names or arguments.',{source:{type:'string',enum:['all','mcp','tapir','graphisoft','types']},query:str('English keywords or an exact documented name'),limit:{type:'integer',minimum:1,maximum:30}}),
   fn('find_tools','Find Archicad/Tapir commands by English keywords. Keyword searches return a compact list; search an exact returned name to get its complete argument schema before calling it.',{query:str('English keywords, or an exact returned command name such as archicad:GetElementsByType')},['query']),
+  fn('export_layouts_pdf','Export an existing PDF publisher set to a new private chat folder without an extra confirmation in review or full mode. First discover GetPublisherSetNames and inspect GetNavigatorItemTree with navigatorMapId=PublisherSets and the exact publisherSetName. Uses PublishPublisherSet with a fixed local outputPath; does not edit publisher settings or save the PLN. Returns verified PDF file headers and paths, not a claim of complete layout coverage. Read-only mode forbids export.',{publisher_set_name:str('Exact existing PDF publisher set name; never guess or create a set.')},['publisher_set_name']),
   fn('call_archicad','Run a discovered MCP command with exact schema. Results are saved in full locally. Permissions follow the current work mode and declared knowledge recipe. For changes, include purpose in the user\'s language.',{name:str('Exact tool key from find_tools'),arguments:{type:'object',additionalProperties:true},purpose:str('Explain exactly what will change, in the user\'s language'),knowledge_id:knowledgeId},['name','arguments']),
   fn('list_files','List files in the chat workspace, or original project files with scope=project. Inspect exact paths before consuming a generated file.',{path:str('Relative directory, default .'),scope}),
   fn('read_file','Read a UTF-8 file in chunks. For JSON results use json_pointer to select a subtree; offset and limit apply to the selected text. Default scope is the chat workspace.',{path:str('Relative file, or project:/path for an original project file'),scope,offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:24000},json_pointer:str('Optional RFC6901 pointer, e.g. /content/0/text')},['path']),
@@ -50,7 +52,11 @@ export class Agent extends MessageQueue {
   async execute(session,name,args,mode,signal) {
     signal.throwIfAborted();
     const root=await this.store.workspace(session.projectId,session.id);
-    if(name==='get_knowledge')return getKnowledge(args.id);
+    if(name==='get_knowledge')return getKnowledge(args.id,this.mcp.connectionInfo);
+    if(name==='export_layouts_pdf') {
+      if(mode==='read')throw new Error(t('agent.readOnlyModeIsEnabledChangesAre'));
+      return exportLayoutsPdf({mcp:this.mcp,root,publisherSetName:args.publisher_set_name,signal});
+    }
     if(name==='get_api_catalog')return searchApiCatalog(await saveApiCatalog(this.mcp,root),args);
     if(name==='find_tools') return this.mcp.search(args.query);
     if(name==='call_archicad') {
@@ -138,7 +144,7 @@ export class Agent extends MessageQueue {
       delete session.contextLimit;
       const workspace=await this.store.workspace(projectId,sessionId);
       const catalog=await saveApiCatalog(this.mcp,workspace);
-      const system={role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode,catalogSummary(catalog),{workspace,legacyProjectFiles:session.legacyProjectFiles})};
+      const system={role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode,catalogSummary(catalog),{workspace,legacyProjectFiles:session.legacyProjectFiles,knowledge:knowledgeIndex(this.mcp.connectionInfo)})};
       const tools=agentTools.filter(t=>provider.supportsImages||t.function.name!=='view_image');
       const overhead=estimateTokens(system)+estimateTokens(tools);
       while(true) {
