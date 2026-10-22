@@ -113,3 +113,5 @@ select option::checkmark{content:"✓";order:1;margin-inline-start:auto;color:#6
 .plan-usage{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0;color:var(--muted);font-size:12px}.plan-usage .secondary{font-size:12px;padding:5px 9px}
 
 .provider-plan{margin:0 0 20px;padding:12px 14px;border:1px solid #dfe6d5;border-radius:9px;background:#f2f6eb}
+
+.virtual-history{width:100%;min-width:0}.virtual-message{display:flow-root}
