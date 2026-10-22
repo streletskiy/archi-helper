@@ -1,35 +1,35 @@
 {
   "name": "ac-helper",
   "productName": "Archi Helper",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Personal architect assistant for Archicad",
   "author": "streletskiy",
   "private": true,
   "type": "module",
-  "main": "electron/main.mjs",
+  "main": "electron/main.bundle.mjs",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
-    "build": "npm run typecheck && vite build",
+    "build": "npm run typecheck && vite build && node scripts/build-main.mjs && node scripts/build-update-helper.mjs",
     "runtime": "node scripts/prepare-runtime.mjs",
     "package": "npm run build && electron-builder --win nsis portable --x64 --publish never",
     "package:dir": "npm run build && electron-builder --win --dir --x64 --publish never",
     "release:sources": "node scripts/prepare-release-sources.mjs",
     "test": "node --test tests/*.test.mjs"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
-    "electron-updater": "6.8.9",
-    "jose": "6.2.13"
-  },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@tanstack/react-virtual": "3.14.21",
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "44.9.2",
     "electron-builder": "26.15.3",
+    "electron-updater": "6.8.9",
+    "esbuild": "0.28.2",
+    "jose": "6.2.13",
     "lucide-react": "^0.468.0",
     "playwright": "^1.56.0",
     "react": "^19.2.0",
@@ -52,11 +52,10 @@
     },
     "files": [
       "dist/**/*",
-      "electron/**/*",
-      "package.json",
-      "locales/*.json",
-      "locales/*.mjs",
-      "!**/*.map"
+      "electron/main.bundle.mjs",
+      "electron/preload.cjs",
+      "electron/knowledge/**/*.md",
+      "package.json"
     ],
     "extraResources": [
       {
@@ -89,6 +88,14 @@
       {
         "from": "vendor/licenses",
         "to": "licenses/third-party"
+      },
+      {
+        "from": ".cache/update-helper/update-helper.exe",
+        "to": "update-helper.exe"
+      },
+      {
+        "from": ".cache/node-licenses",
+        "to": "licenses/node"
       }
     ],
     "win": {
