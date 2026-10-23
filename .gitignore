@@ -44,3 +44,5 @@ docs/screenshots/*
 !docs/screenshots/app.webp
 !docs/screenshots/knowledge/
 !docs/screenshots/knowledge/*.png
+!docs/screenshots/theme/
+!docs/screenshots/theme/*.png
