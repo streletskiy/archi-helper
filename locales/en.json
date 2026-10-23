@@ -572,5 +572,11 @@
   "knowledge.slashHint": "Type a title or tag",
   "knowledge.slashComposerHint": "Type / to attach knowledge",
   "knowledge.automaticAttached": "Automatically attached knowledge: {titles}",
-  "knowledge.storageDetails": "Entry location"
+  "knowledge.storageDetails": "Entry location",
+  "theme.choose": "Choose theme",
+  "theme.current": "Theme: {value}",
+  "theme.system": "Use system setting",
+  "theme.light": "Light",
+  "theme.dark": "Dark",
+  "theme.invalid": "Could not select the theme."
 }

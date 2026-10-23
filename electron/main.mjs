@@ -1,5 +1,5 @@
 import { t } from '../locales/index.mjs';
-import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, Menu, session } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, Menu, session, nativeTheme } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -26,6 +26,8 @@ else if(app.isPackaged)app.setPath('userData',path.join(app.getPath('appData'),'
 let win,store,mcp,agent,updates,connection={connected:false,message:t('ui.connectingAlt')},connecting,activeCalls=0,tapirProgress=null,tapirInstalling=false;
 const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(here,'../runtime');
 const emit=data=>{if(win && !win.isDestroyed())win.webContents.send('archi:event',data);};
+const windowBackground=()=>nativeTheme.shouldUseDarkColors?'#17181b':'#fcfcf9';
+nativeTheme.on('updated',()=>{if(win&&!win.isDestroyed())win.setBackgroundColor(windowBackground());});
 const reportTapirProgress=patch=>{tapirProgress={...tapirProgress,...patch};emit({type:'tapir-progress',progress:tapirProgress});};
 let pendingProviderPrompt;
 function showProviderPrompt(options) {
@@ -93,6 +95,12 @@ async function scan() {
   }))).filter(Boolean);
 }
 const handlers={
+  theme:async({theme})=>{
+    if(!['system','light','dark'].includes(theme))throw new Error(t('theme.invalid'));
+    const previous=store.state.theme;store.state.theme=theme;
+    try{await store.save();}catch(error){store.state.theme=previous;throw error;}
+    nativeTheme.themeSource=theme;return {theme};
+  },
   knowledgeList:async({projectId})=>{store.project(projectId);return agent.knowledge.list(projectId,connection.data);},
   knowledgeRead:async({projectId,id})=>{store.project(projectId);return agent.knowledge.read(id,projectId,connection.data);},
   knowledgeSave:async({projectId,entry})=>{store.project(projectId);const saved=await agent.knowledge.save(entry,projectId);return agent.knowledge.read(saved.id,projectId,connection.data);},
@@ -282,7 +290,7 @@ else {
     encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error(t('errors.windowsEncryptionIsUnavailable'));return safeStorage.encryptString(value).toString('base64');},
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
   });
-   await store.init(app.getLocale());store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);await agent.knowledge.init();
+   await store.init(app.getLocale());nativeTheme.themeSource=store.state.theme;store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);await agent.knowledge.init();
   updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>installUpdate({app,win,updater:updaterModule.autoUpdater,update:updates.state,language:store.state.language})});
   ipcMain.handle('archi:call',async(event,method,input={})=>{
     if(event.sender!==win?.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error(t('errors.untrustedRequest'));
@@ -294,7 +302,7 @@ else {
     catch(e){return {ok:false,error:e.message};}
     finally{if(tracked){activeCalls--;updates.workChanged();}}
   });
-  win=new BrowserWindow({width:1440,height:950,minWidth:1000,minHeight:680,show:false,backgroundColor:'#f7f7f2',frame:false,title:'Archi Helper',icon:path.resolve(here,'../dist/icon.png'),webPreferences:{preload:path.join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+  win=new BrowserWindow({width:1440,height:950,minWidth:1000,minHeight:680,show:false,backgroundColor:windowBackground(),frame:false,title:'Archi Helper',icon:path.resolve(here,'../dist/icon.png'),webPreferences:{preload:path.join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',(event)=>event.preventDefault());
   const painted=new Promise(resolve=>win.once('ready-to-show',resolve));
