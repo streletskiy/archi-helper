@@ -1,10 +1,12 @@
 import { t, setLanguage, useLanguage } from './i18n';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Plus, Folder, FolderOpen, ArrowUp, ArrowDown, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Share, Archive, ArchiveRestore, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, Copy, CircleAlert } from 'lucide-react';
+import { Plus, Folder, FolderOpen, ArrowUp, ArrowDown, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Share, Archive, ArchiveRestore, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, CircleAlert } from 'lucide-react';
 import './style.css';
 import { suggestions } from './suggestions';
 import { Mascot } from './Mascot';
+import { MessageBubble } from './MessageBubble';
+import { Onboarding } from './Onboarding';
 import { MessageContent } from './MessageContent';
 import {useStream} from './useStream';
 import {VirtualMessages} from './VirtualMessages';
@@ -17,13 +19,13 @@ declare global { interface Window { archi: {call:(method:string,input?:unknown)=
 const INBOX_ID='00000000-0000-0000-0000-000000000000';
 type Model={id:string;name:string;reasoningEfforts?:string[];contextWindow?:number};
 type Provider={id:string;name:string;baseURL:string;hasKey:boolean;definitionId?:string;oauth?:{status:string;accountName:string;planEnabled?:boolean};catalogVersion?:number;catalogUpdatedAt?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
-type Message={id:string;role:string;text:string;usageAction?:string;name?:string;status?:string;summary?:string;args?:unknown;artifact?:{path:string;bytes:number};model?:string};
+type Message={id:string;role:string;text:string;at?:number;usageAction?:string;name?:string;status?:string;summary?:string;args?:unknown;artifact?:{path:string;bytes:number};model?:string};
 type QueuedMessage={id:string;text:string;attachments:string[];model:string;delivery:'queue'|'steer'};
 type Session={id:string;title:string;messages:Message[];updatedAt:number;archivedAt?:number;count?:number;pendingMessages?:QueuedMessage[];queuePaused?:boolean};
 type SessionGroup={projectId:string;sessions:Session[];error?:string};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
 type TapirDownloadProgress={status:'checking'|'downloading'|'verifying'|'installing'|'launched'|'error';version:string;percent:number;transferred:number;total:number;bytesPerSecond:number;message:string};
-type State={appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
+type State={onboardingVersion?:number;appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
 const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',definitionId:p.definitionId||'',oauth:p.oauth,supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
 const emptyProvider=()=>({id:'',name:'',baseURL:'',apiKey:'',definitionId:'',oauth:undefined as Provider['oauth'],supportsImages:false,reasoningFormat:'auto',reasoningEfforts:''});
 const effortLabel=(value:string)=>t(({none:'ui.reasoningNone',minimal:'ui.reasoningMinimal',low:'ui.reasoningLow',medium:'ui.reasoningMedium',high:'ui.reasoningHigh',xhigh:'ui.reasoningXhigh',max:'ui.reasoningMax',ultra:'ui.reasoningUltra'} as const)[value as 'xhigh']);
@@ -47,11 +49,14 @@ function App(){
   const [update,setUpdate]=useState<any>(null),[choosing,setChoosing]=useState(false);
   const [tapirProgress,setTapirProgress]=useState<TapirDownloadProgress|null>(null);
   const [submitting,setSubmitting]=useState(false);
+  const [onboarding,setOnboarding]=useState(false);
+  const providerReady=!!state?.model&&!!state.providers.find(p=>p.id===state.providerId&&p.hasKey&&(!p.oauth||p.oauth.status==='connected'&&p.oauth.planEnabled!==false));
   const [showScrollToLatest,setShowScrollToLatest]=useState(false);
   const followLatest=useRef(true),conversation=useRef<HTMLDivElement>(null),conversationContent=useRef<HTMLDivElement>(null);
   const sending=useRef(false),retryRequest=useRef<{key:string;id:string}|null>(null);
   const updateBlocking=!state||state.updateOnly===true||(!update?.deferred&&['checking','downloading','ready','countdown','installing','error'].includes(update?.status));
   const [modal,setModal]=useState(''),[notice,setNotice]=useState<{text:string;tone:'success'|'error'}|null>(null),[working,setWorking]=useState(''),[attachments,setAttachments]=useState<string[]>([]);
+  useEffect(()=>{if(state&&!state.onboardingVersion&&providerReady&&!modal&&!updateBlocking&&!busy&&!providerPrompt)setOnboarding(true);},[state?.onboardingVersion,providerReady,modal,updateBlocking,busy,providerPrompt]);
   const [projectName,setProjectName]=useState(''),[search,setSearch]=useState(''),[toolSearch,setToolSearch]=useState(''),[tools,setTools]=useState<Tool[]>([]),[selectedTool,setSelectedTool]=useState<Tool|null>(null),[toolArgs,setToolArgs]=useState('{}');
   const [archivedSessions,setArchivedSessions]=useState(false),[projectArchive,setProjectArchive]=useState(false),[projectSearch,setProjectSearch]=useState(''),[projectIntent,setProjectIntent]=useState<'browse'|'draft'>('browse');
   const [renamingProject,setRenamingProject]=useState<Project|null>(null),[deletion,setDeletion]=useState<{kind:'project'|'session';id:string;name:string;count?:number;projectId?:string}|null>(null),[navigating,setNavigating]=useState(false);
@@ -69,8 +74,8 @@ function App(){
   const notify=useCallback((text:string,tone:'success'|'error'='success')=>setNotice({text,tone}),[]);
   const guard=useCallback(async(fn:()=>Promise<any>,label='')=>{try{if(label)setWorking(label);return await fn();}catch(e){notify((e as Error).message,'error');}finally{if(label)setWorking('');}},[notify]);
   const copyMessage=async(text:string)=>{
-    try{await navigator.clipboard.writeText(text);notify(t('ui.messageCopied'));}
-    catch{notify(t('ui.couldNotCopyMessage'),'error');}
+    try{await navigator.clipboard.writeText(text);return true;}
+    catch{notify(t('ui.couldNotCopyMessage'),'error');return false;}
   };
   useEffect(()=>{
     if(notice?.tone!=='success'||updateBlocking)return;
@@ -188,12 +193,12 @@ function App(){
   });
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{
-      if(updateBlocking)return;
+      if(updateBlocking||onboarding)return;
       if(event.ctrlKey && event.key.toLowerCase()==='n'){event.preventDefault();if(!workspaceLocked)newSession();}
       if(event.key==='Escape'&&!working)setModal('');
     };
     window.addEventListener('keydown',handler);return()=>window.removeEventListener('keydown',handler);
-  },[project,workspaceLocked,updateBlocking,working]);
+  },[project,workspaceLocked,updateBlocking,working,onboarding]);
   useEffect(()=>{
     if(!modal)return;
     const previous=document.activeElement as HTMLElement|null;
@@ -203,7 +208,7 @@ function App(){
     const trap=(e:KeyboardEvent)=>{if(e.key!=='Tab')return;const items=focusable(),first=items[0],last=items[items.length-1];if(!first)return;if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}};
     document.addEventListener('keydown',trap);return()=>{cancelAnimationFrame(frame);document.removeEventListener('keydown',trap);previous?.focus();};
   },[modal]);
-  useEffect(()=>{api('updateIdle',{idle:!busy&&!draft.trim()&&!attachments.length&&!session?.pendingMessages?.length&&(!modal||updateBlocking)&&!approval}).catch(()=>{});},[busy,draft,attachments.length,session?.pendingMessages?.length,modal,approval,updateBlocking]);
+  useEffect(()=>{api('updateIdle',{idle:!busy&&!draft.trim()&&!attachments.length&&!session?.pendingMessages?.length&&(!modal||updateBlocking)&&!approval&&(!onboarding||updateBlocking)}).catch(()=>{});},[busy,draft,attachments.length,session?.pendingMessages?.length,modal,approval,updateBlocking,onboarding]);
   const connect=()=>guard(async()=>{await api('connect');await refresh();},t('ui.connecting'));
   const openTools=()=>guard(async()=>{setTools(await api('tools'));setModal('tools');});
   const chooseTool=(t:Tool)=>{
@@ -285,10 +290,10 @@ function App(){
   const tapirActive=!!tapirProgress&&['checking','downloading','verifying','installing'].includes(tapirProgress.status);
   const updateStatus=update?.status||'idle';
   const updateDescription=updateStatus==='disabled'?t('ui.updatesAreAvailableOnGithubReleases'):updateStatus==='error'?t('ui.updateRetryDescription'):updateStatus==='current'?t('ui.youHaveTheLatestVersion'):updateStatus==='checking'?t('ui.checkingUpdates'):updateStatus==='downloading'?t('ui.downloadingUpdate',{value0:update?.percent||0}):['ready','countdown'].includes(updateStatus)?t('ui.updateReadyWaitingForWorkToFinish'):updateStatus==='installing'?t('ui.installingUpdate'):t('ui.updatesInstallAutomatically');
-  if(updateBlocking)return <UpdateNotice update={update||{status:'checking'}} updateOnly={state?.updateOnly===true} onLater={()=>guard(async()=>setUpdate(await api('deferUpdate')))} onRetry={()=>guard(async()=>setUpdate(await api('checkUpdates')))}/>;
+  if(updateBlocking)return <UpdateNotice update={update||{status:'checking'}} updateOnly={state?.updateOnly===true} onLater={()=>guard(async()=>setUpdate(await api('deferUpdate')))} onRetry={()=>guard(async()=>setUpdate(await api('checkUpdates')))} onRestart={()=>guard(async()=>setUpdate(await api('restartUpdate')))}/>;
   return <div className="app">
     <div className="titlebar"><div className="titlebar-brand"><img src="./helmet.png" alt="" width="32"/>Archi Helper</div><div className="titlebar-actions"><label className="language-switch" title={t('ui.language')}><Languages size={15}/><select aria-label={t('ui.language')} value={language} disabled={!state||busy||choosing} onChange={e=>{const language=e.target.value;guard(async()=>{setChoosing(true);try{const s=await api('settings',{language});setLanguage(s.language);setState(s);}finally{setChoosing(false);}});}}><option value="ru">RU</option><option value="en">EN</option></select></label><div className="window-controls"><IconButton title={t('ui.minimize')} onClick={()=>api('window',{action:'minimize'})}><Minus size={14}/></IconButton><IconButton title={t('ui.maximize')} onClick={()=>api('window',{action:'maximize'})}><Square size={11}/></IconButton><IconButton title={t('ui.close')} onClick={()=>api('window',{action:'close'})}><X size={15}/></IconButton></div></div></div>
-    <div className="workspace">
+    <div className="workspace" inert={onboarding}>
       <aside className="sidebar">
         <button className="new-chat" aria-label={t('ui.createANewSession')} title="Ctrl + N" onClick={()=>newSession()} disabled={workspaceLocked}><Plus size={17}/>{t('ui.newSession')}</button>
         <div className="sidebar-search"><Search size={14}/><input aria-label={t('ui.searchProjectsAndSessions')} placeholder={t('ui.search')} value={search} onChange={e=>setSearch(e.target.value)}/></div>
@@ -337,7 +342,7 @@ function App(){
               {suggestions().map(s=><button key={s.id} data-preset={s.id} title={s.description} onClick={()=>{setDraft(s.prompt);textInput.current?.focus();}}><Layers size={16}/><span>{s.title}</span></button>)}
             </div>
           </div>:<div className="messages">
-            <VirtualMessages key={`${projectId}:${session?.id}`} ids={messageIds} scrollRef={conversation} followLatest={followLatest} render={index=>{const group=messageGroups[index];if(group){const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<article key={m.id} className={`message ${m.role}`}><div className="message-author">{m.role==='assistant'?<><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong></>:m.role==='user'?<><span className="user-avatar">{t('ui.y')}</span><strong>{t('ui.you')}</strong></>:<><Circle size={13}/><strong>{t('ui.pleaseNote')}</strong></>}{(m.role==='user'||m.role==='assistant')&&<span className="message-actions"><IconButton title={t('ui.copyMessage')} disabled={!m.text} onClick={()=>copyMessage(m.text)}><Copy size={15}/></IconButton></span>}</div><div className="prose"><MessageContent text={m.text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/>{m.usageAction&&<button className="primary" onClick={()=>guard(()=>api('external',{url:m.usageAction}))}>{t('ui.manageUsage')}<ExternalLink size={14}/></button>}</div></article>;}const [id,text]=streamed[index-messageGroups.length];return <article key={id} className="message assistant"><div className="message-author"><img src="./helmet.png" alt="" width="32"/><strong>Archi Helper</strong><span className="thinking-dot"/><span className="message-actions"><IconButton title={t('ui.copyMessage')} onClick={()=>copyMessage(text)}><Copy size={15}/></IconButton></span></div><div className="prose"><MessageContent text={text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/></div></article>;}}/>
+            <VirtualMessages key={`${projectId}:${session?.id}`} ids={messageIds} scrollRef={conversation} followLatest={followLatest} render={index=>{const group=messageGroups[index];if(group){const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<MessageBubble key={m.id} role={m.role} text={m.text} at={m.at} onCopy={copyMessage}><MessageContent text={m.text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/>{m.usageAction&&<button className="primary" onClick={()=>guard(()=>api('external',{url:m.usageAction}))}>{t('ui.manageUsage')}<ExternalLink size={14}/></button>}</MessageBubble>;}const [id,text]=streamed[index-messageGroups.length];return <MessageBubble key={id} role="assistant" text={text} streaming onCopy={copyMessage}><MessageContent text={text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/></MessageBubble>;}}/>
             {busy&&!Object.keys(stream).length&&<div className="working-indicator"><Mascot size={32} working/>{t('ui.working')}</div>}
             {approval&&<div className="approval-card"><div className="approval-title"><ShieldCheck size={21}/><div><strong>{approval.kind==='python'?t('ui.runProcessing'):t('ui.confirmAction')}</strong><p>{approval.description}</p></div></div><details className="approval-details" open={approval.kind==='python'}><summary>{approval.kind==='python'?t('ui.codeToRun'):t('ui.viewExactParameters')}</summary><pre>{pretty(approval.args)}</pre></details>{approval.kind==='python'&&<p className="muted">{t('ui.theScriptRunsLocallyWithYourPermissions')}</p>}<div className="approval-actions"><button className="secondary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:false}))}>{t('ui.cancel')}</button><button className="primary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:true}))}><Check size={15}/>{t('ui.run')}</button></div></div>}
           </div>}
@@ -411,6 +416,7 @@ function App(){
               </div>
             </div>
           </section>}
+          {modal==='providers'&&providerReady&&!state?.onboardingVersion&&<div className="ftue-provider-next"><p>{t('ui.ftueProviderNext')}</p><button className="primary" disabled={!!working||busy||choosing} onClick={()=>{setModal('');setOnboarding(true);}}>{t('ui.ftueContinueSetup')}<ArrowUpRight size={15}/></button></div>}
           {modal==='archicad'&&<section className="settings-page" aria-labelledby="archicad-heading">
             <div className="settings-page-header"><div><h3 id="archicad-heading">Archicad</h3><p>{t('ui.archicadSectionDescription')}</p></div></div>
             <div className={`settings-card settings-connection ${connected?'online':''}`}>
@@ -433,6 +439,7 @@ function App(){
             <div className="settings-card settings-app-identity"><img src="./helmet.png" alt={t('ui.yellowHardHat')} width="48" height="48"/><div><h4>Archi Helper</h4><p>{t('ui.architectSAssistant')}</p></div><span className="settings-version">v{state?.appVersion||update?.version||'—'}</span></div>
             <div className={`settings-card settings-update ${updateStatus==='error'?'has-error':''}`}><span className="settings-update-icon"><RotateCw size={23} className={['checking','downloading'].includes(updateStatus)?'spin':undefined}/></span><div className="settings-update-copy"><h4>{t('ui.updates')}</h4><p role="status">{updateDescription}</p></div>{updateStatus==='disabled'?<button className="secondary" onClick={()=>guard(()=>api('external',{url:'https://github.com/streletskiy/archi-helper/releases'}))}><ExternalLink size={15}/>{t('ui.openReleases')}</button>:<button className="secondary" disabled={!!working||['checking','downloading','ready','countdown','installing'].includes(updateStatus)} onClick={()=>guard(async()=>setUpdate(await api('checkUpdates')))}>{t('ui.checkForUpdates')}</button>}</div>
             <section className="settings-info-section"><h4>{t('ui.bundledComponents')}</h4><div className="settings-components">{[`Python${state?.runtimeInfo?.pythonVersion?' '+state.runtimeInfo.pythonVersion:''}`,'uv','MCP'].map(name=><span key={name}><Check size={14}/>{name}</span>)}</div></section>
+            <div className="settings-card ftue-replay"><div><h4>{t('ui.ftueReplayTitle')}</h4><p className="settings-description">{t('ui.ftueReplayHint')}</p></div><button className="secondary" disabled={workspaceLocked} onClick={()=>{setModal('');setOnboarding(true);}}><Play size={15}/>{t('ui.ftueReplay')}</button></div>
             <footer className="settings-links"><button onClick={()=>guard(()=>api('external',{url:'https://github.com/streletskiy/archi-helper'}))}><ExternalLink size={14}/>{t('ui.projectOnGithub')}</button><button onClick={()=>guard(()=>api('external',{url:'https://github.com/ENZYME-APD/tapir-archicad-automation'}))}><ExternalLink size={14}/>Tapir Archicad Automation</button></footer>
           </section>}
         </div>
@@ -442,6 +449,10 @@ function App(){
       {modal==='renameProject'&&renamingProject&&<Rename title={renamingProject.name} onSave={name=>guard(async()=>{const next=await api('renameProject',{id:renamingProject.id,name});setState(next);if(project?.id===renamingProject.id){const p=next.projects.find((p:Project)=>p.id===renamingProject.id);projectRef.current=p;setProject(p);}setModal('');})}/>}
       {modal==='delete'&&deletion&&<div className="modal-body delete-confirm"><div className="delete-symbol"><Trash2 size={24}/></div><h3>{t(deletion.kind==='project'?'ui.deleteProjectQuestion':'ui.deleteSessionQuestion',{name:deletion.name})}</h3><p>{t(deletion.kind==='project'?'ui.deleteProjectDescription':'ui.deleteSessionDescription',{count:deletion.count??'—'})}</p><div className="form-actions"><button className="secondary" disabled={!!working} onClick={()=>setModal('')}>{t('ui.cancel')}</button><button className="danger-button" disabled={!!working||busy} onClick={deleteItem}><Trash2 size={16}/>{working||t('ui.deletePermanently')}</button></div></div>}
     </section></div>}
+    {onboarding&&state&&<Onboarding connection={state.connection||{}} runtimeReady={state.runtimeReady} toolCount={state.toolCount} providerName={selectedProvider?.name||''} port={state.archicadPort} tapirProgress={tapirProgress}
+      onProbe={async port=>{if(port!==undefined)await api('settings',{archicadPort:port});await api('connect');await refresh();}}
+      onScan={()=>api('scan')} onInstall={()=>api('installTapir')} onOpen={()=>api('launchArchicad')}
+      onFinish={async prompt=>{if(prompt)await newSession();const next=await api('completeOnboarding');setState(next);setOnboarding(false);if(prompt){setDraft(prompt);requestAnimationFrame(()=>textInput.current?.focus());}}}/>}
   </div>;
 }
 function groupMessages(messages:Message[]){
@@ -471,7 +482,7 @@ function TapirProgress({progress}:{progress:TapirDownloadProgress}) {
     {message&&<p className="tapir-progress-message">{message}</p>}
   </div>;
 }
-function UpdateNotice({update,updateOnly,onLater,onRetry}:{update:any;updateOnly:boolean;onLater:()=>void;onRetry:()=>void}){
+function UpdateNotice({update,updateOnly,onLater,onRetry,onRestart}:{update:any;updateOnly:boolean;onLater:()=>void;onRetry:()=>void;onRestart:()=>void}){
   const [now,setNow]=useState(Date.now());
   useEffect(()=>{if(update?.status!=='countdown')return;setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[update?.status,update?.restartAt]);
   const status=update.status,percent=Math.max(0,Math.min(100,Math.round(update.percent||0)));
@@ -481,12 +492,12 @@ function UpdateNotice({update,updateOnly,onLater,onRetry}:{update:any;updateOnly
   const step=status==='checking'?0:status==='downloading'?1:update.stage==='restarting'?3:2;
   const steps=[t('ui.updateCheckStage'),t('ui.updateDownloadStage'),t('ui.updateInstallStage'),t('ui.updateLaunchStage')];
   return <div className="update-screen"><section className={`update-notice ${status==='error'?'has-error':''}`} aria-label={t('ui.updates')}>
-    <div className="update-screen-brand"><img src="./helmet.png" alt="" width="36" height="36"/><span>Archi Helper</span></div>
+    <div className="update-screen-brand"><img src="./helmet.png" alt="" width="144" height="144"/><span>Archi Helper</span></div>
     <div className="update-notice-heading"><span className="update-notice-icon" aria-hidden="true">{spinning?<RotateCw size={25} className="spin"/>:status==='error'?<CircleAlert size={25}/>:<Check size={25}/>}</span><div className="update-notice-copy" role="status"><strong>{text}</strong>{(update.nextVersion||update.version)&&<span>v{update.nextVersion||update.version}</span>}</div></div>
     {!['error','current'].includes(status)&&<><ol className="update-steps">{steps.map((label,index)=><li key={label} className={index<step?'done':index===step?'active':''} aria-current={index===step?'step':undefined}><span aria-hidden="true">{index<step?<Check size={12}/>:index===step&&spinning?<RotateCw size={12} className="spin"/>:<Circle size={12}/>}</span>{label}</li>)}</ol><div className={`update-progress ${indeterminate?'is-indeterminate':''}`} role="progressbar" aria-label={text} aria-valuemin={0} aria-valuemax={100} aria-valuenow={indeterminate?undefined:status==='downloading'?percent:100}><span style={{width:indeterminate?'30%':`${status==='downloading'?percent:100}%`}}/></div></>}
     {status==='downloading'&&<div className="update-transfer"><span>{update.total>0?t('ui.updateTransfer',{transferred:bytes(update.transferred||0),total:bytes(update.total)}):`${percent}%`}</span>{update.bytesPerSecond>0&&<span>{t('ui.updateSpeed',{speed:bytes(update.bytesPerSecond)})}</span>}</div>}
     {description&&<p className="update-notice-description">{description}</p>}
-    {(['ready','countdown'].includes(status)&&!update.deferred||status==='error')&&<div className="update-notice-actions">{status==='error'&&!updateOnly&&<button className="text-button" onClick={onLater}>{t('ui.continueWithoutUpdate')}</button>}<button className="secondary" onClick={status==='error'?onRetry:onLater}>{status==='error'?t(updateOnly?'ui.reopenApplication':'ui.checkForUpdates'):t('ui.later')}</button></div>}
+    {(['ready','countdown'].includes(status)&&!update.deferred||status==='error')&&<div className="update-notice-actions">{status==='countdown'&&<button className="primary" onClick={onRestart}><RotateCw size={15}/>{t('ui.restartNow')}</button>}{status==='error'&&!updateOnly&&<button className="text-button" onClick={onLater}>{t('ui.continueWithoutUpdate')}</button>}<button className="secondary" onClick={status==='error'?onRetry:onLater}>{status==='error'?t(updateOnly?'ui.reopenApplication':'ui.checkForUpdates'):t('ui.later')}</button></div>}
   </section></div>;
 }
 createRoot(document.getElementById('root')!).render(<App/>);

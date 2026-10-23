@@ -102,7 +102,7 @@ test('automatic download exposes progress and finishes before another check can 
   assert.equal(checks,1);assert.equal(t.updates.state.status,'ready');
   assert.equal(t.pending.size,0);
   t.updates.setIdle(true);
-  assert.deepEqual([...t.pending.values()].map(job=>job.ms),[10000]);
+  assert.deepEqual([...t.pending.values()].map(job=>job.ms),[3000]);
   await t.tick();assert.equal(t.updates.state.status,'installing');assert.equal(t.installed,0);
   assert.deepEqual([...t.pending.values()].map(job=>job.ms),[500]);
   await t.tick();assert.equal(t.installed,1);

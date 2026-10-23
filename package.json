@@ -1,7 +1,7 @@
 {
   "name": "ac-helper",
   "productName": "Archi Helper",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "Personal architect assistant for Archicad",
   "author": "streletskiy",
   "private": true,

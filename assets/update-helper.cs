@@ -53,6 +53,16 @@ internal sealed class ProgressTrack:Control {
     protected override void Dispose(bool disposing) {if(disposing)timer.Dispose();base.Dispose(disposing);}
 }
 
+internal sealed class PixelLogo:Control {
+    public Image Image;
+    protected override void OnPaint(PaintEventArgs e) {
+        base.OnPaint(e);if(Image==null)return;
+        e.Graphics.InterpolationMode=InterpolationMode.NearestNeighbor;e.Graphics.PixelOffsetMode=PixelOffsetMode.Half;
+        e.Graphics.DrawImage(Image,ClientRectangle);
+    }
+    protected override void Dispose(bool disposing){if(disposing&&Image!=null)Image.Dispose();base.Dispose(disposing);}
+}
+
 internal sealed class UpdateWindow:Form {
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr handle);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr handle,int command);
@@ -74,13 +84,13 @@ internal sealed class UpdateWindow:Form {
         Button minimize=WindowButton("\u2212");minimize.Click+=delegate{WindowState=FormWindowState.Minimized;};Controls.Add(minimize);
         close.Text="\u00d7";StyleWindowButton(close);close.Visible=false;close.Click+=delegate{canClose=true;Close();};Controls.Add(close);
         Resize+=delegate{minimize.Location=new Point(ClientSize.Width-94,10);close.Location=new Point(ClientSize.Width-48,10);card.Location=new Point((ClientSize.Width-card.Width)/2,(ClientSize.Height-card.Height)/2);};
-        card.Size=new Size(520,280);Controls.Add(card);
-        PictureBox logo=new PictureBox();logo.Image=Icon.ToBitmap();logo.SizeMode=PictureBoxSizeMode.Zoom;logo.Bounds=new Rectangle(240,0,40,40);card.Controls.Add(logo);
-        title.Bounds=new Rectangle(0,58,520,70);title.Font=new Font(Font.FontFamily,21,FontStyle.Bold);title.TextAlign=ContentAlignment.MiddleCenter;card.Controls.Add(title);
-        description.Bounds=new Rectangle(15,133,490,58);description.ForeColor=Color.FromArgb(104,110,98);description.TextAlign=ContentAlignment.MiddleCenter;card.Controls.Add(description);
-        progress.Bounds=new Rectangle(30,208,460,6);card.Controls.Add(progress);
-        steps.Bounds=new Rectangle(15,225,490,24);steps.TextAlign=ContentAlignment.MiddleCenter;steps.ForeColor=Color.FromArgb(95,120,80);card.Controls.Add(steps);
-        version.Bounds=new Rectangle(15,254,490,20);version.TextAlign=ContentAlignment.MiddleCenter;version.ForeColor=Color.FromArgb(130,136,123);version.Font=new Font(Font.FontFamily,9);version.Text=(config.update.version??"")+"  \u2192  "+(config.update.nextVersion??"");card.Controls.Add(version);
+        card.Size=new Size(580,402);Controls.Add(card);
+        PixelLogo logo=new PixelLogo();logo.Image=Icon.ToBitmap();logo.Bounds=new Rectangle(210,-12,160,160);card.Controls.Add(logo);
+        title.Bounds=new Rectangle(0,145,580,70);title.Font=new Font(Font.FontFamily,21,FontStyle.Bold);title.TextAlign=ContentAlignment.MiddleCenter;card.Controls.Add(title);
+        description.Bounds=new Rectangle(45,218,490,58);description.ForeColor=Color.FromArgb(104,110,98);description.TextAlign=ContentAlignment.MiddleCenter;card.Controls.Add(description);
+        progress.Bounds=new Rectangle(60,296,460,6);card.Controls.Add(progress);
+        steps.Bounds=new Rectangle(45,315,490,24);steps.TextAlign=ContentAlignment.MiddleCenter;steps.ForeColor=Color.FromArgb(95,120,80);card.Controls.Add(steps);
+        version.Bounds=new Rectangle(45,351,490,20);version.TextAlign=ContentAlignment.MiddleCenter;version.ForeColor=Color.FromArgb(130,136,123);version.Font=new Font(Font.FontFamily,9);version.Text=(config.update.version??"")+"  \u2192  "+(config.update.nextVersion??"");card.Controls.Add(version);
         reopen.Text=Label("reopen");reopen.AutoSize=true;reopen.FlatStyle=FlatStyle.Flat;reopen.FlatAppearance.BorderColor=Color.FromArgb(95,120,80);reopen.BackColor=Color.FromArgb(95,120,80);reopen.ForeColor=Color.White;reopen.Padding=new Padding(12,6,12,6);reopen.Visible=false;
         reopen.Click+=delegate{Restart(Read(config.statusFile)=="complete");};card.Controls.Add(reopen);
         FormClosing+=delegate(object sender,FormClosingEventArgs e){if(!canClose&&stage!="error"&&e.CloseReason!=CloseReason.WindowsShutDown)e.Cancel=true;};
@@ -97,7 +107,7 @@ internal sealed class UpdateWindow:Form {
     private void Publish(string next) {
         stage=next;title.Text=Label(next+"Title");description.Text=Label(next+"Description");
         bool error=next=="error";progress.Visible=!error;steps.Visible=!error;reopen.Visible=error;close.Visible=error;
-        steps.Text=Label("install")+"    \u2192    "+Label("launch");reopen.Location=new Point((card.Width-reopen.Width)/2,204);
+        steps.Text=Label("install")+"    \u2192    "+Label("launch");reopen.Location=new Point((card.Width-reopen.Width)/2,292);
     }
     private void Tick(object sender,EventArgs args) {
         if(!ready){EnsureVisible();if(IsWindowVisible(Handle)){File.WriteAllText(Path.Combine(config.root,"helper-ready.json"),json.Serialize(new {pid=Process.GetCurrentProcess().Id,protocol=2}),new UTF8Encoding(false));ready=true;}}
