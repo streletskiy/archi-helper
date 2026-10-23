@@ -50,6 +50,7 @@ export class Store {
     delete this.state.maxContextChars;
     this.state.language = normalizeLanguage(this.state.language || defaultLanguage);
     this.state.reasoningEffort ||= 'xhigh';
+    this.state.permissionMode ??= 'full';
     await fs.mkdir(path.join(this.directory, 'inbox'), { recursive: true });
     setLanguage(this.state.language);
   }

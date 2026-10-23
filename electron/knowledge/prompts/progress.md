@@ -1,0 +1,1 @@
+Progress checkpoint: send a brief user-facing update before further tools. Summarize verified findings and the next step; if a tool failed, explain the obstacle and the corrected approach. Do not expose private reasoning.

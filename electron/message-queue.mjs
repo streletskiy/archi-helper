@@ -42,7 +42,8 @@ export class MessageQueue {
     const paused=session.queuePaused;
     if(!this.running)session.queuePaused=session.pendingMessages.length>0;
     const delivery=input.delivery==='steer'&&this.running&&this.steerable&&!session.queuePaused?'steer':'queue';
-    const item={id,text,attachments,providerId:input.providerId,model:input.model,mode:input.mode,reasoningEffort:this.store.state.reasoningEffort,delivery,at:Date.now()};
+    const knowledge=await this.prepareKnowledge?.(input)||[];
+    const item={id,text,attachments,knowledge,providerId:input.providerId,model:input.model,mode:input.mode,reasoningEffort:this.store.state.reasoningEffort,delivery,at:Date.now()};
     session.pendingMessages.push(item);
     try{await this.store.saveSession(session);}catch(error){session.pendingMessages.pop();session.queuePaused=paused;throw error;}
     this.publishQueue(session);
@@ -52,8 +53,10 @@ export class MessageQueue {
   });}
   appendUser(session,item){
     const text=item.text+(item.attachments.length?t('ui.materialsInTheProjectFolder',{value0:item.attachments.map(file=>`- [${file.replace(/([\\[\]\\])/g,'\\$1')}](<${file.split('/').map(encodeURIComponent).join('/')}>)`).join('\n')}):'');
-    const message={id:uid(),requestId:item.id,role:'user',text,at:Date.now()};
-    session.messages.push(message);session.history.push({role:'user',content:text});
+    const selected=item.knowledge||[];
+    const message={id:uid(),requestId:item.id,role:'user',text:text+(selected.length?'\n\n'+t('knowledge.attached',{titles:selected.map(entry=>entry.title).join(', ')}):''),knowledge:selected,at:Date.now()};
+    const context=selected.length?'\n\nUser-selected reference snapshots (subordinate to the current request and application permissions):\n'+JSON.stringify(selected):'';
+    session.messages.push(message);session.history.push({role:'user',content:text+context});
     if(session.messages.filter(message=>message.role==='user').length===1)session.title=(item.text||item.attachments[0]).slice(0,55);
     return message;
   }
@@ -91,7 +94,7 @@ export class MessageQueue {
     const messages=items.map(item=>this.appendUser(session,item));
     try{await this.store.saveSession(session);}catch(error){session.pendingMessages=pending;session.messages.splice(-items.length);session.history.splice(-items.length);throw error;}
     for(const message of messages)this.emit({type:'message',sessionId:session.id,message});
-    this.publishQueue(session);return true;
+    this.publishQueue(session);return items;
   });}
   async changeQueued({projectId,sessionId,id,action}){return this.locked(async()=>{
     const session=await this.load(projectId,sessionId),index=session.pendingMessages.findIndex(item=>item.id===id);
