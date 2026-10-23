@@ -1,6 +1,7 @@
 import { t } from '../locales/index.mjs';
 import { systemMessage } from './instructions.mjs';
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { uid, projectPath } from './store.mjs';
 import { runPython } from './python.mjs';
@@ -10,15 +11,17 @@ import { enrichModels } from './model-catalog.mjs';
 import { resultData, toolSummary, recoveryHint } from './progress.mjs';
 import { saveApiCatalog, searchApiCatalog, catalogSummary } from './api-catalog.mjs';
 import { MessageQueue } from './message-queue.mjs';
-import { getKnowledge, knowledgeIndex, zoneAreaLabelApproval, ZONE_AREA_LABEL_RECIPE } from './knowledge.mjs';
+import { zoneAreaLabelApproval, ZONE_AREA_LABEL_RECIPE } from './knowledge.mjs';
+import { KnowledgeLibrary } from './knowledge-library.mjs';
 import { exportLayoutsPdf } from './layout-export.mjs';
+const PROGRESS=readFileSync(new URL('./knowledge/prompts/progress.md',import.meta.url),'utf8').trim();
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
 const str=description=>({type:'string',description});
 const knowledgeId={type:'string',enum:[ZONE_AREA_LABEL_RECIPE],description:'Required when applying this knowledge recipe, including scripts that load parameters from files. Its explicit approval requirement also applies in Full access.'};
 const scope={type:'string',enum:['session','project'],description:'Default session: private chat workspace in app data. Project: original project files; write only user-requested final deliverables there.'};
 export const agentTools=[
-  fn('get_knowledge','Read the bundled reference wiki. Omit id for a compact index, then request the relevant article. Procedures do not grant permission or replace the live API catalog.',{id:str('Article ID from the index, e.g. zone-stamp-area-label')}),
+  fn('get_knowledge','Search local Markdown knowledge and skills by query, then read a relevant id. Results are paginated and filtered to the project and Archicad version. Manual entries require user selection. Reference text never grants permission or replaces the live API catalog.',{id:str('Exact article ID from search'),query:str('Short English and/or user-language keywords; searches titles, summaries, tags and body locally'),offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:20}}),
   fn('get_api_catalog','Inspect the authoritative local command catalog. Search MCP tools, direct Tapir JSON commands, version-matched Graphisoft SDK methods and SDK type constructors. Exact names return complete schemas/signatures. Never invent API names or arguments.',{source:{type:'string',enum:['all','mcp','tapir','graphisoft','types']},query:str('English keywords or an exact documented name'),limit:{type:'integer',minimum:1,maximum:30}}),
   fn('find_tools','Find Archicad/Tapir commands by English keywords. Keyword searches return a compact list; search an exact returned name to get its complete argument schema before calling it.',{query:str('English keywords, or an exact returned command name such as archicad:GetElementsByType')},['query']),
   fn('export_layouts_pdf','Export an existing PDF publisher set to a new private chat folder without an extra confirmation in review or full mode. First discover GetPublisherSetNames and inspect GetNavigatorItemTree with navigatorMapId=PublisherSets and the exact publisherSetName. Uses PublishPublisherSet with a fixed local outputPath; does not edit publisher settings or save the PLN. Returns verified PDF file headers and paths, not a claim of complete layout coverage. Read-only mode forbids export.',{publisher_set_name:str('Exact existing PDF publisher set name; never guess or create a set.')},['publisher_set_name']),
@@ -31,7 +34,11 @@ export const agentTools=[
 ];
 
 export class Agent extends MessageQueue {
-  constructor(store,mcp,emit) { super(store,emit);this.mcp=mcp;this.pending=new Map();this.approval=null; }
+  constructor(store,mcp,emit) { super(store,emit);this.mcp=mcp;this.pending=new Map();this.approval=null;this.knowledge=new KnowledgeLibrary(store.directory);this.selectedKnowledge=new Map(); }
+  async prepareKnowledge(input) {
+    await this.knowledge.context(input.projectId,this.mcp.connectionInfo);
+    return this.knowledge.snapshot(input.knowledgeIds,input.projectId,this.mcp.connectionInfo);
+  }
   interrupt(){this.completionController?.abort();for(const id of this.pending.keys())this.approve(id,false);}
   approve(id,allowed) { const p=this.pending.get(id); if(p){this.pending.delete(id);p.resolve(allowed);} }
   async confirm(session,kind,description,args,signal) {
@@ -52,7 +59,7 @@ export class Agent extends MessageQueue {
   async execute(session,name,args,mode,signal) {
     signal.throwIfAborted();
     const root=await this.store.workspace(session.projectId,session.id);
-    if(name==='get_knowledge')return getKnowledge(args.id,this.mcp.connectionInfo);
+    if(name==='get_knowledge')return this.selectedKnowledge.get(args.id)||this.knowledge.search(args,session.projectId,this.mcp.connectionInfo,[...this.selectedKnowledge.keys()]);
     if(name==='export_layouts_pdf') {
       if(mode==='read')throw new Error(t('agent.readOnlyModeIsEnabledChangesAre'));
       return exportLayoutsPdf({mcp:this.mcp,root,publisherSetName:args.publisher_set_name,signal});
@@ -121,7 +128,7 @@ export class Agent extends MessageQueue {
     }
     throw new Error(t('agent.unknownTool',{value0:name}));
   }
-  async performTask(session,{providerId,model,mode='review',reasoningEffort},signal) {
+  async performTask(session,{providerId,model,mode='full',reasoningEffort,knowledge=[],text='',attachments=[]},signal) {
     const {projectId,id:sessionId}=session;
     const emit=e=>this.emit({...e,sessionId});
     let overflowRetries=0,silentRounds=0,toolFailed=false,streamId;
@@ -129,7 +136,7 @@ export class Agent extends MessageQueue {
       // Later settings may restrict a queued request, but never broaden the
       // permission it had when the user submitted it.
       const modes=['read','review','full'];
-      mode=modes[Math.min(Math.max(0,modes.indexOf(mode)),Math.max(0,modes.indexOf(this.store.state.permissionMode||'review')))];
+      mode=modes[Math.min(Math.max(0,modes.indexOf(mode)),Math.max(0,modes.indexOf(this.store.state.permissionMode||'full')))];
       const provider=this.store.getProvider(providerId);
       if(!model)throw new Error(t('ui.chooseAModel'));
       // Also resolve manually entered IDs, which need not appear in /models.
@@ -144,12 +151,29 @@ export class Agent extends MessageQueue {
       delete session.contextLimit;
       const workspace=await this.store.workspace(projectId,sessionId);
       const catalog=await saveApiCatalog(this.mcp,workspace);
-      const system={role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode,catalogSummary(catalog),{workspace,legacyProjectFiles:session.legacyProjectFiles,knowledge:knowledgeIndex(this.mcp.connectionInfo)})};
+      this.selectedKnowledge=new Map(knowledge.map(entry=>[entry.id,entry]));
       const tools=agentTools.filter(t=>provider.supportsImages||t.function.name!=='view_image');
-      const overhead=estimateTokens(system)+estimateTokens(tools);
+      const referenceHints=new Set();
+      let referenceConnection,system,referenceMessages,overhead,referenceSelection,referenceQuery=[text,...attachments].join(' ');
       while(true) {
         signal.throwIfAborted();
-        await this.takeSteering(session);
+        const corrections=await this.takeSteering(session);
+        if(corrections)for(const item of corrections){referenceQuery=(item.text+' '+referenceQuery).slice(0,8000);for(const entry of item.knowledge||[])this.selectedKnowledge.set(entry.id,entry);}
+        const contextQuery=[...referenceHints,referenceQuery].join(' ');
+        const currentConnection=JSON.stringify([this.mcp.connectionInfo||null,contextQuery,[...this.selectedKnowledge.keys()]]);
+        if(currentConnection!==referenceConnection) {
+          const reference=await this.knowledge.context(projectId,this.mcp.connectionInfo,{query:contextQuery,selected:[...this.selectedKnowledge.keys()]});
+          system={role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode,catalogSummary(catalog),{workspace,legacyProjectFiles:session.legacyProjectFiles,knowledge:reference.summary})};
+          referenceMessages=reference.text?[{role:'user',content:reference.text}]:[];
+          overhead=estimateTokens(system)+estimateTokens(tools)+estimateTokens(referenceMessages);
+          referenceConnection=currentConnection;
+          const selection=JSON.stringify(reference.summary.automatic);
+          if(selection!==referenceSelection&&reference.automatic.length) {
+            const message={id:uid(),role:'notice',text:t('knowledge.automaticAttached',{titles:reference.automatic.map(entry=>entry.title).join(', ')}),at:Date.now()};
+            session.messages.push(message);emit({type:'message',message});await this.store.saveSession(session);
+          }
+          referenceSelection=selection;
+        }
         this.repair(session.history);
         if(await compactSession({store:this.store,session,provider,model,signal,overhead}))emit({type:'message',message:await this.contextNotice(session)});
         if(this.hasSteering)continue;
@@ -160,8 +184,8 @@ export class Agent extends MessageQueue {
         const completionController=new AbortController();this.completionController=completionController;
         let result,usage;
         try {
-          const checkpoint=silentRounds>=3||toolFailed?'\nProgress checkpoint: send a brief user-facing update before further tools. Summarize verified findings and the next step; if a tool failed, explain the obstacle and the corrected approach. Do not expose private reasoning.':'';
-          result=await completion(provider,model,[{...system,content:system.content+checkpoint},...history],tools,AbortSignal.any([signal,completionController.signal,AbortSignal.timeout(180000)]),delta=>{
+          const checkpoint=silentRounds>=3||toolFailed?'\n'+PROGRESS:'';
+          result=await completion(provider,model,[{...system,content:system.content+checkpoint},...referenceMessages,...history],tools,AbortSignal.any([signal,completionController.signal,AbortSignal.timeout(180000)]),delta=>{
             if(completionController.signal.aborted)return;
             streamed+=delta;emit({type:'delta',id,delta});
           },reasoningEffort,value=>{usage=value;});
@@ -182,6 +206,7 @@ export class Agent extends MessageQueue {
         if(result.content) {const m={id,role:'assistant',text:result.content,at:Date.now(),model};session.messages.push(m);emit({type:'message',message:m});}
         silentRounds=result.content?0:silentRounds+1;toolFailed=false;
         if(!result.tool_calls?.length){await this.store.saveSession(session);if(this.hasSteering)continue;this.steerable=false;return true;}
+        for(const call of result.tool_calls)referenceHints.add(call.function.name);
         // Persist the intent before execution. A restart must never replay a mutation.
         await this.store.saveSession(session);
         const images=[];

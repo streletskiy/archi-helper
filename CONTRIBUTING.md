@@ -75,7 +75,7 @@ Workflow «Windows release» проверяет, что тег соответс�
 | `src` | Интерфейс React |
 | `locales` | Общие словари RU/EN для интерфейса и Electron |
 | `electron` | Окно, проекты, провайдеры, агент и MCP |
-| `electron/knowledge` | [База проверенных приёмов для агентов](electron/knowledge/README.md), ограничения и порядок согласования |
+| `electron/knowledge` | [Markdown-база знаний](electron/knowledge/README.md): промпты, общие процедуры, уточнения версий; личные записи хранятся отдельно в профиле |
 | `vendor` | Исходники MCP, зависимости Python, лицензии |
 | `scripts` | Подготовка среды, выпуск и графика |
 | `assets/brand` | Редактируемые спрайты Aseprite 32×32 |
