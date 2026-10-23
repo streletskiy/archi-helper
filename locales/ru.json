@@ -572,5 +572,11 @@
   "knowledge.slashHint": "Начните вводить название или тег",
   "knowledge.slashComposerHint": "Введите /, чтобы подключить знания",
   "knowledge.automaticAttached": "Автоматически подключены знания: {titles}",
-  "knowledge.storageDetails": "Расположение записи"
+  "knowledge.storageDetails": "Расположение записи",
+  "theme.choose": "Выбрать тему",
+  "theme.current": "Тема: {value}",
+  "theme.system": "Как в системе",
+  "theme.light": "Светлая",
+  "theme.dark": "Тёмная",
+  "theme.invalid": "Не удалось выбрать тему."
 }
