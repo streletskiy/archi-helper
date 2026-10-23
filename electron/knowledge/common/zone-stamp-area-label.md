@@ -1,3 +1,16 @@
+---
+id: "zone-stamp-area-label"
+title: "Override the displayed area in a specific zone stamp"
+summary: "Custom stamp text only; preserve geometry and calculated areas; explicit approval and pilot required."
+kind: "skill"
+activation: "auto"
+enabled: true
+tags: ["zone","stamp","area","зона","штамп","площадь"]
+requiresExplicitApproval: true
+triggers: ["stamp","zone","area-label","штамп","паспорт","площад"]
+related: []
+---
+
 # Изменение надписи площади в существующем штампе зоны
 
 Идентификатор: `zone-stamp-area-label`. Требуется явное одобрение пользователя.
