@@ -41,22 +41,30 @@ function answerProviderPrompt({id,response}) {
   pendingProviderPrompt=undefined;emit({type:'provider-prompt',prompt:null});pending.resolve({response});
 }
 const runtimeManifest=await fs.readFile(path.join(runtime,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({}));
-const publicState=()=>({...store.publicState(),providerPrompt:pendingProviderPrompt?.prompt,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:!!mcp.python,toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state,tapirProgress});
+const publicState=()=>({...store.publicState(),providerPrompt:pendingProviderPrompt?.prompt,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:mcp.clients.has('archicad'),toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state,tapirProgress});
 async function connect() {
   if(connecting)return connecting;
   connecting=(async()=>{
     try {
       if(agent.running)throw new Error(t('errors.cannotChangeTheConnectionDuringATask'));
-      await mcp.connect(store.state.archicadPort);
-      const result=await mcp.call('TestConnection',{});
-      const data=result.structuredContent || parseResult(result);
-      connection={connected:!result.isError,message:result.isError?String(data):t('errors.archicadConnected'),data,port:store.state.archicadPort};
-      if(!result.isError) {
-        const info=await mcp.call('GetProjectInfo',{});
-        connection.project=info.structuredContent || parseResult(info);
+      // The built-in JSON API answers without Tapir. Probe it independently so
+      // a missing add-on cannot be mistaken for a missing Archicad connection.
+      const instances=await scan(),product=store.state.archicadPort?instances.find(instance=>String(instance.port)===store.state.archicadPort):instances[0];
+      await mcp.connect(product?String(product.port):store.state.archicadPort);
+      if(!product)connection={connected:false,message:t('ui.noRunningArchicadFound')};
+      else {
+        connection={connected:true,message:t('errors.archicadConnected'),port:String(product.port),data:{archicad_version:product.version,archicad_build:product.buildNumber,tapir_installed:null}};
+        try {
+          const result=await mcp.call('TestConnection',{},AbortSignal.timeout(12000));
+          if(!result.isError)connection.data={...connection.data,...(result.structuredContent||parseResult(result))};
+        } catch { /* Keep the independently verified built-in API connection. */ }
+        if(connection.data.tapir_installed)try {
+          const info=await mcp.call('GetProjectInfo',{},AbortSignal.timeout(12000));
+          if(!info.isError)connection.project=info.structuredContent||parseResult(info);
+        } catch { /* Project metadata is optional for a healthy connection. */ }
       }
     } catch(e) {connection={connected:false,message:e.message};}
-    emit({type:'connection',connection,toolCount:mcp.tools.length,runtimeReady:!!mcp.python});
+    emit({type:'connection',connection,toolCount:mcp.tools.length,runtimeReady:mcp.clients.has('archicad')});
     return connection;
   })().finally(()=>{connecting=null;});
   return connecting;
@@ -114,6 +122,11 @@ const handlers={
   updateIdle:async({idle})=>updates.setIdle(idle),
   checkUpdates:async()=>updates.check(),
   deferUpdate:async()=>updates.defer(),
+  restartUpdate:async()=>updates.restartNow(),
+  completeOnboarding:async()=>{
+    const previous=store.state.onboardingVersion;store.state.onboardingVersion=1;
+    try{await store.save();return publicState();}catch(error){store.state.onboardingVersion=previous;throw error;}
+  },
   createProject:async({name,existing=false})=>{
     const chosen=await dialog.showOpenDialog(win,{title:existing?t('errors.chooseProjectFolder'):t('errors.whereShouldTheProjectFolderBeCreated'),properties:['openDirectory','createDirectory']});
     if(chosen.canceled)return null;
@@ -269,7 +282,7 @@ else {
     if(event.sender!==win?.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error(t('errors.untrustedRequest'));
     if(updates.state.status==='installing'&&!['bootstrap','window'].includes(method))throw new Error(t('errors.anUpdateIsBeingInstalled'));
     if(!Object.hasOwn(handlers,method))throw new Error(t('errors.unknownOperation'));
-    const tracked=!['bootstrap','updateIdle','checkUpdates','deferUpdate','window'].includes(method);
+    const tracked=!['bootstrap','updateIdle','checkUpdates','deferUpdate','restartUpdate','window'].includes(method);
     if(tracked){activeCalls++;updates.workChanged();}
     try{return {ok:true,value:await handlers[method](input)};}
     catch(e){return {ok:false,error:e.message};}
