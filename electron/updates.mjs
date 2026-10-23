@@ -16,6 +16,15 @@ export function createUpdates({updater,enabled,version,getBusy,emit,install,
     ready=false;cancelInstall();publish({status:'error',restartAt:null});
     if(!checking)scheduleCheck(60000);
   };
+  const beginInstall=()=>{
+    if(disposed||!enabled||!ready||state.status==='installing'||!idle||getBusy())return state;
+    cancelInstall();
+    publish({status:'installing',stage:'preparing',restartAt:null});
+    // Give the renderer one paint before the native installer takes over.
+    timer=schedule(()=>{timer=null;if(!disposed){try{Promise.resolve(install()).catch(fail);}catch{fail();}}},500);
+    timer?.unref?.();
+    return state;
+  };
   const reconcile=()=>{
     if(disposed||state.status==='installing')return;
     cancelInstall();
@@ -23,15 +32,12 @@ export function createUpdates({updater,enabled,version,getBusy,emit,install,
       if(ready&&state.status!=='installing')publish({status:'ready',restartAt:null});
       return;
     }
-    publish({status:'countdown',restartAt:Date.now()+10000});
+    publish({status:'countdown',restartAt:Date.now()+3000});
     timer=schedule(()=>{
       timer=null;
       if(!idle||deferred||getBusy())return reconcile();
-      publish({status:'installing',stage:'preparing',restartAt:null});
-      // Let the renderer show the installation stage before the app closes.
-      timer=schedule(()=>{timer=null;if(!disposed){try{Promise.resolve(install()).catch(fail);}catch{fail();}}},500);
-      timer?.unref?.();
-    },10000);
+      beginInstall();
+    },3000);
     timer?.unref?.();
   };
   if(enabled){
@@ -74,6 +80,7 @@ export function createUpdates({updater,enabled,version,getBusy,emit,install,
     },
     setIdle(value){idle=value===true;reconcile();return state;},
     workChanged(){reconcile();},
+    restartNow(){return beginInstall();},
     defer(){deferred=true;publish({deferred:true});reconcile();return state;},
     check(){
       if(deferred){deferred=false;publish({deferred:false});reconcile();}
