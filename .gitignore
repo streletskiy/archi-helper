@@ -42,3 +42,5 @@ assets/brand/engineer.json
 docs/screenshots/*
 !docs/screenshots/app.png
 !docs/screenshots/app.webp
+!docs/screenshots/knowledge/
+!docs/screenshots/knowledge/*.png

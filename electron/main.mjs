@@ -93,6 +93,12 @@ async function scan() {
   }))).filter(Boolean);
 }
 const handlers={
+  knowledgeList:async({projectId})=>{store.project(projectId);return agent.knowledge.list(projectId,connection.data);},
+  knowledgeRead:async({projectId,id})=>{store.project(projectId);return agent.knowledge.read(id,projectId,connection.data);},
+  knowledgeSave:async({projectId,entry})=>{store.project(projectId);const saved=await agent.knowledge.save(entry,projectId);return agent.knowledge.read(saved.id,projectId,connection.data);},
+  knowledgeRemove:async({projectId,id,revision})=>{store.project(projectId);return agent.knowledge.remove({id,revision},projectId);},
+  knowledgeFolder:async()=>{await agent.knowledge.init();const error=await shell.openPath(agent.knowledge.root);if(error)throw new Error(error);return true;},
+  knowledgePrompt:async()=>({text:await fs.readFile(new URL('./knowledge/prompts/system.md',import.meta.url),'utf8')}),
   bootstrap:async()=>publicState(),
   providerDefinitions:async()=>providerDefinitions,
   answerProviderPrompt:async input=>{answerProviderPrompt(input);return true;},
@@ -276,7 +282,7 @@ else {
     encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error(t('errors.windowsEncryptionIsUnavailable'));return safeStorage.encryptString(value).toString('base64');},
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
   });
-   await store.init(app.getLocale());store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);
+   await store.init(app.getLocale());store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);await agent.knowledge.init();
   updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>installUpdate({app,win,updater:updaterModule.autoUpdater,update:updates.state,language:store.state.language})});
   ipcMain.handle('archi:call',async(event,method,input={})=>{
     if(event.sender!==win?.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error(t('errors.untrustedRequest'));

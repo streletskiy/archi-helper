@@ -4,6 +4,9 @@ import { createRoot } from 'react-dom/client';
 import { Plus, Folder, FolderOpen, ArrowUp, ArrowDown, ArrowUpRight, Settings, X, Minus, Square, PanelRightClose, PanelRightOpen, Paperclip, ChevronDown, Check, Circle, RotateCw, Search, Box, Layers, Ruler, FileText, Download, Share, Archive, ArchiveRestore, Sparkles, ShieldCheck, ShieldAlert, Wrench, ChevronRight, MessageSquare, Cable, Cpu, ExternalLink, Play, StopCircle, Pencil, Trash2, Languages, Brain, Eye, Info, CircleAlert } from 'lucide-react';
 import './style.css';
 import { suggestions } from './suggestions';
+import { KnowledgeLibrary, type KnowledgeSelection } from './KnowledgeLibrary';
+import { KnowledgeSlash, type KnowledgeSlashHandle } from './KnowledgeSlash';
+import { BookOpen } from 'lucide-react';
 import { Mascot } from './Mascot';
 import { MessageBubble } from './MessageBubble';
 import { Onboarding } from './Onboarding';
@@ -20,7 +23,7 @@ const INBOX_ID='00000000-0000-0000-0000-000000000000';
 type Model={id:string;name:string;reasoningEfforts?:string[];contextWindow?:number};
 type Provider={id:string;name:string;baseURL:string;hasKey:boolean;definitionId?:string;oauth?:{status:string;accountName:string;planEnabled?:boolean};catalogVersion?:number;catalogUpdatedAt?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
 type Message={id:string;role:string;text:string;at?:number;usageAction?:string;name?:string;status?:string;summary?:string;args?:unknown;artifact?:{path:string;bytes:number};model?:string};
-type QueuedMessage={id:string;text:string;attachments:string[];model:string;delivery:'queue'|'steer'};
+type QueuedMessage={id:string;text:string;attachments:string[];knowledge?:KnowledgeSelection[];model:string;delivery:'queue'|'steer'};
 type Session={id:string;title:string;messages:Message[];updatedAt:number;archivedAt?:number;count?:number;pendingMessages?:QueuedMessage[];queuePaused?:boolean};
 type SessionGroup={projectId:string;sessions:Session[];error?:string};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
@@ -40,7 +43,10 @@ function App(){
   const language=useLanguage();
   useEffect(()=>{document.documentElement.lang=language;document.title=`Archi Helper — ${t('ui.architectSAssistant')}`;},[language]);
   const [state,setState]=useState<State|null>(null),[project,setProject]=useState<Project|null>(null),[session,setSession]=useState<Session|null>(null);
-  const [draft,setDraft]=useState(''),[mode,setMode]=useState('review'),[busy,setBusy]=useState(false),[approval,setApproval]=useState<any>(null);
+  const [selectedKnowledge,setSelectedKnowledge]=useState<KnowledgeSelection[]>([]);
+  const [cursor,setCursor]=useState(0),[slashDismissed,setSlashDismissed]=useState(false),[activeKnowledgeOption,setActiveKnowledgeOption]=useState<string|undefined>();
+  const slashPicker=useRef<KnowledgeSlashHandle>(null);
+  const [draft,setDraft]=useState(''),[mode,setMode]=useState('full'),[busy,setBusy]=useState(false),[approval,setApproval]=useState<any>(null);
   const {stream,appendStream,removeStream,resetStreams}=useStream();
   const messageGroups=useMemo(()=>groupMessages(session?.messages||[]),[session?.messages]);
   const streamed=Object.entries(stream).filter(([,text])=>text.length>0),streamKey=Object.keys(stream).join('\0');
@@ -61,15 +67,18 @@ function App(){
   const [archivedSessions,setArchivedSessions]=useState(false),[projectArchive,setProjectArchive]=useState(false),[projectSearch,setProjectSearch]=useState(''),[projectIntent,setProjectIntent]=useState<'browse'|'draft'>('browse');
   const [renamingProject,setRenamingProject]=useState<Project|null>(null),[deletion,setDeletion]=useState<{kind:'project'|'session';id:string;name:string;count?:number;projectId?:string}|null>(null),[navigating,setNavigating]=useState(false);
   const [sessionGroups,setSessionGroups]=useState<SessionGroup[]>([]),[collapsedProjects,setCollapsedProjects]=useState<Record<string,boolean>>({}),[shownSessions,setShownSessions]=useState<Record<string,number>>({});
-  const savedDrafts=useRef(new Map<string,{text:string;files:string[]}>());
+  const savedDrafts=useRef(new Map<string,{text:string;files:string[];knowledge:KnowledgeSelection[]}>());
   const navigation=useRef(false);
   const [providerForm,setProviderForm]=useState(emptyProvider),[manualModel,setManualModel]=useState(''),[port,setPort]=useState(''),[instances,setInstances]=useState<any[]>([]);
   const providerEditor=useRef<HTMLDivElement>(null);
   const sessionRef=useRef<string|undefined>(undefined),projectRef=useRef<Project|null>(null),textInput=useRef<HTMLTextAreaElement>(null);
-  const draftSnapshot=useRef({text:draft,files:attachments});
-  draftSnapshot.current={text:draft,files:attachments};
+  const draftSnapshot=useRef({text:draft,files:attachments,knowledge:selectedKnowledge});
+  draftSnapshot.current={text:draft,files:attachments,knowledge:selectedKnowledge};
   sessionRef.current=session?.id;projectRef.current=project;
   const projectId=project?.id||INBOX_ID,readOnly=!!project?.archivedAt||!!session?.archivedAt;
+  const slashMatch=!slashDismissed&&!modal&&!readOnly&&!navigating?draft.slice(0,cursor).match(/(?:^|\s)\/([^\s/]*)$/u):null;
+  const slash=slashMatch?{query:slashMatch[1],start:cursor-slashMatch[1].length-1,end:cursor}:null;
+  const attachSlash=(entry:KnowledgeSelection)=>{if(!slash||selectedKnowledge.length>=8)return;const caret=slash.start;setSelectedKnowledge(items=>items.some(item=>item.id===entry.id)?items:[...items,entry]);setDraft(value=>value.slice(0,slash.start)+value.slice(slash.end));setCursor(caret);setSlashDismissed(true);requestAnimationFrame(()=>{textInput.current?.focus();textInput.current?.setSelectionRange(caret,caret);});};
   const workspaceLocked=busy||submitting||navigating||!!working;
   const notify=useCallback((text:string,tone:'success'|'error'='success')=>setNotice({text,tone}),[]);
   const guard=useCallback(async(fn:()=>Promise<any>,label='')=>{try{if(label)setWorking(label);return await fn();}catch(e){notify((e as Error).message,'error');}finally{if(label)setWorking('');}},[notify]);
@@ -94,9 +103,9 @@ function App(){
     const timer=setTimeout(()=>setNotice(null),4000);
     return()=>clearTimeout(timer);
   },[notice,updateBlocking]);
-  const refresh=async()=>{const s=await api('bootstrap');setLanguage(s.language);setState(s);setBusy(s.busy);setProviderPrompt(s.providerPrompt||null);setApproval(s.approval&&s.approval.sessionId===s.activeSession?s.approval.approval:null);setUpdate(s.update);setTapirProgress(s.tapirProgress||null);setPort(s.archicadPort);setMode(s.permissionMode||'review');return s;};
-  const rememberDraft=()=>savedDrafts.current.set(sessionRef.current||`draft:${projectRef.current?.id||INBOX_ID}`,{text:draftSnapshot.current.text,files:[...draftSnapshot.current.files]});
-  const restoreDraft=(p:Project|null,s?:Session|null)=>{const saved=savedDrafts.current.get(s?.id||`draft:${p?.id||INBOX_ID}`);setDraft(saved?.text||'');setAttachments(saved?.files||[]);};
+  const refresh=async()=>{const s=await api('bootstrap');setLanguage(s.language);setState(s);setBusy(s.busy);setProviderPrompt(s.providerPrompt||null);setApproval(s.approval&&s.approval.sessionId===s.activeSession?s.approval.approval:null);setUpdate(s.update);setTapirProgress(s.tapirProgress||null);setPort(s.archicadPort);setMode(s.permissionMode||'full');return s;};
+  const rememberDraft=()=>savedDrafts.current.set(sessionRef.current||`draft:${projectRef.current?.id||INBOX_ID}`,{text:draftSnapshot.current.text,files:[...draftSnapshot.current.files],knowledge:[...draftSnapshot.current.knowledge]});
+  const restoreDraft=(p:Project|null,s?:Session|null)=>{const saved=savedDrafts.current.get(s?.id||`draft:${p?.id||INBOX_ID}`);setDraft(saved?.text||'');setAttachments(saved?.files||[]);setSelectedKnowledge(saved?.knowledge||[]);};
   const refreshSessions=async(p=projectRef.current)=>{const id=p?.id||INBOX_ID,groups:SessionGroup[]=await api('sessionIndex'),list=groups.find(group=>group.projectId===id)?.sessions||[];setSessionGroups(groups);return list;};
   const openProject=async(p:Project|null,activeSession?:string)=>{
     if(busy||sending.current||navigation.current)return;
@@ -179,20 +188,20 @@ function App(){
     navigation.current=true;setNavigating(true);
     try{
       if(session){const next=await api('moveDraft',{projectId,id:session.id,targetProjectId:p?.id||INBOX_ID});setSession(next);}
-      projectRef.current=p;setProject(p);setSearch('');setArchivedSessions(false);await refreshSessions(p);textInput.current?.focus();
+      projectRef.current=p;setProject(p);setSelectedKnowledge(items=>items.filter(item=>!item.id.startsWith('user:projects/')));setSearch('');setArchivedSessions(false);await refreshSessions(p);textInput.current?.focus();
     }finally{navigation.current=false;setNavigating(false);}
   });
   const openProjects=(intent:'browse'|'draft'='browse')=>{setProjectIntent(intent);setProjectArchive(false);setProjectSearch('');setProjectName('');setModal('projects');};
   const send=(delivery:'queue'|'steer'='queue')=>guard(async()=>{
     if(readOnly||navigating||(!draft.trim()&&!attachments.length)||sending.current||choosing||!state?.providerId||!state?.model)return;
     sending.current=true;setSubmitting(true);
-    const text=draft,files=[...attachments];
+    const text=draft,files=[...attachments],knowledge=[...selectedKnowledge];
     let current;try{current=await ensureSession();}catch(error){sending.current=false;setSubmitting(false);throw error;}
-    const input={projectId,sessionId:current.id,text,attachments:files,providerId:state.providerId,model:state.model,mode,delivery};
+    const input={projectId,sessionId:current.id,text,attachments:files,knowledgeIds:knowledge.map(item=>item.id),providerId:state.providerId,model:state.model,mode,delivery};
     const key=JSON.stringify(input),id=retryRequest.current?.key===key?retryRequest.current.id:crypto.randomUUID();
-    retryRequest.current={key,id};sending.current=true;setSubmitting(true);setDraft('');setAttachments([]);
+    retryRequest.current={key,id};sending.current=true;setSubmitting(true);setDraft('');setAttachments([]);setSelectedKnowledge([]);
     try{await api('send',{...input,id});retryRequest.current=null;}
-    catch(error){setDraft(current=>text?(current?`${text}\n\n${current}`:text):current);setAttachments(current=>[...new Set([...files,...current])]);throw error;}
+    catch(error){setDraft(current=>text?(current?`${text}\n\n${current}`:text):current);setAttachments(current=>[...new Set([...files,...current])]);setSelectedKnowledge(current=>[...knowledge,...current.filter(item=>!knowledge.some(old=>old.id===item.id))]);throw error;}
     finally{sending.current=false;setSubmitting(false);textInput.current?.focus();}
   });
   const changeQueued=(item:QueuedMessage,action:'steer'|'remove'|'edit')=>guard(async()=>{
@@ -200,19 +209,19 @@ function App(){
     sending.current=true;setSubmitting(true);
     try{
       const value=await api('queuedMessage',{projectId,sessionId:session.id,id:item.id,action:action==='edit'?'remove':action});
-      if(action==='edit'){setDraft(current=>current?`${value.text}\n\n${current}`:value.text);setAttachments(current=>[...new Set<string>([...value.attachments,...current])]);textInput.current?.focus();}
+      if(action==='edit'){setSelectedKnowledge(current=>[...(value.knowledge||[]).map((item:KnowledgeSelection)=>({id:item.id,title:item.title})),...current.filter(item=>!value.knowledge?.some((old:KnowledgeSelection)=>old.id===item.id))]);setDraft(current=>current?`${value.text}\n\n${current}`:value.text);setAttachments(current=>[...new Set<string>([...value.attachments,...current])]);textInput.current?.focus();}
     }finally{sending.current=false;setSubmitting(false);}
   });
   useEffect(()=>{
     const handler=(event:KeyboardEvent)=>{
       if(updateBlocking)return;
       if(event.ctrlKey && event.key.toLowerCase()==='n'){event.preventDefault();if(!workspaceLocked)newSession();}
-      if(event.key==='Escape'&&!working)setModal('');
+      if(event.key==='Escape'&&!working&&modal!=='knowledge')setModal('');
     };
     window.addEventListener('keydown',handler);return()=>window.removeEventListener('keydown',handler);
-  },[project,workspaceLocked,updateBlocking,working]);
+  },[project,workspaceLocked,updateBlocking,working,modal]);
   useEffect(()=>{
-    if(!modal)return;
+    if(!modal||modal==='knowledge')return;
     const previous=document.activeElement as HTMLElement|null;
     const dialog=document.querySelector<HTMLElement>('[role="dialog"]');
     const focusable=()=>Array.from(dialog?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary')||[]).filter(x=>x.getClientRects().length>0);
@@ -338,7 +347,7 @@ function App(){
           {archivedSessions&&!archiveCount&&<p className="workspace-empty">{t('ui.archiveEmpty')}</p>}
           {!!search&&!sidebarProjects.some(p=>{const id=p?.id||INBOX_ID;return (p?.name||t('ui.withoutProject')).toLowerCase().includes(search.toLowerCase())||sessionGroups.find(g=>g.projectId===id)?.sessions.some(s=>s.title.toLowerCase().includes(search.toLowerCase())&&(archivedSessions?(p?.archivedAt||s.archivedAt):!s.archivedAt));})&&<p className="workspace-empty">{t('ui.noSessionsFound')}</p>}
         </div>
-        <div className="sidebar-bottom"><button className="sidebar-link" disabled={!project} onClick={()=>reveal()}><FolderOpen size={17}/>{t('ui.projectFiles')}</button><button className="sidebar-link" disabled={!session} onClick={()=>guard(()=>api('revealWorkspace',{projectId,sessionId:session?.id}))}><FileText size={17}/>{t('ui.chatFiles')}</button><button className="sidebar-link" onClick={()=>setModal('providers')}><Settings size={17}/>{t('ui.settings')}</button></div>
+        <div className="sidebar-bottom"><button className="sidebar-link" onClick={()=>setModal('knowledge')}><BookOpen size={17}/>{t('knowledge.title')}</button><button className="sidebar-link" disabled={!project} onClick={()=>reveal()}><FolderOpen size={17}/>{t('ui.projectFiles')}</button><button className="sidebar-link" disabled={!session} onClick={()=>guard(()=>api('revealWorkspace',{projectId,sessionId:session?.id}))}><FileText size={17}/>{t('ui.chatFiles')}</button><button className="sidebar-link" onClick={()=>setModal('providers')}><Settings size={17}/>{t('ui.settings')}</button></div>
       </aside>
       <main className="main">
         <header className="chat-header"><strong className="session-title">{session?.title||t('ui.newSession')}</strong><div className="header-actions"><button data-tour="connection" className={`connection-pill ${connected?'online':''}`} onClick={()=>setModal('archicad')} title={connected?projectLabel:t('ui.connectionSettings')}><span/>{connected?`Archicad ${state?.connection.data?.archicad_version||''}`:t('ui.connectArchicad')}</button>{session&&<><IconButton title={t('ui.renameSession')} disabled={workspaceLocked} onClick={()=>setModal('rename')}><Pencil size={15}/></IconButton><IconButton title={t('ui.exportConversation')} onClick={()=>guard(()=>api('exportSession',{projectId,id:session.id}))}><Share size={16}/></IconButton><ActionMenu label={t('ui.sessionActions',{name:session.title})} disabled={workspaceLocked} actions={sessionActions(session)}/></>}</div></header>
@@ -374,19 +383,21 @@ function App(){
             </li>)}</ol>
           </section>}
           {attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a}><button className="attachment-file" title={t('ui.revealFile',{path:a})} onClick={()=>reveal(a)}><Paperclip size={12}/>{a.split('/').pop()}</button><button disabled={submitting} aria-label={t('ui.removeAttachment',{name:a.split('/').pop()})} onClick={()=>setAttachments(v=>v.filter(x=>x!==a))}><X size={12}/></button></span>)}</div>}
-          <div data-tour="prompt" className={`composer ${busy?'is-busy':''}`}><textarea ref={textInput} aria-label={t('ui.taskForArchiHelper')} placeholder={t(readOnly?'ui.archivedComposerHint':busy?'ui.describeFollowUp':'ui.describeYourTask')} value={draft} onChange={e=>setDraft(e.target.value)} disabled={readOnly||navigating} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send((e.ctrlKey||e.metaKey)&&busy&&state?.canSteer?'steer':'queue');}}}/>
+          <div className="knowledge-chips">{selectedKnowledge.map(item=><span className="knowledge-chip" key={item.id}><BookOpen size={12}/>{item.title}<button aria-label={t('knowledge.detach')} onClick={()=>setSelectedKnowledge(current=>current.filter(selected=>selected.id!==item.id))}><X size={12}/></button></span>)}</div>
+          <div data-tour="prompt" className={`composer ${busy?'is-busy':''}`}>{slash&&<KnowledgeSlash ref={slashPicker} projectId={projectId} query={slash.query} selected={selectedKnowledge} onSelect={attachSlash} onDismiss={()=>setSlashDismissed(true)} onActive={setActiveKnowledgeOption}/>}<textarea ref={textInput} aria-label={t('ui.taskForArchiHelper')} aria-haspopup="listbox" aria-controls={slash?'knowledge-suggestions':undefined} aria-activedescendant={activeKnowledgeOption} onSelect={event=>setCursor(event.currentTarget.selectionStart)} onBlur={()=>setSlashDismissed(true)} placeholder={t(readOnly?'ui.archivedComposerHint':busy?'ui.describeFollowUp':'ui.describeYourTask')} value={draft} onChange={e=>{setDraft(e.target.value);setCursor(e.target.selectionStart);setSlashDismissed(false);}} disabled={readOnly||navigating} onKeyDown={e=>{if(slash&&slashPicker.current?.keyDown(e)){e.preventDefault();e.stopPropagation();return;}if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send((e.ctrlKey||e.metaKey)&&busy&&state?.canSteer?'steer':'queue');}}}/>
             {busy&&<div className="composer-follow-up"><span>{t(state?.canSteer?'ui.queueHint':'ui.queueHintNoSteering')}</span>{state?.canSteer&&<button disabled={submitting||(!draft.trim()&&!attachments.length)||choosing} onClick={()=>send('steer')}><ArrowUpRight size={13}/>{t('ui.steerTask')}</button>}</div>}
 
-            <div className="composer-toolbar"><div className="composer-options"><IconButton title={t('ui.attachAPdfImageOrFile')} disabled={readOnly||workspaceLocked} onClick={()=>guard(async()=>{if(sending.current)return;sending.current=true;setSubmitting(true);try{const hadSession=!!session,current=await ensureSession(),files=await api('attach',{projectId,sessionId:current.id});if(!files.length&&!hadSession){await api('deleteSession',{projectId,id:current.id});setSession(null);sessionRef.current=undefined;await refreshSessions();}else setAttachments(v=>[...new Set<string>([...v,...files])]);}finally{sending.current=false;setSubmitting(false);}})}><Plus size={20}/></IconButton><span data-tour="permissions" className={`permission-control ${mode==='full'?'full-access':''}`} title={`${t('ui.workMode')}: ${mode==='full'?t('ui.fullAccess'):mode==='read'?t('ui.readOnly'):t('ui.askForApproval')}${mode==='full'?' · '+t('ui.commandsFilesAndPythonWithoutConfirmation'):''}`}>{mode==='full'?<ShieldAlert size={16}/>:mode==='read'?<Eye size={16}/>:<ShieldCheck size={16}/>}<select aria-label={t('ui.workMode')} value={mode} disabled={busy} onChange={e=>{const next=e.target.value;guard(async()=>{const s=await api('settings',{permissionMode:next});setState(s);setMode(next);});}}><option value="review">{t('ui.askForApproval')}</option><option value="full">{t('ui.fullAccess')}</option><option value="read">{t('ui.readOnly')}</option></select></span></div><div className="composer-ai" data-tour="model"><select className="provider-select" title={selectedProvider?.name||t('ui.provider')} aria-label={t('ui.provider')} value={state?.providerId||''} disabled={busy||choosing||!state?.providers.length} onChange={e=>chooseSettings({providerId:e.target.value})}><option value="" disabled>{t('ui.connectAi')}</option>{state?.providers.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><select className="model-select" onFocus={()=>{if(selectedDefinition?.accountCatalog&&selectedProvider&&Date.now()-(selectedProvider.catalogUpdatedAt||0)>60000&&!busy&&!choosing)guard(()=>syncModels(selectedProvider.id));}} title={selectedProvider?.models.find(m=>m.id===state?.model)?.name||state?.model||t('ui.chooseAModel')} aria-label={t('ui.model')} value={state?.model||''} disabled={busy||choosing||!selectedProvider} onChange={e=>chooseSettings({model:e.target.value})}><option value="">{t('ui.chooseAModel')}</option>{selectedProvider?.models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}{state?.model&&!selectedProvider?.models.some(m=>m.id===state.model)&&<option value={state.model}>{state.model}</option>}</select><IconButton title={t('ui.providerSettings')} onClick={()=>setModal('providers')}><Settings size={15}/></IconButton></div><div className="composer-reasoning" title={`${t('ui.reasoningLevel')}: ${effort?effortLabel(effort):t('ui.reasoningDefault')} · ${reasoning.toolRestricted?t('ui.reasoningToolsRestricted'):reasoning.efforts.length?t('ui.reasoningHint'):t('ui.reasoningUnavailable')}`}><Brain size={15}/><span className="effort-value" aria-hidden="true">{effort?effort.charAt(0).toUpperCase()+effort.slice(1):'—'}</span><select aria-label={t('ui.reasoningLevel')} value={effort} disabled={busy||choosing||!reasoning.efforts.length} onChange={e=>chooseSettings({reasoningEffort:e.target.value})}>{reasoning.efforts.length?reasoning.efforts.map(value=><option key={value} value={value}>{effortLabel(value)}</option>):<option value="">{t('ui.reasoningDefault')}</option>}</select></div>
+            <div className="composer-toolbar"><div className="composer-options"><IconButton title={t('ui.attachAPdfImageOrFile')} disabled={readOnly||workspaceLocked} onClick={()=>guard(async()=>{if(sending.current)return;sending.current=true;setSubmitting(true);try{const hadSession=!!session,current=await ensureSession(),files=await api('attach',{projectId,sessionId:current.id});if(!files.length&&!hadSession){await api('deleteSession',{projectId,id:current.id});setSession(null);sessionRef.current=undefined;await refreshSessions();}else setAttachments(v=>[...new Set<string>([...v,...files])]);}finally{sending.current=false;setSubmitting(false);}})}><Paperclip size={19}/></IconButton><span data-tour="permissions" className={`permission-control ${mode==='full'?'full-access':''}`} title={`${t('ui.workMode')}: ${mode==='full'?t('ui.fullAccess'):mode==='read'?t('ui.readOnly'):t('ui.askForApproval')}${mode==='full'?' · '+t('ui.commandsFilesAndPythonWithoutConfirmation'):''}`}>{mode==='full'?<ShieldAlert size={16}/>:mode==='read'?<Eye size={16}/>:<ShieldCheck size={16}/>}<select aria-label={t('ui.workMode')} value={mode} disabled={busy} onChange={e=>{const next=e.target.value;guard(async()=>{const s=await api('settings',{permissionMode:next});setState(s);setMode(next);});}}><option value="review">{t('ui.askForApproval')}</option><option value="full">{t('ui.fullAccess')}</option><option value="read">{t('ui.readOnly')}</option></select></span></div><div className="composer-ai" data-tour="model"><select className="provider-select" title={selectedProvider?.name||t('ui.provider')} aria-label={t('ui.provider')} value={state?.providerId||''} disabled={busy||choosing||!state?.providers.length} onChange={e=>chooseSettings({providerId:e.target.value})}><option value="" disabled>{t('ui.connectAi')}</option>{state?.providers.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select><select className="model-select" onFocus={()=>{if(selectedDefinition?.accountCatalog&&selectedProvider&&Date.now()-(selectedProvider.catalogUpdatedAt||0)>60000&&!busy&&!choosing)guard(()=>syncModels(selectedProvider.id));}} title={selectedProvider?.models.find(m=>m.id===state?.model)?.name||state?.model||t('ui.chooseAModel')} aria-label={t('ui.model')} value={state?.model||''} disabled={busy||choosing||!selectedProvider} onChange={e=>chooseSettings({model:e.target.value})}><option value="">{t('ui.chooseAModel')}</option>{selectedProvider?.models.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}{state?.model&&!selectedProvider?.models.some(m=>m.id===state.model)&&<option value={state.model}>{state.model}</option>}</select><IconButton title={t('ui.providerSettings')} onClick={()=>setModal('providers')}><Settings size={15}/></IconButton></div><div className="composer-reasoning" title={`${t('ui.reasoningLevel')}: ${effort?effortLabel(effort):t('ui.reasoningDefault')} · ${reasoning.toolRestricted?t('ui.reasoningToolsRestricted'):reasoning.efforts.length?t('ui.reasoningHint'):t('ui.reasoningUnavailable')}`}><Brain size={15}/><span className="effort-value" aria-hidden="true">{effort?effort.charAt(0).toUpperCase()+effort.slice(1):'—'}</span><select aria-label={t('ui.reasoningLevel')} value={effort} disabled={busy||choosing||!reasoning.efforts.length} onChange={e=>chooseSettings({reasoningEffort:e.target.value})}>{reasoning.efforts.length?reasoning.efforts.map(value=><option key={value} value={value}>{effortLabel(value)}</option>):<option value="">{t('ui.reasoningDefault')}</option>}</select></div>
             <div className="composer-actions">{busy&&<button className="send-button stop" title={t('ui.stop')} aria-label={t('ui.stop')} onClick={()=>guard(()=>api('stop',{projectId,sessionId:session?.id}))}><Square size={14} fill="currentColor"/></button>}<button className="send-button" title={t(busy||session?.pendingMessages?.length?'ui.addToQueue':'ui.sendTask')} aria-label={t(busy||session?.pendingMessages?.length?'ui.addToQueue':'ui.sendTask')} onClick={()=>send()} disabled={(!draft.trim()&&!attachments.length)||readOnly||navigating||!state?.providerId||!state?.model||choosing||submitting}><ArrowUp size={20}/></button></div></div>
           </div>
-          <div className="composer-project-bar" data-tour="project">{!hasMessages&&!readOnly?<ProjectPicker projects={state?.projects||[]} project={project} disabled={workspaceLocked} onSelect={chooseDraftProject} onCreate={()=>openProjects('draft')}/>:<button className="project-context-trigger" disabled={workspaceLocked} onClick={()=>openProjects()} title={project?.path}><Folder size={16}/><span>{project?.name||t('ui.withoutProject')}</span><ChevronDown size={13}/></button>}<span className="composer-project-hint">{t('ui.sessionProjectHint')}</span></div>
+          <div className="composer-project-bar" data-tour="project">{!hasMessages&&!readOnly?<ProjectPicker projects={state?.projects||[]} project={project} disabled={workspaceLocked} onSelect={chooseDraftProject} onCreate={()=>openProjects('draft')}/>:<button className="project-context-trigger" disabled={workspaceLocked} onClick={()=>openProjects()} title={project?.path}><Folder size={16}/><span>{project?.name||t('ui.withoutProject')}</span><ChevronDown size={13}/></button>}<span className="composer-project-hint">{t('knowledge.slashComposerHint')}</span></div>
         </div>
       </main>
     </div>
     {providerPrompt&&<ProviderPrompt key={providerPrompt.id} prompt={providerPrompt}/>}
     {notice&&<div className={`toast ${notice.tone}`} role={notice.tone==='error'?'alert':'status'} aria-atomic="true">{notice.tone==='error'?<CircleAlert size={17}/>:<Check size={17}/>}<span>{notice.text}</span><IconButton title={t('ui.dismissMessage')} onClick={()=>setNotice(null)}><X size={15}/></IconButton></div>}
-    {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!working)setModal('');}}><section className={`modal ${modal==='tools'?'wide':isSettings?'settings-modal':''}`} role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div className="modal-header"><div><h2 id="dialog-title">{modal==='projects'?t('ui.yourProjects'):modal==='tools'?t('ui.archicadTools'):modal==='rename'?t('ui.sessionTitle'):modal==='renameProject'?t('ui.renameProject'):modal==='delete'?t('ui.confirmDeletion'):t('ui.settings')}</h2></div><IconButton title={t('ui.closeDialog')} disabled={!!working} onClick={()=>setModal('')}><X size={19}/></IconButton></div>
+    {modal==='knowledge'&&<KnowledgeLibrary projectId={projectId} projectName={project?.name||t('ui.withoutProject')} selected={selectedKnowledge} onSelected={setSelectedKnowledge} onClose={()=>setModal('')}/>}
+    {modal&&modal!=='knowledge'&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!working)setModal('');}}><section className={`modal ${modal==='tools'?'wide':isSettings?'settings-modal':''}`} role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div className="modal-header"><div><h2 id="dialog-title">{modal==='projects'?t('ui.yourProjects'):modal==='tools'?t('ui.archicadTools'):modal==='rename'?t('ui.sessionTitle'):modal==='renameProject'?t('ui.renameProject'):modal==='delete'?t('ui.confirmDeletion'):t('ui.settings')}</h2></div><IconButton title={t('ui.closeDialog')} disabled={!!working} onClick={()=>setModal('')}><X size={19}/></IconButton></div>
       {modal==='projects'&&<div className="modal-body projects-body">
         <div className="project-manager-top"><div className="workspace-tabs"><button aria-pressed={!projectArchive} onClick={()=>setProjectArchive(false)}>{t('ui.activeProjects')}</button><button aria-pressed={projectArchive} onClick={()=>setProjectArchive(true)}><Archive size={14}/>{t('ui.archive')}</button></div><label className="project-manager-search"><Search size={15}/><input aria-label={t('ui.searchProjects')} placeholder={t('ui.searchProjects')} value={projectSearch} onChange={e=>setProjectSearch(e.target.value)}/></label></div>
         {!projectArchive&&<button className="unassigned-project" disabled={workspaceLocked} onClick={()=>guard(async()=>{if(projectIntent==='draft')await chooseDraftProject(null);else await openProject(null);setModal('');})}><MessageSquare size={18}/><span>{t('ui.withoutProject')}</span>{!project&&<Check size={16}/>}</button>}
@@ -399,6 +410,7 @@ function App(){
       </div>}
       {isSettings&&<div className="settings-layout">
         <nav className="settings-nav" aria-label={t('ui.settingsSections')}>
+          <button onClick={()=>setModal('knowledge')}><BookOpen size={18}/>{t('knowledge.title')}</button>
           <button aria-current={modal==='providers'?'page':undefined} onClick={()=>setModal('providers')}><Sparkles size={18}/>{t('ui.aiProviders')}</button>
           <button aria-current={modal==='archicad'?'page':undefined} onClick={()=>setModal('archicad')}><Cable size={18}/>Archicad</button>
           <button aria-current={modal==='about'?'page':undefined} onClick={()=>setModal('about')}><Info size={18}/>{t('ui.about')}</button>
