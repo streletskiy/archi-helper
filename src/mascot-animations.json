@@ -1,0 +1,45 @@
+{
+  "frameCount": 76,
+  "animations": {
+    "idle": {
+      "start": 0,
+      "frames": 8,
+      "ms": 220
+    },
+    "reading": {
+      "start": 8,
+      "frames": 12,
+      "ms": 180
+    },
+    "wave": {
+      "start": 20,
+      "frames": 8,
+      "ms": 130
+    },
+    "inspect": {
+      "start": 28,
+      "frames": 10,
+      "ms": 150
+    },
+    "measure": {
+      "start": 38,
+      "frames": 10,
+      "ms": 150
+    },
+    "build": {
+      "start": 48,
+      "frames": 10,
+      "ms": 140
+    },
+    "celebrate": {
+      "start": 58,
+      "frames": 10,
+      "ms": 130
+    },
+    "idea": {
+      "start": 68,
+      "frames": 8,
+      "ms": 180
+    }
+  }
+}
