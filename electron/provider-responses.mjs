@@ -37,6 +37,7 @@ export async function responsesCompletion(provider,model,messages,tools,signal,o
   const contentType=response.headers.get('content-type');
   if(contentType&&!contentType.includes('text/event-stream'))throw new Error(t('errors.responsesStreamRequired'));
   let completed,buffer='',lines=[];
+  const finishedItems=new Map(),pendingItems=new Set();
   const decoder=new TextDecoder();
   const event=()=>{
     if(!lines.length)return;
@@ -46,6 +47,12 @@ export async function responsesCompletion(provider,model,messages,tools,signal,o
     if(value.type==='error'||value.error||['response.failed','response.incomplete'].includes(value.type))
       throw providerError(provider,null,JSON.stringify(value.response?.error||value.error||value.response?.incomplete_details||value));
     if(value.type==='response.output_text.delta'&&typeof value.delta==='string')onDelta(value.delta);
+    if(['response.output_item.added','response.output_item.done'].includes(value.type)) {
+      const index=value.output_index;
+      if(completed||!Number.isSafeInteger(index)||index<0||!value.item||typeof value.item.type!=='string'||finishedItems.has(index))throw new Error(t('errors.responsesIncomplete'));
+      if(value.type==='response.output_item.added')pendingItems.add(index);
+      else {finishedItems.set(index,value.item);pendingItems.delete(index);}
+    }
     if(value.type==='response.completed') {
       if(completed||value.response?.status!=='completed'||!Array.isArray(value.response.output))throw new Error(t('errors.responsesIncomplete'));
       completed=value.response;
@@ -58,8 +65,16 @@ export async function responsesCompletion(provider,model,messages,tools,signal,o
   }
   buffer+=decoder.decode();if(buffer)line(buffer);event();
   if(!completed)throw new Error(t('errors.responsesIncomplete'));
+  // A completed envelope may omit items already delivered by the stream. Only
+  // finalized items are reusable; deltas and added items can still be partial.
+  const output=completed.output.length?completed.output:[...finishedItems].sort(([a],[b])=>a-b).map(([index,item],position)=>{
+    if(pendingItems.size||index!==position)throw new Error(t('errors.responsesIncomplete'));
+    return item;
+  });
+  if(!completed.output.length&&pendingItems.size)throw new Error(t('errors.responsesIncomplete'));
   const calls=[],ids=new Set(),allowed=new Set(tools.map(tool=>tool.function.name));let content='';
-  for(const item of completed.output) {
+  for(const item of output) {
+    if(item.status==='incomplete'||item.status==='in_progress')throw new Error(t('errors.responsesIncomplete'));
     if(item.type==='message')for(const part of item.content||[])content+=part.type==='output_text'?part.text:part.type==='refusal'?part.refusal:'';
     if(item.type==='function_call') {
       if(!item.call_id||ids.has(item.call_id)||item.namespace!==namespace||!allowed.has(item.name)||
@@ -73,5 +88,5 @@ export async function responsesCompletion(provider,model,messages,tools,signal,o
     total_tokens:completed.usage.total_tokens,prompt_tokens_details:completed.usage.input_tokens_details,
     completion_tokens_details:completed.usage.output_tokens_details});
   return {role:'assistant',content:content||null,...(calls.length?{tool_calls:calls}:{}),
-    _responseItems:completed.output.filter(item=>['message','reasoning','function_call'].includes(item.type)),_responseBinding:binding(provider,model)};
+    _responseItems:output.filter(item=>['message','reasoning','function_call'].includes(item.type)),_responseBinding:binding(provider,model)};
 }
