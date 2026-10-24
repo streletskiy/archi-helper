@@ -13,16 +13,19 @@ function providerError(provider,status,text) {
   const planError={subscription_sharing_usage_limit_exceeded:'errors.planUsageLimit',subscription_sharing_usage_unavailable:'errors.planUsageUnavailable',
     subscription_sharing_user_unavailable:'errors.planUsageUnavailable',subscription_sharing_user_not_eligible:'errors.planNotEligible',
     chatpass_v2_scope_not_authorized:'errors.oauthPlanPermission',chatpass_v2_invalid_authorization_context:'errors.oauthReconnect'}[code];
+  const diagnosticText=text;
   if(planError&&providerDefinition(provider)?.manageUsageURL)text=t(planError);
+  else if(typeof detail?.message==='string'&&detail.message.trim())text=detail.message;
+  else if(typeof detail==='string'&&detail.trim())text=detail;
   for(const secret of [provider.apiKey,...(activeCredentials.get(provider)||[])])if(secret)text=text.replaceAll(secret,t('errors.redacted'));
   text=text.slice(0,1500);
   const error=new Error(status?t('errors.providerHttp',{value0:status,value1:text}):text);
   error.status=status;
   error.code=code;
   if(planError)error.usageAction=providerDefinition(provider)?.manageUsageURL;
-  error.contextOverflow=(!status||[400,413,422].includes(status)) && (status===413||/context[_\s-]*(length|window|size)|maximum (?:context|model) length|too many tokens|(?:prompt|input|request|sequence).{0,80}(?:too long|exceed|longer than)/i.test(text));
-  const match=text.match(/(?:maximum (?:context|model) length(?:\s+(?:is|of))?|context (?:window|limit|size)(?:\s+(?:is|of))?)[:\s(]+([\d,]+)/i)
-    || text.match(/(?:max_context_length|context_window|model_max_length)["'\s:=]+([\d,]+)/i);
+  error.contextOverflow=(!status||[400,413,422].includes(status)) && (status===413||/context[_\s-]*(length|window|size)|maximum (?:context|model) length|too many tokens|(?:prompt|input|request|sequence).{0,80}(?:too long|exceed|longer than)/i.test(diagnosticText));
+  const match=diagnosticText.match(/(?:maximum (?:context|model) length(?:\s+(?:is|of))?|context (?:window|limit|size)(?:\s+(?:is|of))?)[:\s(]+([\d,]+)/i)
+    || diagnosticText.match(/(?:max_context_length|context_window|model_max_length)["'\s:=]+([\d,]+)/i);
   const window=Number(match?.[1].replaceAll(',',''));
   if(Number.isSafeInteger(window)&&window>0)error.contextWindow=window;
   return error;

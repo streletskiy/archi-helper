@@ -578,5 +578,13 @@
   "theme.system": "Use system setting",
   "theme.light": "Light",
   "theme.dark": "Dark",
-  "theme.invalid": "Could not select the theme."
+  "theme.invalid": "Could not select the theme.",
+  "ui.tapirUpdateAvailable": "Tapir update available",
+  "ui.tapirInstalledVersion": "Installed: Tapir {version}",
+  "ui.tapirLatestVersion": "Latest stable version: Tapir {version}",
+  "ui.tapirUpdateDescription": "Tapir {version} is available. Update using the official installer, then restart Archicad and reconnect.",
+  "ui.tapirVersionUnknown": "Tapir {version} is available. Reconnect to an open Archicad project to identify the installed version.",
+  "ui.tapirCheckFailed": "Could not check Tapir updates. Try again. {error}",
+  "ui.updateTapir": "Update Tapir",
+  "errors.tapirReleaseInvalid": "The Tapir release does not contain a valid stable version."
 }
