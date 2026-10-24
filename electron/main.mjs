@@ -16,7 +16,7 @@ import updaterModule from 'electron-updater';
 import { createUpdates } from './updates.mjs';
 import { installUpdate, cleanupUpdateHelper } from './update-install.mjs';
 import { showAppWindow } from './window-visibility.mjs';
-import { installTapir } from './tapir-installer.mjs';
+import { installTapir, checkTapirUpdates } from './tapir-installer.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWith('--archi-data-dir='))?.slice('--archi-data-dir='.length);
@@ -263,6 +263,7 @@ const handlers={
     if(chosen.canceled||!chosen.filePath)return null;const file=chosen.filePath;
     await fs.writeFile(file,`# ${s.title}\n\n`+s.messages.map(m=>`## ${m.role==='user'?t('ui.you'):m.role==='assistant'?'Archi Helper':m.name||t('errors.system')}\n\n${m.text}\n${m.artifact?t('errors.fullResult',{value0:m.artifact.path}):''}`).join('\n\n'),'utf8');shell.showItemInFolder(file);return file;
   },
+  checkTapirUpdates:()=>checkTapirUpdates({fetch:appFetch,connection}),
   installTapir:async()=>{
     if(tapirInstalling)throw new Error(t('errors.waitForTheTaskToFinish'));
     tapirInstalling=true;

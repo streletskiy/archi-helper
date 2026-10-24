@@ -578,5 +578,13 @@
   "theme.system": "Как в системе",
   "theme.light": "Светлая",
   "theme.dark": "Тёмная",
-  "theme.invalid": "Не удалось выбрать тему."
+  "theme.invalid": "Не удалось выбрать тему.",
+  "ui.tapirUpdateAvailable": "Доступно обновление Tapir",
+  "ui.tapirInstalledVersion": "Установлен Tapir {version}",
+  "ui.tapirLatestVersion": "Последняя стабильная версия: Tapir {version}",
+  "ui.tapirUpdateDescription": "Доступен Tapir {version}. Обновите расширение через официальный установщик, затем перезапустите Archicad и подключитесь заново.",
+  "ui.tapirVersionUnknown": "Доступен Tapir {version}. Подключитесь заново к открытому проекту Archicad, чтобы определить установленную версию.",
+  "ui.tapirCheckFailed": "Не удалось проверить обновления Tapir. Повторите попытку. {error}",
+  "ui.updateTapir": "Обновить Tapir",
+  "errors.tapirReleaseInvalid": "В выпуске Tapir не указана корректная стабильная версия."
 }
