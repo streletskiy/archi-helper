@@ -14,7 +14,7 @@ function mock(t,handler) {const original=globalThis.fetch;globalThis.fetch=handl
 test('Responses sends stateless history, images and namespaced tools, and replays complete reasoning with tool outputs',async t=>{
   let body,usage;
   mock(t,async(url,init)=>{assert.equal(url,'https://api.openai.com/v1/responses');body=JSON.parse(init.body);return stream([
-    {type:'response.output_item.added',item:{...reasoning,encrypted_content:'partial'}},
+    {type:'response.output_item.added',output_index:0,item:{...reasoning,encrypted_content:'partial'}},
     {type:'response.completed',response:{status:'completed',output:[reasoning,call],usage:{input_tokens:20,output_tokens:10,total_tokens:30}}}
   ]);});
   const messages=[{role:'system',content:'Instructions'},{role:'user',content:[{type:'text',text:'Read this'},{type:'image_url',image_url:{url:'data:image/png;base64,abc'}}]}];
@@ -33,7 +33,7 @@ test('late usage failure, incomplete stream and invalid tool namespace never ret
   let events,requests=0;mock(t,async()=>{requests++;return stream(events);});
   for(const terminal of [[],[{type:'response.incomplete',response:{incomplete_details:{reason:'max_output_tokens'}}}],
     [{type:'response.failed',response:{error:{code:'subscription_sharing_usage_limit_exceeded'}}}]]) {
-    events=[{type:'response.output_text.delta',delta:'Partial text'},{type:'response.output_item.done',item:call},...terminal];
+    events=[{type:'response.output_text.delta',delta:'Partial text'},{type:'response.output_item.done',output_index:0,item:call},...terminal];
     await assert.rejects(completion(provider,'model-a',[],tools,undefined,()=>{}));
   }
   events=[{type:'response.completed',response:{status:'completed',output:[{...call,namespace:'other'}]}}];
@@ -61,4 +61,50 @@ test('a proxy may omit the stream content type, but completed events remain mand
   assert.equal((await completion(provider,'model-a',[],[],undefined,()=>{})).content,'Ready');
   content=JSON.stringify({status:'completed',output:[call]});
   await assert.rejects(completion(provider,'model-a',[],tools,undefined,()=>{}));
+});
+
+test('completed stream items preserve text when the terminal output is empty',async t=>{
+  const message={type:'message',id:'message-synthetic',role:'assistant',status:'completed',content:[{type:'output_text',text:'Ready'}]};
+  let terminalOutput=[];
+  mock(t,async()=>stream([
+    {type:'response.output_item.added',output_index:0,item:{...message,status:'in_progress',content:[]}},
+    {type:'response.output_text.delta',delta:'Ready'},
+    {type:'response.output_item.done',output_index:0,item:message},
+    {type:'response.completed',response:{status:'completed',output:terminalOutput}}
+  ]));
+  for(const output of [[],[message]]) {
+    terminalOutput=output;let deltas='';
+    const result=await completion(provider,'model-a',[],[],undefined,value=>{deltas+=value;});
+    assert.equal(result.content,'Ready');assert.equal(deltas,'Ready');assert.deepEqual(result._responseItems,[message]);
+  }
+});
+
+test('streamed final reasoning and tools retain output order and reusable history',async t=>{
+  mock(t,async()=>stream([
+    {type:'response.output_item.added',output_index:0,item:{...reasoning,encrypted_content:'partial'}},
+    {type:'response.output_item.done',output_index:1,item:call},
+    {type:'response.output_item.done',output_index:0,item:reasoning},
+    {type:'response.completed',response:{status:'completed',output:[],usage:{input_tokens:10,output_tokens:5,total_tokens:15}}}
+  ]));
+  let usage;
+  const result=await completion(provider,'model-a',[],tools,undefined,()=>{},'high',value=>{usage=value;});
+  assert.deepEqual(result._responseItems,[reasoning,call]);assert.equal(result.tool_calls[0].id,call.call_id);assert.equal(usage.total_tokens,15);
+  assert.deepEqual(responseInput(provider,'model-a',[result,{role:'tool',tool_call_id:call.call_id,content:'Synthetic result'}]).input,
+    [reasoning,call,{type:'function_call_output',call_id:call.call_id,output:'Synthetic result'}]);
+});
+
+test('empty terminal output cannot authorize partial, ambiguous or failed tool streams',async t=>{
+  let events;mock(t,async()=>stream(events));
+  const done={type:'response.output_item.done',output_index:0,item:call};
+  const completed={type:'response.completed',response:{status:'completed',output:[]}};
+  for(const sequence of [
+    [{type:'response.output_item.added',output_index:0,item:call},completed],
+    [done,{type:'response.output_item.added',output_index:1,item:call},completed],
+    [{...done,output_index:1},completed],
+    [done,done,completed],
+    [{...done,item:{...call,status:'in_progress'}},completed],
+    [{...done,item:{...call,namespace:'other'}},completed],
+    [done,completed,{type:'response.failed',response:{error:{code:'synthetic_failure'}}}],
+    [done]
+  ]) {events=sequence;await assert.rejects(completion(provider,'model-a',[],tools,undefined,()=>{}));}
 });
