@@ -3,16 +3,39 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { t } from '../locales/index.mjs';
 
-export async function installTapir({fetch,folder,openPath,onProgress=()=>{}}) {
-  onProgress({status:'checking',version:'',percent:0,transferred:0,total:0,bytesPerSecond:0,message:''});
+function versionParts(value) {
+  const match=typeof value==='string'&&value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:\+[\w.-]+)?$/);
+  if(!match)return null;
+  const parts=match.slice(1,4).map(Number);
+  return parts.every(Number.isSafeInteger)?parts:null;
+}
+
+async function latestRelease(fetch) {
   const response=await fetch('https://api.github.com/repos/ENZYME-APD/tapir-archicad-automation/releases/latest',{
-    headers:{'User-Agent':'Archi-Helper'},signal:AbortSignal.timeout(60000)});
+    headers:{'User-Agent':'Archi-Helper'},signal:AbortSignal.timeout(20000)});
   if(!response.ok)throw new Error(`GitHub HTTP ${response.status}`);
   const release=await response.json(),name='TapirInstaller_Win.exe',asset=release.assets?.find(item=>item.name===name);
+  if(release.draft||release.prerelease||!versionParts(release.tag_name))throw new Error(t('errors.tapirReleaseInvalid'));
   if(!asset||!/^sha256:[a-f0-9]{64}$/.test(asset.digest||''))throw new Error(t('errors.thisReleaseHasNoVerifiableFileFor'));
   const url=new URL(asset.browser_download_url);
   if(url.protocol!=='https:'||url.hostname!=='github.com'||url.username||url.password||!url.pathname.startsWith('/ENZYME-APD/tapir-archicad-automation/releases/download/'))throw new Error(t('errors.unexpectedReleaseUrl'));
-  onProgress({status:'downloading',version:String(release.tag_name||''),total:Number(asset.size)||0});
+  return {version:release.tag_name.replace(/^v/,''),name,asset,url};
+}
+
+export async function checkTapirUpdates({fetch,connection}) {
+  const {version:latestVersion}=await latestRelease(fetch);
+  // Catalog definitions describe bundled schemas, not the installed add-on.
+  const installed=connection?.connected?connection.data?.tapir_installed:undefined;
+  const current=versionParts(installed),latest=versionParts(latestVersion);
+  const difference=current?.map((part,index)=>Math.sign(latest[index]-part)).find(Boolean)||0;
+  return {latestVersion,installedVersion:typeof installed==='string'?installed:'',
+    status:current?(difference>0?'available':'current'):installed===false?'not-installed':'unknown'};
+}
+
+export async function installTapir({fetch,folder,openPath,onProgress=()=>{}}) {
+  onProgress({status:'checking',version:'',percent:0,transferred:0,total:0,bytesPerSecond:0,message:''});
+  const {version,name,asset,url}=await latestRelease(fetch);
+  onProgress({status:'downloading',version,total:Number(asset.size)||0});
   const dataResponse=await fetch(url,{signal:AbortSignal.timeout(120000)});
   if(!dataResponse.ok)throw new Error(t('errors.tapirDownloadHttp',{value0:dataResponse.status}));
   const total=Number(asset.size)||Number(dataResponse.headers.get('content-length'))||0,chunks=[];
@@ -34,5 +57,5 @@ export async function installTapir({fetch,folder,openPath,onProgress=()=>{}}) {
   if(error)throw new Error(t('errors.tapirInstallerLaunchFailed',{error}));
   const message=t('ui.tapirInstallerLaunchedMessage');
   onProgress({status:'launched',message});
-  return {version:release.tag_name,file,launched:true,sha256:digest,message};
+  return {version,file,launched:true,sha256:digest,message};
 }
