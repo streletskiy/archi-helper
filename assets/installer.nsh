@@ -9,6 +9,7 @@
   !define /redef /math ESTIMATED_SIZE ${ESTIMATED_SIZE} + ${ARCHI_RUNTIME_INSTALLED_KIB}
 !endif
 Var archiUpdateStatusFile
+Var archiUpdateProgressFile
 Var archiRuntimeBackup
 Var archiRuntimeResult
 
@@ -18,6 +19,16 @@ Var archiRuntimeResult
   StrCmp $archiUpdateStatusFile "" +5
   FileOpen $0 "$archiUpdateStatusFile" w
   FileWrite $0 "${VALUE}"
+  FileClose $0
+  ClearErrors
+  Pop $0
+!macroend
+
+!macro archiUpdateProgress STAGE
+  Push $0
+  StrCmp $archiUpdateProgressFile "" +5
+  FileOpen $0 "$archiUpdateProgressFile" w
+  FileWrite $0 '{"stage":"${STAGE}","percent":-1}'
   FileClose $0
   ClearErrors
   Pop $0
@@ -35,6 +46,9 @@ Var archiRuntimeResult
       ReadEnvStr $archiUpdateStatusFile "ARCHI_UPDATE_STATUS_FILE"
     ${endif}
     !insertmacro archiUpdateStatus "applying"
+    ${if} $archiUpdateStatusFile != ""
+      StrCpy $archiUpdateProgressFile "$archiUpdateStatusFile.progress.json"
+    ${endif}
     ${if} ${Silent}
       ; The unelevated outer installer must leave per-machine files to its
       ; elevated inner instance. Both run this initialization hook.
@@ -50,7 +64,8 @@ Var archiRuntimeResult
         Goto archiRuntimePrepared
       ${endif}
       StrCpy $0 1
-      ExecWait '"$PLUGINSDIR\runtime-helper.exe" verify "$PLUGINSDIR\runtime-manifest.json" "$INSTDIR\resources\runtime"' $0
+      !insertmacro archiUpdateProgress "checking"
+      ExecWait '"$PLUGINSDIR\runtime-helper.exe" verify "$PLUGINSDIR\runtime-manifest.json" "$INSTDIR\resources\runtime" "$archiUpdateProgressFile" "checking"' $0
       ${if} $0 == 0
         ; Reserve a sibling on the installation volume: directory rename must
         ; stay atomic even when Windows TEMP is on a different drive.
@@ -75,10 +90,12 @@ Var archiRuntimeResult
     ${endif}
   ${endif}
   archiRuntimePrepared:
+  !insertmacro archiUpdateProgress "replacing"
 !macroend
 
 !macro customInstall
   ${if} $archiRuntimeBackup != ""
+    !insertmacro archiUpdateProgress "restoring"
     Call archiRestoreRuntime
     ${if} $archiRuntimeBackup != ""
       !insertmacro archiUpdateStatus "error"
@@ -87,11 +104,13 @@ Var archiRuntimeResult
     ${endif}
     StrCpy $archiRuntimeResult "reused"
   ${else}
+    !insertmacro archiUpdateProgress "extracting"
     SetOutPath "$INSTDIR\resources\runtime"
     Nsis7z::Extract "$INSTDIR\resources\runtime.7z"
     SetOutPath "$INSTDIR"
     StrCpy $0 1
-    ExecWait '"$PLUGINSDIR\runtime-helper.exe" verify "$PLUGINSDIR\runtime-manifest.json" "$INSTDIR\resources\runtime"' $0
+    !insertmacro archiUpdateProgress "verifying"
+    ExecWait '"$PLUGINSDIR\runtime-helper.exe" verify "$PLUGINSDIR\runtime-manifest.json" "$INSTDIR\resources\runtime" "$archiUpdateProgressFile" "verifying"' $0
     ${if} $0 != 0
       !insertmacro archiUpdateStatus "error"
       SetErrorLevel 2
@@ -99,6 +118,7 @@ Var archiRuntimeResult
     ${endif}
     StrCpy $archiRuntimeResult "extracted"
   ${endif}
+  !insertmacro archiUpdateProgress "finalizing"
   Delete "$INSTDIR\resources\runtime.7z"
   ${if} $archiUpdateStatusFile != ""
     FileOpen $0 "$archiUpdateStatusFile.runtime" w

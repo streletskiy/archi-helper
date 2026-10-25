@@ -14,6 +14,7 @@ using Microsoft.Win32;
 
 public sealed class UpdateInfo { public string version; public string nextVersion; }
 public sealed class WindowBounds { public int x; public int y; public int width; public int height; }
+public sealed class InstallProgress { public string stage; public double percent=-1; public int files; public int totalFiles; public double secondsRemaining=-1; }
 public sealed class Configuration {
     public string name; public int protocol; public string root; public string statusFile;
     public string executable; public string language; public string[] args;
@@ -43,14 +44,18 @@ internal static class Program {
 internal sealed class ProgressTrack:Control {
     private int position;private readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();
     public Color TrackColor=Color.FromArgb(228,233,221),FillColor=Color.FromArgb(95,120,80);
+    public double Percent=-1;
     public ProgressTrack() {
         SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);
         AccessibleRole=AccessibleRole.ProgressBar;Height=6;timer.Interval=40;
-        timer.Tick+=delegate{position=(position+7)%Math.Max(1,Width+Width/3);Invalidate();};timer.Start();
+        timer.Tick+=delegate{if(Percent<0){position=(position+7)%Math.Max(1,Width+Width/3);Invalidate();}};timer.Start();
     }
     protected override void OnPaint(PaintEventArgs e) {
         base.OnPaint(e);e.Graphics.Clear(TrackColor);
-        using(Brush brush=new SolidBrush(FillColor))e.Graphics.FillRectangle(brush,position-Width/3,0,Width/3,Height);
+        using(Brush brush=new SolidBrush(FillColor)) {
+            if(Percent>=0)e.Graphics.FillRectangle(brush,0,0,(int)(Width*Math.Min(100,Percent)/100),Height);
+            else e.Graphics.FillRectangle(brush,position-Width/3,0,Width/3,Height);
+        }
     }
     protected override void Dispose(bool disposing) {if(disposing)timer.Dispose();base.Dispose(disposing);}
 }
@@ -72,9 +77,10 @@ internal sealed class UpdateWindow:Form {
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr handle,int message,IntPtr wParam,IntPtr lParam);
     private readonly Configuration config;private readonly JavaScriptSerializer json=new JavaScriptSerializer();
     private readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();
-    private readonly Panel card=new Panel();private readonly Label title=new Label(),description=new Label(),steps=new Label(),version=new Label();
+    private readonly Panel card=new Panel();private readonly Label title=new Label(),description=new Label(),steps=new Label(),version=new Label(),timing=new Label();
     private readonly Button reopen=new Button(),close=new Button(),minimize=new Button();private readonly ProgressTrack progress=new ProgressTrack();
     private readonly DateTime started=DateTime.UtcNow;private DateTime launched;private Process application;
+    private readonly Stopwatch elapsed=Stopwatch.StartNew();
     private string stage="preparing";private bool canClose,ready,launching,applied,themeReady;
     public UpdateWindow(Configuration value) {
         config=value;Text="Archi Helper";BackColor=Color.FromArgb(252,252,249);ForeColor=Color.FromArgb(41,49,37);
@@ -86,13 +92,14 @@ internal sealed class UpdateWindow:Form {
         minimize.Text="\u2212";StyleWindowButton(minimize);minimize.Click+=delegate{WindowState=FormWindowState.Minimized;};Controls.Add(minimize);
         close.Text="\u00d7";StyleWindowButton(close);close.Visible=false;close.Click+=delegate{canClose=true;Close();};Controls.Add(close);
         Resize+=delegate{minimize.Location=new Point(ClientSize.Width-94,10);close.Location=new Point(ClientSize.Width-48,10);card.Location=new Point((ClientSize.Width-card.Width)/2,(ClientSize.Height-card.Height)/2);};
-        card.Size=new Size(580,402);Controls.Add(card);
+        card.Size=new Size(580,430);Controls.Add(card);
         PixelLogo logo=new PixelLogo();logo.Image=Icon.ToBitmap();logo.Bounds=new Rectangle(210,-12,160,160);card.Controls.Add(logo);
         title.Bounds=new Rectangle(0,145,580,70);title.Font=new Font(Font.FontFamily,21,FontStyle.Bold);title.TextAlign=ContentAlignment.MiddleCenter;card.Controls.Add(title);
         description.Bounds=new Rectangle(45,218,490,58);description.ForeColor=Color.FromArgb(104,110,98);description.TextAlign=ContentAlignment.MiddleCenter;card.Controls.Add(description);
         progress.Bounds=new Rectangle(60,296,460,6);card.Controls.Add(progress);
         steps.Bounds=new Rectangle(45,315,490,24);steps.TextAlign=ContentAlignment.MiddleCenter;steps.ForeColor=Color.FromArgb(95,120,80);card.Controls.Add(steps);
-        version.Bounds=new Rectangle(45,351,490,20);version.TextAlign=ContentAlignment.MiddleCenter;version.ForeColor=Color.FromArgb(130,136,123);version.Font=new Font(Font.FontFamily,9);version.Text=(config.update.version??"")+"  \u2192  "+(config.update.nextVersion??"");card.Controls.Add(version);
+        timing.Bounds=new Rectangle(30,346,520,24);timing.TextAlign=ContentAlignment.MiddleCenter;timing.Font=new Font(Font.FontFamily,9);card.Controls.Add(timing);
+        version.Bounds=new Rectangle(45,383,490,20);version.TextAlign=ContentAlignment.MiddleCenter;version.ForeColor=Color.FromArgb(130,136,123);version.Font=new Font(Font.FontFamily,9);version.Text=(config.update.version??"")+"  \u2192  "+(config.update.nextVersion??"");card.Controls.Add(version);
         reopen.Text=Label("reopen");reopen.AutoSize=true;reopen.FlatStyle=FlatStyle.Flat;reopen.FlatAppearance.BorderColor=Color.FromArgb(95,120,80);reopen.BackColor=Color.FromArgb(95,120,80);reopen.ForeColor=Color.White;reopen.Padding=new Padding(12,6,12,6);reopen.Visible=false;
         reopen.Click+=delegate{Restart(Read(config.statusFile)=="complete");};card.Controls.Add(reopen);
         FormClosing+=delegate(object sender,FormClosingEventArgs e){if(!canClose&&stage!="error"&&e.CloseReason!=CloseReason.WindowsShutDown)e.Cancel=true;};
@@ -120,7 +127,7 @@ internal sealed class UpdateWindow:Form {
         Color muted=highContrast?SystemColors.WindowText:dark?Color.FromArgb(167,170,178):Color.FromArgb(104,110,98);
         Color accent=highContrast?SystemColors.Highlight:dark?Color.FromArgb(169,191,153):Color.FromArgb(95,120,80);
         BackColor=background;ForeColor=foreground;card.BackColor=background;
-        title.ForeColor=foreground;description.ForeColor=muted;version.ForeColor=muted;
+        title.ForeColor=foreground;description.ForeColor=muted;version.ForeColor=muted;timing.ForeColor=muted;
         steps.ForeColor=highContrast?SystemColors.WindowText:accent;
         foreach(Button button in new Button[]{minimize,close}) {
             button.BackColor=background;button.ForeColor=foreground;
@@ -145,8 +152,34 @@ internal sealed class UpdateWindow:Form {
         stage=next;title.Text=Label(next+"Title");description.Text=Label(next+"Description");
         bool error=next=="error";progress.Visible=!error;steps.Visible=!error;reopen.Visible=error;close.Visible=error;
         steps.Text=Label("install")+"    \u2192    "+Label("launch");reopen.Location=new Point((card.Width-reopen.Width)/2,292);
+        progress.Percent=-1;progress.Invalidate();
+        if(error)elapsed.Stop();else elapsed.Start();
+    }
+    private static string Duration(double seconds) {
+        TimeSpan value=TimeSpan.FromSeconds(Math.Max(0,Math.Min(86400,Math.Ceiling(seconds))));
+        return ((int)value.TotalMinutes).ToString()+":"+value.Seconds.ToString("00");
+    }
+    private void RefreshProgress() {
+        string elapsedText=Label("elapsed").Replace("{time}",Duration(elapsed.Elapsed.TotalSeconds));
+        timing.Text=elapsedText;
+        if(stage!="applying")return;
+        timing.Text+="  \u00b7  "+Label("remainingUnknown");
+        try {
+            string text=Read(config.statusFile+".progress.json");
+            if(text.Length==0||text.Length>4096)return;
+            InstallProgress value=json.Deserialize<InstallProgress>(text);
+            if(value==null||!(value.stage=="checking"||value.stage=="replacing"||value.stage=="restoring"||value.stage=="extracting"||value.stage=="verifying"||value.stage=="finalizing"))return;
+            description.Text=Label(value.stage);
+            bool measurable=(value.stage=="checking"||value.stage=="verifying")&&value.totalFiles>0&&value.files>=0&&value.files<=value.totalFiles&&value.percent>=0&&value.percent<=100;
+            progress.Percent=measurable?value.percent:-1;progress.Invalidate();
+            steps.Text=measurable?Label("stageProgress").Replace("{percent}",Math.Floor(value.percent).ToString()).Replace("{done}",value.files.ToString()).Replace("{total}",value.totalFiles.ToString()):Label("install")+"    \u2192    "+Label("launch");
+            progress.AccessibleName=steps.Text;
+            if(measurable&&value.secondsRemaining>=0&&value.secondsRemaining<=86400&&(DateTime.UtcNow-File.GetLastWriteTimeUtc(config.statusFile+".progress.json")).TotalSeconds<3)
+                timing.Text=elapsedText+"  \u00b7  "+Label("remaining").Replace("{time}",Duration(value.secondsRemaining));
+        } catch {}
     }
     private void Tick(object sender,EventArgs args) {
+        RefreshProgress();
         if(!ready){EnsureVisible();if(IsWindowVisible(Handle)){File.WriteAllText(Path.Combine(config.root,"helper-ready.json"),json.Serialize(new {pid=Process.GetCurrentProcess().Id,protocol=2}),new UTF8Encoding(false));ready=true;}}
         if(File.Exists(Path.Combine(config.root,"abort"))){canClose=true;Close();return;}
         string confirmation=Read(Path.Combine(config.root,"app-ready.json"));
