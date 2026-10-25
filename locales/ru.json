@@ -586,5 +586,15 @@
   "ui.tapirVersionUnknown": "Доступен Tapir {version}. Подключитесь заново к открытому проекту Archicad, чтобы определить установленную версию.",
   "ui.tapirCheckFailed": "Не удалось проверить обновления Tapir. Повторите попытку. {error}",
   "ui.updateTapir": "Обновить Tapir",
-  "errors.tapirReleaseInvalid": "В выпуске Tapir не указана корректная стабильная версия."
+  "errors.tapirReleaseInvalid": "В выпуске Tapir не указана корректная стабильная версия.",
+  "ui.updateCheckingRuntime": "Проверяем, можно ли сохранить установленный Python…",
+  "ui.updateReplacingFiles": "Заменяем файлы приложения…",
+  "ui.updateRestoringRuntime": "Возвращаем проверенную среду Python…",
+  "ui.updateExtractingRuntime": "Распаковываем новую среду Python…",
+  "ui.updateVerifyingRuntime": "Проверяем файлы установленного Python…",
+  "ui.updateFinalizing": "Завершаем установку…",
+  "ui.updateElapsed": "Прошло {time}",
+  "ui.updateRemaining": "До конца этапа ≈{time}",
+  "ui.updateRemainingUnknown": "Остаток пока неизвестен",
+  "ui.updateStageProgress": "Этап: {percent}% · файлов {done} из {total}"
 }

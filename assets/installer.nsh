@@ -1,6 +1,17 @@
 ; Report installer stages while the application's update screen stays open.
 !ifndef BUILD_UNINSTALLER
+!define MUI_CUSTOMFUNCTION_ABORT archiOnUserAbort
+!include "${PROJECT_DIR}\.cache\runtime-package\size.nsh"
+!ifdef APP_64_UNPACKED_SIZE
+  !define /redef /math APP_64_UNPACKED_SIZE ${APP_64_UNPACKED_SIZE} + ${ARCHI_RUNTIME_KIB}
+!endif
+!ifdef ESTIMATED_SIZE
+  !define /redef /math ESTIMATED_SIZE ${ESTIMATED_SIZE} + ${ARCHI_RUNTIME_INSTALLED_KIB}
+!endif
 Var archiUpdateStatusFile
+Var archiUpdateProgressFile
+Var archiRuntimeBackup
+Var archiRuntimeResult
 
 !macro archiUpdateStatus VALUE
   Push $0
@@ -13,7 +24,20 @@ Var archiUpdateStatusFile
   Pop $0
 !macroend
 
+!macro archiUpdateProgress STAGE
+  Push $0
+  StrCmp $archiUpdateProgressFile "" +5
+  FileOpen $0 "$archiUpdateProgressFile" w
+  FileWrite $0 '{"stage":"${STAGE}","percent":-1}'
+  FileClose $0
+  ClearErrors
+  Pop $0
+!macroend
+
 !macro customInit
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\runtime-helper.exe "${PROJECT_DIR}\.cache\update-helper\runtime-helper.exe"
+  File /oname=$PLUGINSDIR\runtime-manifest.json "${PROJECT_DIR}\.cache\runtime-package\manifest.json"
   ${if} ${isUpdated}
     ${if} ${UAC_IsInnerInstance}
       ; RunAs does not inherit the environment set by the running app.
@@ -22,10 +46,86 @@ Var archiUpdateStatusFile
       ReadEnvStr $archiUpdateStatusFile "ARCHI_UPDATE_STATUS_FILE"
     ${endif}
     !insertmacro archiUpdateStatus "applying"
+    ${if} $archiUpdateStatusFile != ""
+      StrCpy $archiUpdateProgressFile "$archiUpdateStatusFile.progress.json"
+    ${endif}
+    ${if} ${Silent}
+      ; The unelevated outer installer must leave per-machine files to its
+      ; elevated inner instance. Both run this initialization hook.
+      ${if} $hasPerMachineInstallation == "1"
+      ${andIfNot} ${UAC_IsAdmin}
+        Goto archiRuntimePrepared
+      ${endif}
+      ; Keep the builder's shutdown check in its install section. Reuse is an
+      ; optional fast path and must not move a still-running application's files.
+      nsProcess::_FindProcess "${APP_EXECUTABLE_FILENAME}"
+      Pop $0
+      ${if} $0 == 0
+        Goto archiRuntimePrepared
+      ${endif}
+      StrCpy $0 1
+      !insertmacro archiUpdateProgress "checking"
+      ExecWait '"$PLUGINSDIR\runtime-helper.exe" verify "$PLUGINSDIR\runtime-manifest.json" "$INSTDIR\resources\runtime" "$archiUpdateProgressFile" "checking"' $0
+      ${if} $0 == 0
+        ; Reserve a sibling on the installation volume: directory rename must
+        ; stay atomic even when Windows TEMP is on a different drive.
+        ${GetParent} "$INSTDIR" $1
+        ClearErrors
+        GetTempFileName $archiRuntimeBackup "$1"
+        ${ifNot} ${Errors}
+          Delete "$archiRuntimeBackup"
+          CreateDirectory "$archiRuntimeBackup"
+          ${ifNot} ${Errors}
+            Rename "$INSTDIR\resources\runtime" "$archiRuntimeBackup\runtime"
+          ${endif}
+          ${if} ${Errors}
+            RMDir "$archiRuntimeBackup"
+            StrCpy $archiRuntimeBackup ""
+          ${endif}
+        ${else}
+          StrCpy $archiRuntimeBackup ""
+        ${endif}
+        ClearErrors
+      ${endif}
+    ${endif}
   ${endif}
+  archiRuntimePrepared:
+  !insertmacro archiUpdateProgress "replacing"
 !macroend
 
 !macro customInstall
+  ${if} $archiRuntimeBackup != ""
+    !insertmacro archiUpdateProgress "restoring"
+    Call archiRestoreRuntime
+    ${if} $archiRuntimeBackup != ""
+      !insertmacro archiUpdateStatus "error"
+      SetErrorLevel 2
+      Abort "$(decompressionFailed)"
+    ${endif}
+    StrCpy $archiRuntimeResult "reused"
+  ${else}
+    !insertmacro archiUpdateProgress "extracting"
+    SetOutPath "$INSTDIR\resources\runtime"
+    Nsis7z::Extract "$INSTDIR\resources\runtime.7z"
+    SetOutPath "$INSTDIR"
+    StrCpy $0 1
+    !insertmacro archiUpdateProgress "verifying"
+    ExecWait '"$PLUGINSDIR\runtime-helper.exe" verify "$PLUGINSDIR\runtime-manifest.json" "$INSTDIR\resources\runtime" "$archiUpdateProgressFile" "verifying"' $0
+    ${if} $0 != 0
+      !insertmacro archiUpdateStatus "error"
+      SetErrorLevel 2
+      Abort "$(decompressionFailed)"
+    ${endif}
+    StrCpy $archiRuntimeResult "extracted"
+  ${endif}
+  !insertmacro archiUpdateProgress "finalizing"
+  Delete "$INSTDIR\resources\runtime.7z"
+  ${if} $archiUpdateStatusFile != ""
+    FileOpen $0 "$archiUpdateStatusFile.runtime" w
+    FileWrite $0 "$archiRuntimeResult"
+    FileClose $0
+    ClearErrors
+  ${endif}
   ; The updater forces a launch after a silent installation. Keep the helper
   ; responsible for the original profile, readiness handshake and visible UI.
   ${if} $archiUpdateStatusFile != ""
@@ -37,11 +137,29 @@ Var archiUpdateStatusFile
   ${endif}
 !macroend
 
+  Function archiRestoreRuntime
+    StrCmp $archiRuntimeBackup "" archiRuntimeRestoreDone
+    CreateDirectory "$INSTDIR\resources"
+    ClearErrors
+    Rename "$archiRuntimeBackup\runtime" "$INSTDIR\resources\runtime"
+    IfErrors archiRuntimeRestoreDone
+    RMDir "$archiRuntimeBackup"
+    StrCpy $archiRuntimeBackup ""
+    archiRuntimeRestoreDone:
+    ClearErrors
+  FunctionEnd
+
   Function .onInstSuccess
     !insertmacro archiUpdateStatus "complete"
   FunctionEnd
 
   Function .onInstFailed
+    Call archiRestoreRuntime
+    !insertmacro archiUpdateStatus "error"
+  FunctionEnd
+
+  Function archiOnUserAbort
+    Call archiRestoreRuntime
     !insertmacro archiUpdateStatus "error"
   FunctionEnd
 !endif
