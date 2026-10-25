@@ -9,3 +9,7 @@ const compiler=path.join(process.env.SystemRoot||'C:\\Windows','Microsoft.NET','
 execFileSync(compiler,['/nologo','/utf8output','/nowarn:0649','/target:winexe','/platform:x64','/optimize+','/debug-',`/out:${output}`,`/win32icon:${path.join(root,'public','icon.ico')}`,
   '/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll','/reference:System.Web.Extensions.dll',path.join(root,'assets','update-helper.cs')],{cwd:root,stdio:'inherit',windowsHide:true});
 console.log(`Native update helper: ${(await fs.stat(output)).size} bytes`);
+const runtimeHelper=path.join(root,'.cache','update-helper','runtime-helper.exe');
+execFileSync(compiler,['/nologo','/utf8output','/nowarn:0649','/target:winexe','/platform:x64','/optimize+','/debug-',`/out:${runtimeHelper}`,
+  '/reference:System.Web.Extensions.dll',path.join(root,'assets','runtime-helper.cs')],{cwd:root,stdio:'inherit',windowsHide:true});
+console.log(`Native runtime verifier: ${(await fs.stat(runtimeHelper)).size} bytes`);
