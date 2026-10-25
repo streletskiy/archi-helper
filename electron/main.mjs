@@ -311,7 +311,8 @@ else {
   await painted;
   if(!showAppWindow(win))throw new Error(t('errors.couldNotShowWindow'));
   process.send?.({type:'archi-ready',version:app.getVersion()});
-  const cleanupTimer=setTimeout(()=>cleanupUpdateHelper(app).catch(()=>{}),1000);cleanupTimer.unref();
+  // The window has painted and is visible: acknowledge the update immediately.
+  cleanupUpdateHelper(app).catch(()=>{});
   updates.start();connect();
   win.on('close',event=>{
     if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop().catch(()=>{});setTimeout(()=>win.destroy(),500);}});}

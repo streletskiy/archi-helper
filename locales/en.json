@@ -586,5 +586,15 @@
   "ui.tapirVersionUnknown": "Tapir {version} is available. Reconnect to an open Archicad project to identify the installed version.",
   "ui.tapirCheckFailed": "Could not check Tapir updates. Try again. {error}",
   "ui.updateTapir": "Update Tapir",
-  "errors.tapirReleaseInvalid": "The Tapir release does not contain a valid stable version."
+  "errors.tapirReleaseInvalid": "The Tapir release does not contain a valid stable version.",
+  "ui.updateCheckingRuntime": "Checking whether the installed Python can be kept…",
+  "ui.updateReplacingFiles": "Replacing application files…",
+  "ui.updateRestoringRuntime": "Restoring the verified Python runtime…",
+  "ui.updateExtractingRuntime": "Extracting the new Python runtime…",
+  "ui.updateVerifyingRuntime": "Verifying the installed Python files…",
+  "ui.updateFinalizing": "Finishing installation…",
+  "ui.updateElapsed": "Elapsed {time}",
+  "ui.updateRemaining": "This step: ≈{time} remaining",
+  "ui.updateRemainingUnknown": "Remaining time is not yet known",
+  "ui.updateStageProgress": "Step: {percent}% · {done} of {total} files"
 }
