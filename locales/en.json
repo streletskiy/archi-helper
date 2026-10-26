@@ -247,6 +247,7 @@
   "errors.aToolCallFragmentHasNoId": "A tool call fragment has no ID or index",
   "errors.theModelConnectionWasInterruptedIncompleteTool": "The model connection was interrupted. Incomplete tool calls were not executed.",
   "errors.theModelResponseReachedItsLimitShorten": "The model response reached its limit. Shorten the task; incomplete tool calls were not executed.",
+  "agent.retryingIncompleteResponse": "The model returned an incomplete or invalid command. It was not executed. Requesting a smaller response to continue the task.",
   "errors.couldNotStartMcp": "Could not start MCP: {value0}{value1}",
   "errors.theMcpUrlMustUseHttps": "The MCP URL must use HTTPS",
   "errors.toolNotFound": "Tool not found: {value0}",

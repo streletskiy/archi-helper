@@ -1,18 +1,10 @@
 import { completion, requestMessages } from './provider.mjs';
 import { readFileSync } from 'node:fs';
+import { estimateTokens } from './model-limits.mjs';
+export { estimateTokens } from './model-limits.mjs';
 const COMPACTION=readFileSync(new URL('./knowledge/prompts/compaction.md',import.meta.url),'utf8').trim();
 
 const scope=(provider,model)=>JSON.stringify([provider.id,provider.baseURL,model]);
-export function estimateTokens(value,imageTokens=4096) {
-  let images=0;
-  const text=JSON.stringify(value,(_key,item)=>{
-    if(item?.type==='image_url'){images+=imageTokens;return {type:'image_url'};}
-    return item;
-  });
-  // A tokenizer-independent estimate until the API supplies real prompt usage.
-  // UTF-8 bytes account for Cyrillic/CJK; image data is not text/base64 tokens.
-  return Math.ceil(Buffer.byteLength(text||'','utf8')/3)+images+8;
-}
 const sizes=(provider,model,history)=>requestMessages(provider,model,history).map(m=>estimateTokens(m,provider.supportsImages?4096:0));
 const sum=values=>values.reduce((a,b)=>a+b,0);
 export function contextBudget(provider,model,session) {

@@ -247,6 +247,7 @@
   "errors.aToolCallFragmentHasNoId": "Фрагмент команды не содержит идентификатора или индекса",
   "errors.theModelConnectionWasInterruptedIncompleteTool": "Соединение с моделью оборвалось. Незавершённые команды не выполнены.",
   "errors.theModelResponseReachedItsLimitShorten": "Ответ модели достиг лимита. Сократите задачу; незавершённые команды не выполнены.",
+  "agent.retryingIncompleteResponse": "Модель вернула неполную или некорректную команду. Она не выполнялась. Запрашиваю более короткий ответ, чтобы продолжить задачу.",
   "errors.couldNotStartMcp": "Не удалось запустить MCP: {value0}{value1}",
   "errors.theMcpUrlMustUseHttps": "MCP URL должен использовать HTTPS",
   "errors.toolNotFound": "Инструмент не найден: {value0}",

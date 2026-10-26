@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { completion, models, requestMessages } from '../electron/provider.mjs';
 import { responseInput } from '../electron/provider-responses.mjs';
 import { providerDefinitions } from '../electron/provider-definitions.mjs';
+import { modelOutputLimit, modelResponseTimeout } from '../electron/model-limits.mjs';
 const definition=providerDefinitions.find(d=>d.id==='chatgpt');
 const provider={...definition,definitionId:definition.id,id:'profile-1',oauth:{connectionId:'connection-1'},authorize:async()=> 'test-access',models:[]};
 const tools=[{type:'function',function:{name:'read_file',description:'Read a local file',parameters:{type:'object',properties:{path:{type:'string'}}}}}];
@@ -10,6 +11,62 @@ const reasoning={type:'reasoning',id:'rs_1',summary:[],encrypted_content:'privat
 const call={type:'function_call',id:'fc_1',namespace:'archi',name:'read_file',call_id:'call-1',arguments:'{"path":"a.txt"}',status:'completed'};
 function stream(events) {return new Response(events.map(e=>`data: ${JSON.stringify(e)}\r\n\r\n`).join(''),{headers:{'Content-Type':'text/event-stream'}});}
 function mock(t,handler) {const original=globalThis.fetch;globalThis.fetch=handler;t.after(()=>{globalThis.fetch=original;});}
+
+test('compatible replies reject truncated or malformed tool batches before execution',async t=>{
+  let streamed=true,finish='length',argumentsText='{"query":"synthetic',body;
+  mock(t,async(_url,init)=>{
+    body=JSON.parse(init.body);
+    const tool_calls=[{id:'complete',function:{name:'lookup',arguments:'{}'}},{id:'partial',function:{name:'lookup',arguments:argumentsText}}];
+    return streamed?stream([{choices:[{delta:{tool_calls},finish_reason:finish}]}]):Response.json({choices:[{message:{tool_calls},finish_reason:finish}]});
+  });
+  const lumv={id:'synthetic',definitionId:'lumv',baseURL:'https://lumv.app/v1',models:[{id:'synthetic-model',outputWindow:8192}]};
+  const run=()=>completion(lumv,'synthetic-model',[],tools,undefined,()=>{});
+  for(streamed of [true,false])for(finish of ['length','tool_calls']) {
+    await assert.rejects(run(),error=>error.retryableResponse===true && !(error instanceof SyntaxError));
+    assert.equal(body.max_tokens,8192);
+  }
+  argumentsText='[]';await assert.rejects(run(),error=>error.retryableResponse===true);
+  argumentsText='{}';assert.equal((await run()).tool_calls.length,2);
+  lumv.models=[];await run();assert.equal(body.max_tokens,undefined);
+});
+
+test('model limits support million-token output separately from context and keep large JSON intact',async t=>{
+  const configured={baseURL:'https://synthetic.example',models:[{id:'synthetic-model',contextWindow:2000000,outputWindow:1000000}]};
+  const messages=[{role:'user',content:'Synthetic request'}];
+  assert.equal(modelOutputLimit(configured,'synthetic-model',messages,tools),1000000);
+  assert.equal(modelResponseTimeout(configured,'synthetic-model'),7200000);
+  configured.models[0].contextWindow=1000;
+  assert.ok(modelOutputLimit(configured,'synthetic-model',messages,tools)<950);
+  configured.models[0].contextWindow=2000000;
+  const args=JSON.stringify({text:'я'.repeat(1000000)});let body;
+  mock(t,async(_url,init)=>{
+    body=JSON.parse(init.body);
+    const bytes=new TextEncoder().encode(`data: ${JSON.stringify({choices:[{delta:{tool_calls:[{id:'large',function:{name:'lookup',arguments:args}}]},finish_reason:'tool_calls'}]})}\n\n`);
+    return new Response(new ReadableStream({start(controller){for(let i=0;i<bytes.length;i+=65537)controller.enqueue(bytes.subarray(i,i+65537));controller.close();}}),{headers:{'Content-Type':'text/event-stream'}});
+  });
+  const result=await completion(configured,'synthetic-model',messages,tools,undefined,()=>{});
+  assert.equal(body.max_tokens,1000000);assert.equal(result.tool_calls[0].function.arguments,args);
+  configured.baseURL='https://api.openai.com/v1';await completion(configured,'synthetic-model',messages,tools,undefined,()=>{});
+  assert.equal(body.max_completion_tokens,1000000);assert.equal(body.max_tokens,undefined);
+});
+
+test('Responses respects advertised output limits and safely rejects incomplete JSON',async t=>{
+  const configured={...provider,models:[{id:'synthetic-model',contextWindow:2000000,outputWindow:1000000}]};
+  let events=[{type:'response.completed',response:{status:'completed',output:[call]}}],body;
+  mock(t,async(_url,init)=>{body=JSON.parse(init.body);return stream(events);});
+  const run=()=>completion(configured,'synthetic-model',[],tools,undefined,()=>{});
+  assert.equal((await run()).tool_calls.length,1);assert.equal(body.max_output_tokens,1000000);
+  events=[{type:'response.incomplete',response:{status:'incomplete',incomplete_details:{reason:'max_output_tokens'}}}];
+  await assert.rejects(run(),error=>error.retryableResponse===true);
+  events=[{type:'response.completed',response:{status:'completed',output:[{...call,arguments:'{"path":"synthetic'}]}}];
+  await assert.rejects(run(),error=>error.retryableResponse===true && !(error instanceof SyntaxError));
+});
+
+test('Lumv discovery keeps output limits separate from the model context window',async t=>{
+  mock(t,async url=>Response.json(url.endsWith('/models')?{data:[{id:'synthetic-model'}]}:{providers:{lumv:{models:{'synthetic-model':{limit:{context:2000000,input:1500000,output:1000000}}}}}}));
+  const [model]=await models({definitionId:'lumv',baseURL:'https://lumv.app/v1'});
+  assert.equal(model.contextWindow,2000000);assert.equal(model.inputWindow,1500000);assert.equal(model.outputWindow,1000000);
+});
 
 test('compatible streams keep different IDs separate even when indices collide',async t=>{
   let fragments;
