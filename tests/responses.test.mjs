@@ -11,6 +11,34 @@ const call={type:'function_call',id:'fc_1',namespace:'archi',name:'read_file',ca
 function stream(events) {return new Response(events.map(e=>`data: ${JSON.stringify(e)}\r\n\r\n`).join(''),{headers:{'Content-Type':'text/event-stream'}});}
 function mock(t,handler) {const original=globalThis.fetch;globalThis.fetch=handler;t.after(()=>{globalThis.fetch=original;});}
 
+test('compatible streams keep different IDs separate even when indices collide',async t=>{
+  let fragments;
+  mock(t,async()=>stream([...fragments.map(tool_calls=>({choices:[{delta:{tool_calls}}]})),{choices:[{delta:{},finish_reason:'tool_calls'}]}]));
+  const run=()=>completion({baseURL:'https://synthetic.example'},'synthetic-model',[],[],undefined,()=>{});
+  for(const indices of [[0,0],[undefined,undefined],[0,1]]) {
+    fragments=[[...['synthetic-a','synthetic-b'].map((id,index)=>({id,index:indices[index],function:{name:'lookup',arguments:JSON.stringify({query:index?'second-command':'sample-command'})}}))]];
+    const result=await run();
+    assert.deepEqual(result.tool_calls.map(call=>[call.id,call.function.name,JSON.parse(call.function.arguments)]),[
+      ['synthetic-a','lookup',{query:'sample-command'}],['synthetic-b','lookup',{query:'second-command'}]
+    ]);
+  }
+});
+
+test('compatible streams route interleaved fragments and reject ambiguous continuations',async t=>{
+  let fragments;
+  mock(t,async()=>stream([...fragments.map(tool_calls=>({choices:[{delta:{tool_calls}}]})),{choices:[{delta:{},finish_reason:'tool_calls'}]}]));
+  const run=()=>completion({baseURL:'https://synthetic.example'},'synthetic-model',[],[],undefined,()=>{});
+  fragments=[
+    [{id:'a',index:0,function:{name:'lookup',arguments:'{"query":'}},{id:'b',index:1,function:{name:'lookup',arguments:'{"query":'}}],
+    [{index:1,function:{arguments:'"b"}'}},{index:0,function:{arguments:'"a"}'}}]
+  ];
+  assert.deepEqual((await run()).tool_calls.map(call=>JSON.parse(call.function.arguments)),[{query:'a'},{query:'b'}]);
+  fragments[0][1].index=0;fragments[1]=[{index:0,id:'b',function:{arguments:'"b"}'}},{index:0,id:'a',function:{arguments:'"a"}'}}];
+  assert.deepEqual((await run()).tool_calls.map(call=>JSON.parse(call.function.arguments)),[{query:'a'},{query:'b'}]);
+  delete fragments[1][0].id;
+  await assert.rejects(run(),/ambiguous|однозначно/);
+});
+
 test('Responses sends stateless history, images and namespaced tools, and replays complete reasoning with tool outputs',async t=>{
   let body,usage;
   mock(t,async(url,init)=>{assert.equal(url,'https://api.openai.com/v1/responses');body=JSON.parse(init.body);return stream([

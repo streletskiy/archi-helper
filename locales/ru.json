@@ -596,5 +596,17 @@
   "ui.updateElapsed": "Прошло {time}",
   "ui.updateRemaining": "До конца этапа ≈{time}",
   "ui.updateRemainingUnknown": "Остаток пока неизвестен",
-  "ui.updateStageProgress": "Этап: {percent}% · файлов {done} из {total}"
+  "ui.updateStageProgress": "Этап: {percent}% · файлов {done} из {total}",
+  "errors.ambiguousToolCallFragment": "Провайдер вернул фрагмент команды, который нельзя однозначно сопоставить с вызовом",
+  "errors.attachLocalFilesOnly": "Можно прикреплять только локальные файлы",
+  "errors.invalidAttachments": "Некорректные вложения или слишком много файлов (максимум 100)",
+  "errors.attachFilesNotFolders": "Выберите файлы, а не папки",
+  "errors.invalidChatPreferences": "Некорректные настройки чата",
+  "ui.applicationSettings": "Приложение",
+  "ui.chatAppearance": "Внешний вид чата",
+  "ui.showToolDetails": "Показывать действия инструментов",
+  "ui.showToolDetailsHint": "Показывать вызовы инструментов, их параметры и результаты в чате. Настройка сохраняется для всех чатов.",
+  "ui.toolActionFailed": "Не удалось выполнить действие. Причину смотрите в ответе модели или включите подробности инструментов.",
+  "ui.dropFilesHere": "Перетащите файлы сюда, чтобы добавить их в чат",
+  "ui.saving": "Сохранение…"
 }
