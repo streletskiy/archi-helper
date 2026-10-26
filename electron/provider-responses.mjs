@@ -1,5 +1,6 @@
 import { t } from '../locales/index.mjs';
 import { reasoningProfile, selectedEffort } from './reasoning.mjs';
+import { modelOutputLimit } from './model-limits.mjs';
 
 const namespace='archi';
 const binding=(provider,model)=>`${provider.id}:${provider.oauth?.connectionId||''}:${model}`;
@@ -31,6 +32,8 @@ export async function responsesCompletion(provider,model,messages,tools,signal,o
       description:'Local Archi Helper tools. Follow the tool descriptions and current user permissions.',
       tools:tools.map(tool=>({type:'function',name:tool.function.name,description:tool.function.description,
         parameters:tool.function.parameters,strict:false}))}]}:{})};
+  const outputLimit=tools.length?modelOutputLimit(provider,model,messages,tools):undefined;
+  if(outputLimit)body.max_output_tokens=outputLimit;
   const response=await api(provider,'responses',{method:'POST',signal,body:JSON.stringify(body)});
   // Some proxy paths omit Content-Type. The stream still has to contain a valid
   // response.completed event before any tool call can be returned for execution.
@@ -43,7 +46,10 @@ export async function responsesCompletion(provider,model,messages,tools,signal,o
     if(!lines.length)return;
     const data=lines.join('\n');lines=[];
     if(data==='[DONE]')return;
-    const value=JSON.parse(data);
+    let value;
+    try{value=JSON.parse(data);}catch{throw new Error(t('errors.responsesIncomplete'));}
+    if(value.type==='response.incomplete'&&value.response?.incomplete_details?.reason==='max_output_tokens')
+      throw Object.assign(new Error(t('errors.theModelResponseReachedItsLimitShorten')),{retryableResponse:true});
     if(value.type==='error'||value.error||['response.failed','response.incomplete'].includes(value.type))
       throw providerError(provider,null,JSON.stringify(value.response?.error||value.error||value.response?.incomplete_details||value));
     if(value.type==='response.output_text.delta'&&typeof value.delta==='string')onDelta(value.delta);
@@ -79,8 +85,9 @@ export async function responsesCompletion(provider,model,messages,tools,signal,o
     if(item.type==='function_call') {
       if(!item.call_id||ids.has(item.call_id)||item.namespace!==namespace||!allowed.has(item.name)||
         item.status==='incomplete'||item.status==='in_progress'||typeof item.arguments!=='string')throw new Error(t('errors.theProviderReturnedAnIncompleteToolCall'));
-      const args=JSON.parse(item.arguments);
-      if(!args||typeof args!=='object'||Array.isArray(args))throw new Error(t('errors.theProviderReturnedInvalidToolArguments'));
+      let args;
+      try{args=JSON.parse(item.arguments);}catch{throw Object.assign(new Error(t('errors.theProviderReturnedInvalidToolArguments')),{retryableResponse:true});}
+      if(!args||typeof args!=='object'||Array.isArray(args))throw Object.assign(new Error(t('errors.theProviderReturnedInvalidToolArguments')),{retryableResponse:true});
       ids.add(item.call_id);calls.push({id:item.call_id,type:'function',function:{name:item.name,arguments:item.arguments}});
     }
   }

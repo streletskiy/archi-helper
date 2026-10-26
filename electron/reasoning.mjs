@@ -3,7 +3,7 @@ export const EFFORTS = ['none','minimal','low','medium','high','xhigh','max','ul
 export const FORMATS = ['auto','effort','openrouter','deepseek','none'];
 export function needsModelRefresh(provider) {
   if(providerDefinition(provider)?.accountCatalog)return provider.oauth?.status==='connected'&&provider.oauth.planEnabled!==false;
-  return !provider.models?.length || provider.catalogVersion!==2 || !provider.catalogUpdatedAt || Date.now()-provider.catalogUpdatedAt>86400000;
+  return !provider.models?.length || provider.catalogVersion!==3 || !provider.catalogUpdatedAt || Date.now()-provider.catalogUpdatedAt>86400000;
 }
 const values = list => [...new Set((Array.isArray(list) ? list : []).map(v=>typeof v==='string'?v:v?.value||v?.id).filter(v=>EFFORTS.includes(v)))];
 

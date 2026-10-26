@@ -21,7 +21,7 @@ export async function enrichModels(provider, models) {
     if(!model.contextWindow && host==='api.deepseek.com' && /^(deepseek-flash|deepseek-v4-pro|deepseek-v4-flash(?:-vision-exp)?)$/i.test(model.id))return {...model,contextWindow:1000000};
     return model;
   });
-  if(models.every(m=>m.contextWindow))return models;
+  if(models.every(m=>m.contextWindow&&m.outputWindow))return models;
   const data=await catalog(), entries=Object.entries(data).filter(([,p])=>p&&typeof p==='object');
   const native=entries.find(([,p])=>{try{return new URL(p.api).hostname===host;}catch{return false;}})?.[1]
     || data[host.replace(/^api\./,'').split('.')[0]];
@@ -32,16 +32,17 @@ export async function enrichModels(provider, models) {
   };
   const local=index(Object.values(native?.models||{})), all=index(entries.flatMap(([,p])=>Object.values(p.models||{})));
   return models.map(model=>{
-    if(model.contextWindow)return model;
+    if(model.contextWindow&&model.outputWindow)return model;
     const id=normalized(model.id);
     let candidates=local.get(id)||all.get(id)||[];
     // Namespaced gateway IDs may refer to a vendor's bare model ID.
     if(!candidates.length && id.includes('/'))candidates=all.get(id.split('/').pop())||[];
-    const limits=candidates.map(modelInfo).filter(m=>m.contextWindow);
+    const limits=candidates.map(modelInfo).filter(m=>m.contextWindow||m.outputWindow);
     if(!limits.length)return model;
     // Gateway-specific advertised limits take precedence above. For aliases without
     // metadata, start with the model's largest catalog window and learn API limits.
-    const inferred=limits.reduce((a,b)=>a.contextWindow>=b.contextWindow?a:b);
-    return {...model,contextWindow:inferred.contextWindow,...(!model.inputWindow&&inferred.inputWindow?{inputWindow:inferred.inputWindow}:{})};
+    const inferred=limits.reduce((a,b)=>(a.contextWindow||0)>=(b.contextWindow||0)?a:b);
+    const outputs=limits.map(item=>item.outputWindow).filter(Boolean);
+    return {...model,...(!model.contextWindow&&inferred.contextWindow?{contextWindow:inferred.contextWindow}:{}),...(!model.inputWindow&&inferred.inputWindow?{inputWindow:inferred.inputWindow}:{}),...(!model.outputWindow&&outputs.length?{outputWindow:Math.min(...outputs)}:{})};
   });
 }

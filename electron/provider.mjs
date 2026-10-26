@@ -6,6 +6,7 @@ import { providerDefinition } from './provider-definitions.mjs';
 import { responsesCompletion } from './provider-responses.mjs';
 import { appFetch } from './network.mjs';
 import { argumentText, toolCallStream } from './tool-call-stream.mjs';
+import { modelOutputLimit } from './model-limits.mjs';
 const noStreamUsage=new Set();
 const activeCredentials=new WeakMap();
 function providerError(provider,status,text) {
@@ -104,7 +105,8 @@ export function requestMessages(provider,model,messages) {
 export async function completion(provider, model, messages, tools, signal, onDelta, effort='xhigh', onUsage=()=>{}) {
   if(provider.adapter==='openai-responses')return responsesCompletion(provider,model,messages,tools,signal,onDelta,effort,onUsage,api,providerError);
   const body={model,messages:requestMessages(provider,model,messages),stream:true,...reasoningOptions(provider,model,effort),...(tools.length?{tools,tool_choice:'auto'}:{})};
-  if(tools.length && providerDefinition(provider)?.id==='lumv')body.max_tokens=Math.min(16384,provider.models?.find(m=>m.id===model)?.outputWindow||16384);
+  const output=tools.length?modelOutputLimit(provider,model,messages,tools):undefined;
+  if(output)body[new URL(provider.baseURL).hostname==='api.openai.com'?'max_completion_tokens':'max_tokens']=output;
   if(!noStreamUsage.has(provider.baseURL))body.stream_options={include_usage:true};
   const send=()=>api(provider,'chat/completions',{method:'POST',signal,body:JSON.stringify(body)});
   let response;

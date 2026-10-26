@@ -15,6 +15,7 @@ import { zoneAreaLabelApproval, ZONE_AREA_LABEL_RECIPE } from './knowledge.mjs';
 import { KnowledgeLibrary } from './knowledge-library.mjs';
 import { exportLayoutsPdf } from './layout-export.mjs';
 import { normalizeElementReferences } from './element-references.mjs';
+import { modelResponseTimeout } from './model-limits.mjs';
 const PROGRESS=readFileSync(new URL('./knowledge/prompts/progress.md',import.meta.url),'utf8').trim();
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
@@ -145,7 +146,7 @@ export class Agent extends MessageQueue {
       // Also resolve manually entered IDs, which need not appear in /models.
       const info=provider.models?.find(m=>m.id===model);
       if(provider.adapter==='openai-responses'&&!info)throw new Error(t('errors.refreshAccountModels'));
-      if(!info?.contextWindow&&provider.adapter!=='openai-responses') {
+      if((!info?.contextWindow||!info?.outputWindow)&&provider.adapter!=='openai-responses') {
         const [resolved]=await enrichModels(provider,[info||{id:model,name:model}]);
         provider.models=[...(provider.models||[]).filter(m=>m.id!==model),resolved];
         const saved=this.store.state.providers.find(p=>p.id===provider.id);
@@ -182,7 +183,7 @@ export class Agent extends MessageQueue {
         let result,usage;
         try {
           const checkpoint=(silentRounds>=3||toolFailed?'\n'+PROGRESS:'')+(responseRetries?'\nYour previous response was rejected before any tool calls were executed because it was incomplete or contained invalid JSON arguments. Generate a fresh, smaller response with valid JSON objects. Split long scripts and batches into separate steps. Continue from the last completed tool result; do not repeat earlier completed operations.':'');
-          result=await completion(provider,model,[{...system,content:system.content+checkpoint},...referenceMessages,...history],tools,AbortSignal.any([signal,completionController.signal,AbortSignal.timeout(180000)]),delta=>{
+          result=await completion(provider,model,[{...system,content:system.content+checkpoint},...referenceMessages,...history],tools,AbortSignal.any([signal,completionController.signal,AbortSignal.timeout(modelResponseTimeout(provider,model))]),delta=>{
             if(completionController.signal.aborted)return;
             streamed+=delta;emit({type:'delta',id,delta});
           },reasoningEffort,value=>{usage=value;});
