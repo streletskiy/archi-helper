@@ -49,5 +49,6 @@ export function modelInfo(model) {
   const advertised=model.reasoning_efforts??model.supported_reasoning_efforts??model.efforts??model.variants??model.fields?.find(f=>f.name==='reasoning_effort')?.options;
   const contextWindow=Number(model.contextWindow??model.context_window??model.context_length??model.max_context_length??model.max_model_len??model.limit?.context??model.top_provider?.context_length);
   const inputWindow=Number(model.inputWindow??model.max_input_tokens??model.input_token_limit??model.inputTokenLimit??model.limit?.input);
-  return {id:model.id,name:model.name||model.id,...(Array.isArray(advertised)?{reasoningEfforts:values(advertised)}:{}),...(Number.isSafeInteger(contextWindow)&&contextWindow>0?{contextWindow}:{}),...(Number.isSafeInteger(inputWindow)&&inputWindow>0?{inputWindow}:{}),...(model.supported_parameters?.includes('reasoning')?{supportsReasoning:true}:{})};
+  const outputWindow=Number(model.outputWindow??model.max_output_tokens??model.output_token_limit??model.outputTokenLimit??model.limit?.output??model.top_provider?.max_completion_tokens);
+  return {id:model.id,name:model.name||model.id,...(Array.isArray(advertised)?{reasoningEfforts:values(advertised)}:{}),...(Number.isSafeInteger(contextWindow)&&contextWindow>0?{contextWindow}:{}),...(Number.isSafeInteger(inputWindow)&&inputWindow>0?{inputWindow}:{}),...(Number.isSafeInteger(outputWindow)&&outputWindow>0?{outputWindow}:{}),...(model.supported_parameters?.includes('reasoning')?{supportsReasoning:true}:{})};
 }

@@ -11,6 +11,24 @@ const call={type:'function_call',id:'fc_1',namespace:'archi',name:'read_file',ca
 function stream(events) {return new Response(events.map(e=>`data: ${JSON.stringify(e)}\r\n\r\n`).join(''),{headers:{'Content-Type':'text/event-stream'}});}
 function mock(t,handler) {const original=globalThis.fetch;globalThis.fetch=handler;t.after(()=>{globalThis.fetch=original;});}
 
+test('compatible replies reject truncated or malformed tool batches before execution',async t=>{
+  let streamed=true,finish='length',argumentsText='{"query":"synthetic',body;
+  mock(t,async(_url,init)=>{
+    body=JSON.parse(init.body);
+    const tool_calls=[{id:'complete',function:{name:'lookup',arguments:'{}'}},{id:'partial',function:{name:'lookup',arguments:argumentsText}}];
+    return streamed?stream([{choices:[{delta:{tool_calls},finish_reason:finish}]}]):Response.json({choices:[{message:{tool_calls},finish_reason:finish}]});
+  });
+  const lumv={id:'synthetic',definitionId:'lumv',baseURL:'https://lumv.app/v1',models:[{id:'synthetic-model',outputWindow:8192}]};
+  const run=()=>completion(lumv,'synthetic-model',[],tools,undefined,()=>{});
+  for(streamed of [true,false])for(finish of ['length','tool_calls']) {
+    await assert.rejects(run(),error=>error.retryableResponse===true && !(error instanceof SyntaxError));
+    assert.equal(body.max_tokens,8192);
+  }
+  argumentsText='[]';await assert.rejects(run(),error=>error.retryableResponse===true);
+  argumentsText='{}';assert.equal((await run()).tool_calls.length,2);
+  lumv.models=[];await run();assert.equal(body.max_tokens,16384);
+});
+
 test('compatible streams keep different IDs separate even when indices collide',async t=>{
   let fragments;
   mock(t,async()=>stream([...fragments.map(tool_calls=>({choices:[{delta:{tool_calls}}]})),{choices:[{delta:{},finish_reason:'tool_calls'}]}]));

@@ -32,11 +32,23 @@ function providerError(provider,status,text) {
   return error;
 }
 function completeCalls(calls) {
+  const ids=new Set();
   return calls.map(call=>{
-    if(!call.id || !call.function?.name)throw new Error(t('errors.theProviderReturnedAnIncompleteToolCall'));
-    const args=argumentText(call.function.arguments);JSON.parse(args);
+    if(!call.id || !call.function?.name || ids.has(call.id))throw new Error(t('errors.theProviderReturnedAnIncompleteToolCall'));
+    ids.add(call.id);
+    let args;
+    try {
+      args=argumentText(call.function.arguments);
+      const value=JSON.parse(args);
+      if(!value || typeof value!=='object' || Array.isArray(value))throw new Error();
+    } catch {
+      throw Object.assign(new Error(t('errors.theProviderReturnedInvalidToolArguments')),{retryableResponse:true});
+    }
     return {...call,function:{...call.function,arguments:args}};
   });
+}
+function checkResponseLength(reason) {
+  if(reason==='length')throw Object.assign(new Error(t('errors.theModelResponseReachedItsLimitShorten')),{retryableResponse:true});
 }
 export async function api(provider, endpoint, init = {}) {
   if(provider.adapter&&!['openai-compatible','openai-responses'].includes(provider.adapter))throw new Error(t('errors.providerAdapterUnsupported'));
@@ -92,6 +104,7 @@ export function requestMessages(provider,model,messages) {
 export async function completion(provider, model, messages, tools, signal, onDelta, effort='xhigh', onUsage=()=>{}) {
   if(provider.adapter==='openai-responses')return responsesCompletion(provider,model,messages,tools,signal,onDelta,effort,onUsage,api,providerError);
   const body={model,messages:requestMessages(provider,model,messages),stream:true,...reasoningOptions(provider,model,effort),...(tools.length?{tools,tool_choice:'auto'}:{})};
+  if(tools.length && providerDefinition(provider)?.id==='lumv')body.max_tokens=Math.min(16384,provider.models?.find(m=>m.id===model)?.outputWindow||16384);
   if(!noStreamUsage.has(provider.baseURL))body.stream_options={include_usage:true};
   const send=()=>api(provider,'chat/completions',{method:'POST',signal,body:JSON.stringify(body)});
   let response;
@@ -105,6 +118,7 @@ export async function completion(provider, model, messages, tools, signal, onDel
   if (!response.headers.get('content-type')?.includes('text/event-stream')) {
     const body=await response.json(); if(body.error) throw providerError(provider,null,JSON.stringify(body.error));
     if(body.usage)onUsage(body.usage);
+    checkResponseLength(body.choices?.[0]?.finish_reason);
     const m=body.choices?.[0]?.message; if(!m) throw new Error(t('errors.theProviderResponseContainsNoMessage'));
     if(m.content)onDelta(m.content); return { role:'assistant', content:m.content || null, ...(m.reasoning_content!==undefined?{reasoning_content:m.reasoning_content}:{}),...(m.reasoning_details?{reasoning_details:m.reasoning_details}:{}),...(m.tool_calls?.length?{tool_calls:completeCalls(m.tool_calls)}:{}) };
   }
@@ -112,7 +126,9 @@ export async function completion(provider, model, messages, tools, signal, onDel
   const event = block => {
     const data=block.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');
     if(!data) return; if(data==='[DONE]'){done=true;return;}
-    const parsed=JSON.parse(data); if(parsed.error) throw providerError(provider,null,JSON.stringify(parsed.error));
+    let parsed;
+    try{parsed=JSON.parse(data);}catch{throw new Error(t('errors.theModelConnectionWasInterruptedIncompleteTool'));}
+    if(parsed.error) throw providerError(provider,null,JSON.stringify(parsed.error));
     if(parsed.usage)onUsage(parsed.usage);
     const choice=parsed.choices?.[0]; if(choice?.finish_reason)finishReason=choice.finish_reason;
     const delta=choice?.delta; if(!delta)return;
@@ -137,7 +153,7 @@ export async function completion(provider, model, messages, tools, signal, onDel
   }
   pending+=decoder.decode(); if(pending)line(pending);line('');
   if(!done && !finishReason)throw new Error(t('errors.theModelConnectionWasInterruptedIncompleteTool'));
-  if(finishReason==='length')throw new Error(t('errors.theModelResponseReachedItsLimitShorten'));
+  checkResponseLength(finishReason);
   const tool_calls=completeCalls([...calls.values()]);
   return {role:'assistant',content:content||null,...(reasoning?{reasoning_content:reasoning}:{}),...(reasoningDetails.size?{reasoning_details:[...reasoningDetails.values()]}:{}),...(tool_calls.length?{tool_calls}:{})};
 }
