@@ -1,7 +1,7 @@
 ---
 id: "ac27-capabilities"
-title: "Archicad 27: limits of recorded evidence"
-summary: "Earlier connection and individual schedule/stamp observations; AC25 findings are not AC27 tests."
+title: "Archicad 27: границы проверки возможностей"
+summary: "Сведения о подключении и отдельных операциях с каталогами и штампами. Проверки AC25 не подтверждают работу AC27."
 kind: "knowledge"
 activation: "auto"
 enabled: true
@@ -13,6 +13,6 @@ related: []
 
 # Archicad 27
 
-The earlier reference recorded a connection with Tapir 1.7.2 and individual procedures described in interactive-schedules and zone-stamp-area-label. No build was recorded here: do not present this as exact build-matched evidence or a new integration run.
+Область ранее проверенных сведений: подключение с Tapir 1.7.2 и отдельные процедуры из статей «Интерактивные каталоги и доступные API» (`interactive-schedules`) и «Изменение надписи площади в штампе зоны» (`zone-stamp-area-label`). Номер сборки для этих сведений не зафиксирован: не выдавайте их за проверку на точно совпадающей сборке или новый интеграционный запуск.
 
-The navigatorItemId variant of ChangeWindow requires AC27+ according to the recorded command guidance; retrieve the actual live schema before use. AC25 layout/PDF observations do not prove the same integration on AC27. Shared procedures remain in common/.
+По описанию команды вариант `ChangeWindow` с `navigatorItemId` требует AC27 или новее; перед использованием получите фактическую схему текущего подключения. Проверка макетов и PDF на AC25 не подтверждает те же операции на AC27. Общие процедуры находятся в разделе `common/`.

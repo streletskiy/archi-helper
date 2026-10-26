@@ -1,7 +1,7 @@
 ---
 id: "python-workflow"
-title: "Python and the version-selected Archicad SDK"
-summary: "Exact SDK signatures, typed objects, ports, UTF-8 and isolated dependencies."
+title: "Python и SDK для подключённой версии Archicad"
+summary: "Точные сигнатуры SDK, типизированные объекты, порты, UTF-8 и отдельное окружение для зависимостей."
 kind: "skill"
 activation: "auto"
 enabled: true
@@ -10,8 +10,12 @@ triggers: ["python","sdk","script","скрипт","питон","run_python"]
 related: ["archicad-capabilities"]
 ---
 
-# Python workflow
+# Работа с Python
 
-If a Python Archicad operation is necessary, retrieve its exact signature from get_api_catalog with source='graphisoft' and the required type constructors with source='types'. The same catalog file is in os.environ['ARCHI_API_CATALOG']. The selected connection port is in os.environ['ARCHICAD_PORT']; verify the connection and project through MCP first. The typed Graphisoft SDK is separate from Tapir: connect with archicad.ACConnection.connect(int(os.environ['ARCHICAD_PORT'])), check the connection is not None, pass typed arguments, and serialize returned objects with to_dict(), never dict(), __dict__ or dictionary indexing. Tapir-only commands such as GetDetailsOfElements are not methods of conn.commands. The bundled JSON helper is from archicad_mcp.tapir.client import run_tapir_command; for example run_tapir_command('GetStories', {}) returns a dictionary. Use source='tapir' for its exact JSON input schema. Use only names and arguments documented for that API source and connection version. Do not guess ports or raw HTTP payloads. For subprocess text output on Windows, specify encoding='utf-8' explicitly.
+Если нужна операция Archicad через Python, получите точную сигнатуру через `get_api_catalog` с `source="graphisoft"`, а конструкторы требуемых типов — с `source="types"`. Тот же каталог доступен по пути `os.environ['ARCHI_API_CATALOG']`. Порт выбранного подключения находится в `os.environ['ARCHICAD_PORT']`; сначала проверьте подключение и проект через MCP.
 
-Bundled uv is available through os.environ['ARCHI_UV']; Python is sys.executable. If extra libraries are needed, create a separate environment inside the chat workspace. Do not modify the app's bundled environment.
+Типизированный SDK Graphisoft отличается от Tapir. Подключайтесь через `archicad.ACConnection.connect(int(os.environ['ARCHICAD_PORT']))`, проверяйте, что результат не равен `None`, и передавайте типизированные аргументы. Преобразуйте возвращённые объекты через `to_dict()`, а не `dict()`, `__dict__` или обращение по ключу словаря. Команды только для Tapir, например `GetDetailsOfElements`, не являются методами `conn.commands`.
+
+Встроенный помощник JSON импортируется через `from archicad_mcp.tapir.client import run_tapir_command`; например, `run_tapir_command('GetStories', {})` возвращает словарь. Точную схему аргументов JSON ищите с `source="tapir"`. Используйте только имена и аргументы, документированные для этого источника API и версии подключения. Не угадывайте порты и содержимое HTTP-запросов. Для текстового вывода дочерних процессов в Windows явно указывайте `encoding='utf-8'`.
+
+Встроенный uv доступен через `os.environ['ARCHI_UV']`, Python — через `sys.executable`. Если нужны дополнительные библиотеки, создайте отдельное окружение в рабочей папке чата. Не изменяйте встроенное окружение приложения.

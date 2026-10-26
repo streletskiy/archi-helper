@@ -1,7 +1,7 @@
 ---
 id: "ac25-capabilities"
-title: "Archicad 25: historical API observations"
-summary: "AC25 build 7000 / Tapir 1.7.2: databaseId for ChangeWindow, navigator and local PDF publishing."
+title: "Archicad 25: проверенные возможности API"
+summary: "Сборка 7000 и Tapir 1.7.2: databaseId для ChangeWindow, навигатор и локальная публикация PDF."
 kind: "knowledge"
 activation: "auto"
 enabled: true
@@ -14,8 +14,8 @@ related: []
 
 # Archicad 25
 
-Historical review dated 2026-10-22, Archicad 25 build 7000 RUS with Tapir 1.7.2. This is not a new integration run or a promise for other builds.
+Область ранее проверенных возможностей: Archicad 25, сборка 7000 RUS, Tapir 1.7.2. Это историческая граница проверки, а не новый интеграционный запуск или обещание работы на других сборках.
 
-LayoutBook and PublisherSets trees, layout settings, publisher set names and publishing an existing PDF set to a local folder were observed. Recheck the current project, exact schemas, set format and produced files.
+В этой конфигурации проверялись деревья `LayoutBook` и `PublisherSets`, настройки макетов, имена наборов публикации и публикация существующего набора PDF в локальную папку. Для текущей работы заново проверьте подключение, точные схемы, формат набора и созданные файлы.
 
-ChangeWindow with navigatorItemId was unsupported on this connection. Resolve databaseId with GetDatabaseIdFromNavigatorItemId, then use windowType="Layout" and databaseId. Never infer visible content or master-layout ownership from an empty element query. Read archicad-capabilities and layout-audit for the shared procedure.
+Вариант `ChangeWindow` с `navigatorItemId` не поддерживался. Получите `databaseId` через `GetDatabaseIdFromNavigatorItemId`, затем передайте `windowType="Layout"` и `databaseId`. Пустой результат запроса элементов не доказывает отсутствия видимого содержимого или его размещения на мастер-макете. Общая процедура описана в статьях «Возможности Archicad и выбор инструментов» (`archicad-capabilities`) и «Полная проверка макетов и экспорт PDF» (`layout-audit`).

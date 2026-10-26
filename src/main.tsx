@@ -12,7 +12,8 @@ import { BookOpen } from 'lucide-react';
 import { Mascot } from './Mascot';
 import { MessageBubble } from './MessageBubble';
 import { Onboarding } from './Onboarding';
-import { MessageContent } from './MessageContent';
+import { AnimatedMessageContent } from './AnimatedMessageContent';
+import {activityLabel,visibleMessages} from './chat-presentation.mjs';
 import {useStream} from './useStream';
 import {VirtualMessages} from './VirtualMessages';
 import {TapirSettings} from './TapirSettings';
@@ -52,8 +53,8 @@ function App(){
   const [cursor,setCursor]=useState(0),[slashDismissed,setSlashDismissed]=useState(false),[activeKnowledgeOption,setActiveKnowledgeOption]=useState<string|undefined>();
   const slashPicker=useRef<KnowledgeSlashHandle>(null);
   const [draft,setDraft]=useState(''),[mode,setMode]=useState('full'),[busy,setBusy]=useState(false),[approval,setApproval]=useState<any>(null);
-  const {stream,appendStream,removeStream,resetStreams}=useStream();
-  const messageGroups=useMemo(()=>groupMessages((session?.messages||[]).flatMap(message=>state?.showToolDetails||message.role!=='tool'?[message]:message.status==='error'?[{...message,role:'notice',text:t('ui.toolActionFailed')}]:[])),[session?.messages,state?.showToolDetails,language]);
+  const {stream,appendStream,removeStream,resetStreams,animatedIds,markAnimated}=useStream();
+  const messageGroups=useMemo(()=>groupMessages(visibleMessages(session?.messages||[],state?.showToolDetails)),[session?.messages,state?.showToolDetails,language]);
   const streamed=Object.entries(stream).filter(([,text])=>text.length>0),streamKey=Object.keys(stream).join('\0');
   const messageIds=useMemo(()=>[...messageGroups.map(group=>group.id),...Object.keys(stream)],[messageGroups,streamKey]);
   const [providerPrompt,setProviderPrompt]=useState<ProviderPromptData|null>(null);
@@ -142,6 +143,7 @@ function App(){
       if(e.type==='queue')setSession(s=>s?{...s,pendingMessages:e.pendingMessages,queuePaused:e.queuePaused}:s);
       if(e.type==='stream-reset')removeStream(e.id);
       if(e.type==='message'){
+        if(e.message.role==='assistant')markAnimated(e.message.id);
         setSession(s=>s?{...s,messages:[...s.messages.filter(m=>m.id!==e.message.id),e.message]}:s);
         removeStream(e.message.id);
       }
@@ -327,7 +329,7 @@ function App(){
     if(modal==='providers'&&!providerForm.id&&!providerForm.baseURL&&selectedProvider)setProviderForm(providerToForm(selectedProvider));
   },[modal]);
   const filteredTools=tools.filter(t=>`${t.name} ${t.description}`.toLowerCase().includes(toolSearch.toLowerCase()));
-  const hasMessages=!!session?.messages.length||!!approval;
+  const hasMessages=!!messageIds.length||!!approval;
   const sidebarProjects:(Project|null)[]=[...(state?.projects.filter(p=>archivedSessions||!p.archivedAt)||[]),null];
   const archiveCount=sessionGroups.reduce((count,g)=>count+g.sessions.filter(s=>s.archivedAt).length,0)+(state?.projects.filter(p=>p.archivedAt).length||0);
   const visibleProjects=state?.projects.filter(p=>!!p.archivedAt===projectArchive&&`${p.name} ${p.path}`.toLowerCase().includes(projectSearch.toLowerCase()))||[];
@@ -374,7 +376,7 @@ function App(){
           {archivedSessions&&!archiveCount&&<p className="workspace-empty">{t('ui.archiveEmpty')}</p>}
           {!!search&&!sidebarProjects.some(p=>{const id=p?.id||INBOX_ID;return (p?.name||t('ui.withoutProject')).toLowerCase().includes(search.toLowerCase())||sessionGroups.find(g=>g.projectId===id)?.sessions.some(s=>s.title.toLowerCase().includes(search.toLowerCase())&&(archivedSessions?(p?.archivedAt||s.archivedAt):!s.archivedAt));})&&<p className="workspace-empty">{t('ui.noSessionsFound')}</p>}
         </div>
-        <div className="sidebar-bottom"><button className="sidebar-link" onClick={()=>setModal('knowledge')}><BookOpen size={17}/>{t('knowledge.title')}</button><button className="sidebar-link" disabled={!project} onClick={()=>reveal()}><FolderOpen size={17}/>{t('ui.projectFiles')}</button><button className="sidebar-link" disabled={!session} onClick={()=>guard(()=>api('revealWorkspace',{projectId,sessionId:session?.id}))}><FileText size={17}/>{t('ui.chatFiles')}</button><button className="sidebar-link" onClick={()=>setModal('preferences')}><Settings size={17}/>{t('ui.settings')}</button></div>
+        <div className="sidebar-bottom"><button className="sidebar-link" onClick={()=>setModal('knowledge')}><BookOpen size={17}/>{t('knowledge.title')}</button><button className="sidebar-link" disabled={!project} onClick={()=>reveal()}><FolderOpen size={17}/>{t('ui.projectFiles')}</button><button className="sidebar-link" disabled={!session} onClick={()=>guard(()=>api('revealWorkspace',{projectId,sessionId:session?.id}))}><FileText size={17}/>{t('ui.chatFiles')}</button><button className="sidebar-link" onClick={()=>setModal('providers')}><Settings size={17}/>{t('ui.settings')}</button></div>
       </aside>
       <main className="main" onDragEnter={event=>{if(event.dataTransfer.types.includes('Files')){event.preventDefault();dragDepth.current++;if(!readOnly&&!workspaceLocked&&!modal)setDragging(true);}}} onDragOver={event=>{if(event.dataTransfer.types.includes('Files')){event.preventDefault();event.dataTransfer.dropEffect=readOnly||workspaceLocked||!!modal?'none':'copy';}}} onDragLeave={event=>{if(event.dataTransfer.types.includes('Files')&&--dragDepth.current<=0){dragDepth.current=0;setDragging(false);}}} onDrop={event=>{if(!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current=0;setDragging(false);const files=Array.from(event.dataTransfer.files);if(files.length)void importAttachments(files);}}>
         {dragging&&<div className="chat-drop-overlay" role="status"><Paperclip size={28}/><strong>{t('ui.dropFilesHere')}</strong></div>}
@@ -391,8 +393,8 @@ function App(){
               {suggestions().map(s=><button key={s.id} data-preset={s.id} title={s.description} onClick={()=>{setDraft(s.prompt);textInput.current?.focus();}}><Layers size={16}/><span>{s.title}</span></button>)}
             </div>
           </div>:<div className="messages">
-            <VirtualMessages key={`${projectId}:${session?.id}`} ids={messageIds} scrollRef={conversation} followLatest={followLatest} render={index=>{const group=messageGroups[index];if(group){const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<MessageBubble key={m.id} role={m.role} text={m.text} at={m.at} onCopy={copyMessage}><MessageContent text={m.text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/>{m.usageAction&&<button className="primary" onClick={()=>guard(()=>api('external',{url:m.usageAction}))}>{t('ui.manageUsage')}<ExternalLink size={14}/></button>}</MessageBubble>;}const [id,text]=streamed[index-messageGroups.length];return <MessageBubble key={id} role="assistant" text={text} streaming onCopy={copyMessage}><MessageContent text={text} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/></MessageBubble>;}}/>
-            {busy&&!Object.keys(stream).length&&<div className="working-indicator"><Mascot size={32} working/>{t('ui.working')}</div>}
+            <VirtualMessages key={`${projectId}:${session?.id}`} ids={messageIds} scrollRef={conversation} followLatest={followLatest} render={index=>{const group=messageGroups[index];if(group){const m=group.messages[0];return group.tools?<ToolGroup key={group.id} messages={group.messages} reveal={reveal}/>:<MessageBubble key={m.id} role={m.role} text={m.text} at={m.at} onCopy={copyMessage}><AnimatedMessageContent text={m.text} animate={m.role==='assistant'&&animatedIds.current.has(m.id)} onRevealed={()=>animatedIds.current.delete(m.id)} projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/>{m.usageAction&&<button className="primary" onClick={()=>guard(()=>api('external',{url:m.usageAction}))}>{t('ui.manageUsage')}<ExternalLink size={14}/></button>}</MessageBubble>;}const [id,text]=streamed[index-messageGroups.length];return <MessageBubble key={id} role="assistant" text={text} streaming onCopy={copyMessage}><AnimatedMessageContent text={text} animate projectId={projectId} sessionId={session?.id} onLink={openMessageLink}/></MessageBubble>;}}/>
+            {busy&&state?.activeSession===session?.id&&!Object.keys(stream).length&&<div className="working-indicator" role="status"><Mascot size={32} working/><span>{activityLabel(session?.messages||[],!!approval)}</span></div>}
             {approval&&<div className="approval-card"><div className="approval-title"><ShieldCheck size={21}/><div><strong>{approval.kind==='python'?t('ui.runProcessing'):t('ui.confirmAction')}</strong><p>{approval.description}</p></div></div><details className="approval-details" open={approval.kind==='python'}><summary>{approval.kind==='python'?t('ui.codeToRun'):t('ui.viewExactParameters')}</summary><pre>{pretty(approval.args)}</pre></details>{approval.kind==='python'&&<p className="muted">{t('ui.theScriptRunsLocallyWithYourPermissions')}</p>}<div className="approval-actions"><button className="secondary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:false}))}>{t('ui.cancel')}</button><button className="primary" onClick={()=>guard(()=>api('approve',{id:approval.id,allowed:true}))}><Check size={15}/>{t('ui.run')}</button></div></div>}
           </div>}
           </div>
@@ -438,9 +440,8 @@ function App(){
       </div>}
       {isSettings&&<div className="settings-layout">
         <nav className="settings-nav" aria-label={t('ui.settingsSections')}>
-          <button aria-current={modal==='preferences'?'page':undefined} onClick={()=>setModal('preferences')}><Settings size={18}/>{t('ui.applicationSettings')}</button>
-          <button onClick={()=>setModal('knowledge')}><BookOpen size={18}/>{t('knowledge.title')}</button>
           <button aria-current={modal==='providers'?'page':undefined} onClick={()=>setModal('providers')}><Sparkles size={18}/>{t('ui.aiProviders')}</button>
+          <button aria-current={modal==='preferences'?'page':undefined} onClick={()=>setModal('preferences')}><Settings size={18}/>{t('ui.applicationSettings')}</button>
           <button aria-current={modal==='archicad'?'page':undefined} onClick={()=>setModal('archicad')}><Cable size={18}/>Archicad</button>
           <button aria-current={modal==='about'?'page':undefined} onClick={()=>setModal('about')}><Info size={18}/>{t('ui.about')}</button>
         </nav>

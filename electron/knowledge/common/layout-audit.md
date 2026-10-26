@@ -1,7 +1,7 @@
 ---
 id: "layout-audit"
-title: "Complete layout audit and local PDF export"
-summary: "Registry, Publisher sets, PDF coverage, text and visual review."
+title: "Полная проверка макетов и экспорт PDF"
+summary: "Реестр макетов, наборы публикации, полнота PDF, проверка текста и изображений."
 kind: "skill"
 activation: "auto"
 enabled: true
@@ -13,7 +13,7 @@ related: ["archicad-capabilities"]
 
 # Аудит макетов и экспорт PDF
 
-Дата технической проверки: 22 октября 2026 года. Путь Publisher подтверждён журналом Archicad 25 build 7000 с Tapir 1.7.2; обработка PDF — встроенным PyMuPDF. Другие версии требуют проверки текущего подключения. Примеры и выводы не содержат данных пользовательского проекта.
+Граница ранее проверенной процедуры Publisher: Archicad 25, сборка 7000, Tapir 1.7.2; обработка PDF — встроенным PyMuPDF. Это не новый интеграционный запуск. Другие версии требуют проверки текущего подключения. Все примеры синтетические.
 
 ## Реестр и исходные данные
 
