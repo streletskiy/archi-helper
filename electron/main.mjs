@@ -1,5 +1,5 @@
 import { t } from '../locales/index.mjs';
-import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, Menu, session, nativeTheme } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, Menu, session, nativeTheme, clipboard } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -17,6 +17,7 @@ import { createUpdates } from './updates.mjs';
 import { installUpdate, cleanupUpdateHelper } from './update-install.mjs';
 import { showAppWindow } from './window-visibility.mjs';
 import { installTapir, checkTapirUpdates } from './tapir-installer.mjs';
+import { saveAttachments, clipboardAttachments } from './attachments.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWith('--archi-data-dir='))?.slice('--archi-data-dir='.length);
@@ -79,12 +80,7 @@ async function attachFiles(projectId,sessionId) {
   store.assertActive(projectId, await store.session(projectId,sessionId));
   const chosen=await dialog.showOpenDialog(win,{title:t('errors.addProjectMaterials'),properties:['openFile','multiSelections']});
   if(chosen.canceled)return [];
-  const result=[],root=await store.workspace(projectId,sessionId);
-  for(const file of chosen.filePaths) {
-    const name=path.basename(file),relative=`attachments/${crypto.randomUUID()}-${name}`,destination=await projectPath(root,relative);
-    await fs.mkdir(path.dirname(destination),{recursive:true});await fs.copyFile(file,destination);result.push(relative);
-  }
-  return result;
+  return saveAttachments(store,projectId,sessionId,chosen.filePaths.map(path=>({path})));
 }
 async function scan() {
   return (await Promise.all(Array.from({length:21},(_,i)=>i+19723).map(async port=>{
@@ -226,6 +222,14 @@ const handlers={
   stop:async input=>agent.stop(input),
   approve:async({id,allowed})=>{agent.approve(id,allowed===true);return true;},
   attach:async({projectId,sessionId})=>attachFiles(projectId,sessionId),
+  attachFiles:async({projectId,sessionId,files})=>saveAttachments(store,projectId,sessionId,files),
+  pasteAttachments:async({projectId,sessionId})=>saveAttachments(store,projectId,sessionId,await clipboardAttachments(clipboard)),
+  chatPreferences:async({showToolDetails})=>{
+    if(typeof showToolDetails!=='boolean')throw new Error(t('errors.invalidChatPreferences'));
+    const previous=store.state.showToolDetails;store.state.showToolDetails=showToolDetails;
+    try{await store.save();}catch(error){store.state.showToolDetails=previous;throw error;}
+    return {showToolDetails};
+  },
   image:async({projectId,sessionId,relative})=>{
     const {mime,data}=await store.image(projectId,sessionId,decodeURIComponent(relative));
     return `data:${mime};base64,${data.toString('base64')}`;

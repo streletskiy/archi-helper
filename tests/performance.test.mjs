@@ -5,12 +5,36 @@ import os from 'node:os';
 import path from 'node:path';
 import {Store,atomicJSON} from '../electron/store.mjs';
 import {createStreamBuffer} from '../src/stream-buffer.mjs';
+import {saveAttachments,clipboardAttachments} from '../electron/attachments.mjs';
+import {pathToFileURL} from 'node:url';
 
 async function fixture(run){
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-index-'));
   try{const store=new Store(path.join(root,'profile'),{});await store.init('en');const project=await store.addProject(path.join(root,'project'));await run({root,store,project});}
   finally{await fs.rm(root,{recursive:true,force:true});}
 }
+
+test('attachments preserve file bytes, reject directories and keep pasted names in the chat',()=>fixture(async({root,store,project})=>{
+  const session=await store.newSession(project.id),source=path.join(root,'synthetic.pdf');
+  await fs.writeFile(source,'%PDF-synthetic');
+  const files=await saveAttachments(store,project.id,session.id,[{path:source},{path:source},{name:'clipboard.png',data:new Uint8Array([1,2,3])}]);
+  const workspace=await store.workspace(project.id,session.id);
+  assert.equal(files.length,2);assert.equal(await fs.readFile(path.join(workspace,files[0]),'utf8'),'%PDF-synthetic');
+  assert.deepEqual(await fs.readFile(path.join(workspace,files[1])),Buffer.from([1,2,3]));
+  await assert.rejects(saveAttachments(store,project.id,session.id,[{path:root}]),/files, not folders/);
+  await assert.rejects(saveAttachments(store,project.id,session.id,[{name:'../outside.txt',data:new Uint8Array([1])}]),/Invalid attachments/);
+  const clipboard={read:async()=>[{types:['text/uri-list','image/png'],getType:async type=>new Blob([type==='text/uri-list'?pathToFileURL(source).href:'image'])}]};
+  assert.deepEqual(await clipboardAttachments(clipboard),[{path:source}]);
+  const screenshot=await clipboardAttachments({read:async()=>[{types:['image/png'],getType:async()=>new Blob([new Uint8Array([4,5])])}]});
+  assert.deepEqual(screenshot,[{name:'clipboard.png',data:new Uint8Array([4,5])}]);
+  await assert.rejects(clipboardAttachments({read:async()=>[{types:['text/uri-list'],getType:async()=>new Blob(['https://synthetic.example/file'])}]}),/Only local files/);
+}));
+
+test('tool activity is hidden by default and the saved preference survives restart',()=>fixture(async({store})=>{
+  assert.equal(store.state.showToolDetails,false);
+  store.state.showToolDetails=true;await store.save();
+  const reopened=new Store(store.directory,{});await reopened.init('en');assert.equal(reopened.state.showToolDetails,true);
+}));
 test('session index survives restart and detects external changes, new files and removals',async()=>fixture(async({store,project})=>{
   const session=await store.newSession(project.id);session.title='Original';session.messages=[{id:'a',text:'Saved'}];await store.saveSession(session);
   assert.equal((await store.sessions(project.id))[0].count,1);

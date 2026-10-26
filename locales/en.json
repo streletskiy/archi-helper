@@ -596,5 +596,17 @@
   "ui.updateElapsed": "Elapsed {time}",
   "ui.updateRemaining": "This step: ≈{time} remaining",
   "ui.updateRemainingUnknown": "Remaining time is not yet known",
-  "ui.updateStageProgress": "Step: {percent}% · {done} of {total} files"
+  "ui.updateStageProgress": "Step: {percent}% · {done} of {total} files",
+  "errors.ambiguousToolCallFragment": "The provider returned an ambiguous tool call fragment",
+  "errors.attachLocalFilesOnly": "Only local files can be attached",
+  "errors.invalidAttachments": "Invalid attachments or too many files (maximum 100)",
+  "errors.attachFilesNotFolders": "Attach files, not folders",
+  "errors.invalidChatPreferences": "Invalid chat preferences",
+  "ui.applicationSettings": "Application",
+  "ui.chatAppearance": "Chat appearance",
+  "ui.showToolDetails": "Show tool activity",
+  "ui.showToolDetailsHint": "Show tool calls, arguments and results in the chat. Your choice is saved for all chats.",
+  "ui.toolActionFailed": "An action failed. See the model reply or enable tool activity for details.",
+  "ui.dropFilesHere": "Drop files to attach to this chat",
+  "ui.saving": "Saving…"
 }
