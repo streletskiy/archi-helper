@@ -1,7 +1,7 @@
 ---
 id: "zone-stamp-area-label"
-title: "Override the displayed area in a specific zone stamp"
-summary: "Custom stamp text only; preserve geometry and calculated areas; explicit approval and pilot required."
+title: "Изменение надписи площади в штампе зоны"
+summary: "Только текст штампа с сохранением геометрии и расчётных площадей. Нужны явное согласие и пробная операция."
 kind: "skill"
 activation: "auto"
 enabled: true
