@@ -180,7 +180,7 @@ const handlers={
     const provider=store.state.providers.find(p=>p.id===id);if(!provider)return [];
     if(p.oauth&&(provider.oauth?.connectionId!==p.oauth.connectionId||provider.oauth.status!=='connected'||provider.oauth.planEnabled===false))return [];
     provider.models=list;
-    provider.catalogVersion=2;provider.catalogUpdatedAt=Date.now();
+    provider.catalogVersion=3;provider.catalogUpdatedAt=Date.now();
     const accountCatalog=providerDefinitions.find(d=>d.id===provider.definitionId)?.accountCatalog;
     if(!provider.model||(accountCatalog&&!list.some(m=>m.id===provider.model)))provider.model=list[0]?.id||'';
     if(store.state.providerId===id&&(!store.state.model||accountCatalog))store.state.model=provider.model;
