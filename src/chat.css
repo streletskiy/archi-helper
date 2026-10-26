@@ -19,6 +19,7 @@
 .message.system{padding-left:50px}
 .tool-activity{margin-left:50px;margin-bottom:22px}
 .working-indicator{margin-left:38px;gap:8px}
+.working-indicator>span{min-width:0;overflow-wrap:anywhere}
 @media(max-width:1100px){.chat-message.user{padding-left:25px}.message-bubble{padding:14px 16px}.chat-message.user .message-body{max-width:94%}}
 
 .main{position:relative}.chat-drop-overlay{position:absolute;inset:8px;z-index:20;pointer-events:none;border:2px dashed var(--theme-accent);border-radius:16px;background:var(--theme-surface);opacity:.96;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--theme-text)}.chat-preference{display:flex;align-items:center;gap:24px;justify-content:space-between}.settings-switch{width:44px;height:26px;flex:none;border-radius:20px;padding:3px;background:var(--theme-border);justify-content:flex-start}.settings-switch[aria-checked="true"]{background:var(--theme-accent)}.settings-switch>span{width:20px;height:20px;border-radius:50%;background:var(--theme-surface);box-shadow:0 1px 3px #0003;transition:transform .15s}.settings-switch[aria-checked="true"]>span{transform:translateX(18px)}

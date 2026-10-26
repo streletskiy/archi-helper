@@ -1,7 +1,7 @@
 ---
 id: "interactive-schedules"
-title: "Interactive schedules and supported APIs"
-summary: "Distinguish schedule cells and schemes from navigator items and model properties."
+title: "Интерактивные каталоги и доступные API"
+summary: "Различия между ячейками и схемами каталогов, элементами навигатора и свойствами модели."
 kind: "knowledge"
 activation: "auto"
 enabled: true
@@ -12,7 +12,7 @@ related: ["archicad-capabilities"]
 
 # Интерактивные каталоги и API Archicad
 
-Дата проверки: 21 октября 2026 года. Область: встроенный Graphisoft JSON/Python API, каталог поставляемого SDK для Archicad 27 build 3001 и определения Tapir 1.7.2. На другой версии сначала проверяйте доступные команды. Эта статья не добавляет отсутствующие функции в подключение.
+Область проверки определений: встроенный Graphisoft JSON/Python API, каталог поставляемого SDK для Archicad 27 build 3001 и определения Tapir 1.7.2. На другой версии сначала проверяйте доступные команды. Эта статья не добавляет отсутствующие функции в подключение.
 
 ## Что нужно различать
 

@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 
 public sealed class RuntimeFile { public string path; public long size; public string sha256; }
@@ -12,8 +14,13 @@ internal static class RuntimeHelper {
     private static string progressPath,progressStage;
     private static readonly Stopwatch elapsed=Stopwatch.StartNew();
     private static long lastReport=-1000;
+    private static int lastComplete;
+    private static readonly object progressLock=new object();
     private static void Report(int complete,int total) {
+        lock(progressLock) {
         if(String.IsNullOrEmpty(progressPath)||total<=0)return;
+        if(complete<lastComplete)return;
+        lastComplete=complete;
         if(complete!=total&&elapsed.ElapsedMilliseconds-lastReport<200)return;
         lastReport=elapsed.ElapsedMilliseconds;
         try {
@@ -23,10 +30,13 @@ internal static class RuntimeHelper {
             File.WriteAllText(temporary,text);
             if(File.Exists(progressPath))File.Replace(temporary,progressPath,null);else File.Move(temporary,progressPath);
         } catch(IOException) {} catch(UnauthorizedAccessException) {}
+        }
     }
     private static bool IsLink(string path) {return (File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0;}
     private static string Digest(string path) {
-        using(FileStream file=File.OpenRead(path))using(SHA256 hash=SHA256.Create())
+        // Windows CNG avoids the slower managed SHA-256 implementation. Read
+        // ahead for larger binaries while keeping memory and open files bounded.
+        using(FileStream file=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read,128*1024,FileOptions.SequentialScan))using(SHA256 hash=new SHA256Cng())
             return BitConverter.ToString(hash.ComputeHash(file)).Replace("-","").ToLowerInvariant();
     }
     private static bool Verify(string manifestPath,string directory) {
@@ -64,12 +74,17 @@ internal static class RuntimeHelper {
         // Reject missing files before reading thousands of file contents. This
         // keeps migration from incomplete legacy installations inexpensive.
         if(expected.Count!=0)return false;
-        int complete=0;
-        foreach(KeyValuePair<string,RuntimeFile> item in matched) {
-            if(!String.Equals(Digest(item.Key),item.Value.sha256,StringComparison.OrdinalIgnoreCase))return false;
-            Report(++complete,matched.Count);
-        }
-        return true;
+        int complete=0,failed=0;
+        // Independent files can be checked concurrently. A small worker limit
+        // hides file-open/antivirus latency without flooding the disk or memory.
+        Parallel.ForEach(matched,new ParallelOptions {MaxDegreeOfParallelism=Math.Min(4,Math.Max(1,Environment.ProcessorCount))},(item,loop)=>{
+            if(Interlocked.CompareExchange(ref failed,0,0)!=0){loop.Stop();return;}
+            if(!String.Equals(Digest(item.Key),item.Value.sha256,StringComparison.OrdinalIgnoreCase)) {
+                Interlocked.Exchange(ref failed,1);loop.Stop();return;
+            }
+            Report(Interlocked.Increment(ref complete),matched.Count);
+        });
+        return failed==0&&complete==matched.Count;
     }
     private static int Main(string[] args) {
         try {

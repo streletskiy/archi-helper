@@ -14,6 +14,7 @@ import { MessageQueue } from './message-queue.mjs';
 import { zoneAreaLabelApproval, ZONE_AREA_LABEL_RECIPE } from './knowledge.mjs';
 import { KnowledgeLibrary } from './knowledge-library.mjs';
 import { exportLayoutsPdf } from './layout-export.mjs';
+import { normalizeElementReferences } from './element-references.mjs';
 const PROGRESS=readFileSync(new URL('./knowledge/prompts/progress.md',import.meta.url),'utf8').trim();
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
@@ -69,6 +70,7 @@ export class Agent extends MessageQueue {
     if(name==='call_archicad') {
       const tool=this.mcp.tools.find(t=>t.key===args.name || t.name===args.name);
       if(!tool)throw new Error(t('agent.findTheToolWithFindToolsFirst'));
+      args.arguments=normalizeElementReferences(args.arguments,tool.inputSchema);
       const areaLabel=zoneAreaLabelApproval(name,{...args,name:tool.name});
       const readonly=tool.annotations?.readOnlyHint===true && !areaLabel;
       if(!readonly) {
@@ -154,7 +156,7 @@ export class Agent extends MessageQueue {
       this.selectedKnowledge=new Map(knowledge.map(entry=>[entry.id,entry]));
       const tools=agentTools.filter(t=>provider.supportsImages||t.function.name!=='view_image');
       const referenceHints=new Set();
-      let referenceConnection,system,referenceMessages,overhead,referenceSelection,referenceQuery=[text,...attachments].join(' ');
+      let referenceConnection,system,referenceMessages,overhead,referenceQuery=[text,...attachments].join(' ');
       while(true) {
         signal.throwIfAborted();
         const corrections=await this.takeSteering(session);
@@ -167,12 +169,6 @@ export class Agent extends MessageQueue {
           referenceMessages=reference.text?[{role:'user',content:reference.text}]:[];
           overhead=estimateTokens(system)+estimateTokens(tools)+estimateTokens(referenceMessages);
           referenceConnection=currentConnection;
-          const selection=JSON.stringify(reference.summary.automatic);
-          if(selection!==referenceSelection&&reference.automatic.length) {
-            const message={id:uid(),role:'notice',text:t('knowledge.automaticAttached',{titles:reference.automatic.map(entry=>entry.title).join(', ')}),at:Date.now()};
-            session.messages.push(message);emit({type:'message',message});await this.store.saveSession(session);
-          }
-          referenceSelection=selection;
         }
         this.repair(session.history);
         if(await compactSession({store:this.store,session,provider,model,signal,overhead}))emit({type:'message',message:await this.contextNotice(session)});
