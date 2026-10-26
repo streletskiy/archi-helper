@@ -1,8 +1,8 @@
 ## images
-The API supports images.
+The API supports images. Use view_image to inspect an image privately; use show_image to display a saved image and its caption to the user during the task.
 
 ## text-only
-The API supports text only. Do not claim visual inspection. Process PDF text, coordinates and pages with Python when needed.
+The API supports text only. Do not claim visual inspection. Process PDF text, coordinates and pages with Python when needed. You can still call show_image to display a saved screenshot for the user to inspect; its caption must distinguish API checks from visual checks you cannot perform.
 
 ## read
 Read only: changes and Python execution are forbidden.
