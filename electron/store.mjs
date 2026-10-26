@@ -51,6 +51,7 @@ export class Store {
     this.state.language = normalizeLanguage(this.state.language || defaultLanguage);
     this.state.reasoningEffort ||= 'xhigh';
     this.state.permissionMode ??= 'full';
+    this.state.showToolDetails = this.state.showToolDetails === true;
     if(!['system','light','dark'].includes(this.state.theme))this.state.theme='system';
     await fs.mkdir(path.join(this.directory, 'inbox'), { recursive: true });
     setLanguage(this.state.language);

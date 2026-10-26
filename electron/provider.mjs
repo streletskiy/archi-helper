@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { providerDefinition } from './provider-definitions.mjs';
 import { responsesCompletion } from './provider-responses.mjs';
 import { appFetch } from './network.mjs';
+import { argumentText, toolCallStream } from './tool-call-stream.mjs';
 const noStreamUsage=new Set();
 const activeCredentials=new WeakMap();
 function providerError(provider,status,text) {
@@ -30,20 +31,11 @@ function providerError(provider,status,text) {
   if(Number.isSafeInteger(window)&&window>0)error.contextWindow=window;
   return error;
 }
-function argumentText(value) {
-  if(typeof value==='string')return value;
-  // Some gateways serialize the SDK's argument union instead of its string value.
-  if(value && typeof value==='object' && !Array.isArray(value)) {
-    if(typeof value.OfString==='string' && Object.keys(value).every(k=>['OfString','OfResponseToolSearchCallArguments'].includes(k)))return value.OfString;
-    return JSON.stringify(value);
-  }
-  throw new Error(t('errors.theProviderReturnedInvalidToolArguments'));
-}
 function completeCalls(calls) {
-  return calls.map(t=>{
-    if(!t.id || !t.function?.name)throw new Error(t('errors.theProviderReturnedAnIncompleteToolCall'));
-    const args=argumentText(t.function.arguments);JSON.parse(args);
-    return {...t,function:{...t.function,arguments:args}};
+  return calls.map(call=>{
+    if(!call.id || !call.function?.name)throw new Error(t('errors.theProviderReturnedAnIncompleteToolCall'));
+    const args=argumentText(call.function.arguments);JSON.parse(args);
+    return {...call,function:{...call.function,arguments:args}};
   });
 }
 export async function api(provider, endpoint, init = {}) {
@@ -116,7 +108,7 @@ export async function completion(provider, model, messages, tools, signal, onDel
     const m=body.choices?.[0]?.message; if(!m) throw new Error(t('errors.theProviderResponseContainsNoMessage'));
     if(m.content)onDelta(m.content); return { role:'assistant', content:m.content || null, ...(m.reasoning_content!==undefined?{reasoning_content:m.reasoning_content}:{}),...(m.reasoning_details?{reasoning_details:m.reasoning_details}:{}),...(m.tool_calls?.length?{tool_calls:completeCalls(m.tool_calls)}:{}) };
   }
-  const decoder=new TextDecoder(); let pending='', content='', reasoning='', finishReason, done=false, activeCall, dataLines=[]; const calls=new Map(), reasoningDetails=new Map();
+  const decoder=new TextDecoder(); let pending='', content='', reasoning='', finishReason, done=false, dataLines=[]; const calls=toolCallStream(), reasoningDetails=new Map();
   const event = block => {
     const data=block.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');
     if(!data) return; if(data==='[DONE]'){done=true;return;}
@@ -132,16 +124,7 @@ export async function completion(provider, model, messages, tools, signal, onDel
       reasoningDetails.set(key,combined);
     }
     if(typeof delta.content==='string' && delta.content.length) { content+=delta.content; onDelta(delta.content); }
-    for(const t of delta.tool_calls || []) {
-      // Some OpenAI-compatible gateways emit complete calls with id but no index.
-      // Never merge distinct calls into the same undefined-index slot.
-      const key=t.index!==undefined?`index:${t.index}`:t.id?`id:${t.id}`:activeCall;
-      if(key===undefined)throw new Error(t('errors.aToolCallFragmentHasNoId'));
-      activeCall=key;
-      const call=calls.get(key) || { id:'',type:'function',function:{name:'',arguments:''} };
-      if(t.id)call.id=t.id; if(t.function?.name)call.function.name+=t.function.name;
-      if(t.function?.arguments!==undefined && t.function.arguments!==null)call.function.arguments+=argumentText(t.function.arguments); calls.set(key,call);
-    }
+    for(const fragment of delta.tool_calls || [])calls.append(fragment);
   };
   const line=raw=>{
     const value=raw.replace(/\r$/,'');
