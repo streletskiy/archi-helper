@@ -1,8 +1,18 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import {build} from 'esbuild';
 const root=path.resolve(import.meta.dirname,'..');
+const configFile=process.env.ARCHI_TELEMETRY_CONFIG_FILE||path.join(process.env.LOCALAPPDATA||path.join(os.homedir(),'.config'),'ArchiHelperMaintainer','posthog','ingestion.json');
+const local=await fs.readFile(configFile,'utf8').then(JSON.parse).catch(error=>{if(error.code==='ENOENT'&&!process.env.ARCHI_TELEMETRY_CONFIG_FILE)return {};throw error;});
+const projectToken=process.env.ARCHI_POSTHOG_PROJECT_TOKEN||local.projectToken||'';
+const host=process.env.ARCHI_POSTHOG_HOST||local.host||'https://eu.i.posthog.com';
+if(projectToken&&!/^phc_[A-Za-z0-9]+$/.test(projectToken))throw new Error('A public ingestion token is required; administrative keys are forbidden');
+if(process.env.ARCHI_REQUIRE_TELEMETRY_CONFIG==='1'&&!projectToken)throw new Error('Release telemetry configuration is missing');
+const endpoint=new URL(host);
+if(endpoint.protocol!=='https:'||endpoint.username||endpoint.password||endpoint.search||endpoint.hash||endpoint.pathname!=='/')throw new Error('Invalid telemetry ingestion host');
 const result=await build({absWorkingDir:root,entryPoints:['electron/main.mjs'],outfile:'electron/main.bundle.mjs',bundle:true,platform:'node',format:'esm',target:'node22',minify:true,metafile:true,external:['electron'],legalComments:'eof',
+  define:{__ARCHI_TELEMETRY_CONFIG__:JSON.stringify({host:endpoint.origin,projectToken})},
   banner:{js:"import {createRequire as __archiCreateRequire} from 'node:module';const require=__archiCreateRequire(import.meta.url);"}});
 const licenses=path.join(root,'.cache','node-licenses');
 if(path.dirname(licenses)!==path.join(root,'.cache'))throw new Error('Invalid license output directory');
