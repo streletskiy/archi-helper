@@ -11,7 +11,18 @@ const fail=key=>{throw new Error(t(`knowledge.${key}`));};
 const tokens=text=>[...new Set(String(text).toLocaleLowerCase().match(/[\p{L}\p{N}_-]{2,}/gu)||[])].slice(0,40);
 const metadata=entry=>Object.fromEntries(Object.entries(entry).filter(([key])=>!['text','file','searchText','signature'].includes(key)));
 const connectionInfo=connection=>({archicad:Number(connection?.archicad_version)||null,build:Number(connection?.archicad_build)||null,tapir:connection?.tapir_installed||null});
-const matches=(entry,connection)=>!entry.archicad.length||entry.archicad.includes(connectionInfo(connection).archicad);
+const versionParts=value=>typeof value==='string'&&/^\d+(?:\.\d+){0,3}$/.test(value)?value.split('.').map(Number):null;
+const compareVersion=(a,b)=>{const x=versionParts(a),y=versionParts(b);if(!x||!y)return null;for(let i=0;i<Math.max(x.length,y.length);i++){const d=(x[i]||0)-(y[i]||0);if(d)return Math.sign(d);}return 0;};
+const matches=(entry,connection)=>{
+  const actual=connectionInfo(connection);
+  if(entry.archicad.length&&!entry.archicad.includes(actual.archicad))return false;
+  if(!entry.compatibility?.length)return true;
+  return entry.compatibility.some(rule=>actual.archicad===rule.archicad&&
+    (rule.minBuild===undefined||actual.build!==null&&actual.build>=rule.minBuild)&&
+    (rule.maxBuild===undefined||actual.build!==null&&actual.build<=rule.maxBuild)&&
+    (rule.tapirMin===undefined||compareVersion(actual.tapir,rule.tapirMin)!==null&&compareVersion(actual.tapir,rule.tapirMin)>=0)&&
+    (rule.tapirMax===undefined||compareVersion(actual.tapir,rule.tapirMax)!==null&&compareVersion(actual.tapir,rule.tapirMax)<=0));
+};
 const wordMatch=(word,term)=>word===term||word.length>=4&&term.length>=4&&(term.startsWith(word)||word.startsWith(term));
 const autoScore=(entry,words)=>{
   const keywords=tokens((entry.triggers||[entry.title,...entry.tags]).join(' '));
@@ -44,9 +55,16 @@ function validate(input) {
   if(!['knowledge','skill'].includes(kind)||!['auto','manual','always'].includes(activation)||typeof enabled!=='boolean'||!Array.isArray(tags)||tags.length>20||tags.some(tag=>typeof tag!=='string'||tag.length>40)||!Array.isArray(archicad)||archicad.length>20||archicad.some(version=>!Number.isInteger(version)||version<20||version>99))fail('invalidEntry');
   if(activation==='always'&&text.length>KNOWLEDGE_LIMITS.alwaysEntryChars)fail('alwaysEntryLimit');
   if(input.verifiedOn!==undefined&&(!Array.isArray(input.verifiedOn)||input.verifiedOn.length>20||input.verifiedOn.some(item=>!item||!Number.isInteger(item.archicad)||!Number.isInteger(item.build)||typeof item.tapir!=='string')))fail('invalidEntry');
+  if(input.compatibility!==undefined&&(!Array.isArray(input.compatibility)||!input.compatibility.length||input.compatibility.length>20||input.compatibility.some(rule=>!rule||
+    !Number.isInteger(rule.archicad)||rule.archicad<20||rule.archicad>99||archicad.length&&!archicad.includes(rule.archicad)||
+    Object.keys(rule).some(key=>!['archicad','minBuild','maxBuild','tapirMin','tapirMax'].includes(key))||
+    ['minBuild','maxBuild'].some(key=>rule[key]!==undefined&&(!Number.isInteger(rule[key])||rule[key]<1))||
+    rule.minBuild!==undefined&&rule.maxBuild!==undefined&&rule.minBuild>rule.maxBuild||
+    ['tapirMin','tapirMax'].some(key=>rule[key]!==undefined&&!versionParts(rule[key]))||
+    rule.tapirMin!==undefined&&rule.tapirMax!==undefined&&compareVersion(rule.tapirMin,rule.tapirMax)>0)))fail('invalidEntry');
   for(const key of ['triggers','related'])if(input[key]!==undefined&&(!Array.isArray(input[key])||input[key].length>20||input[key].some(value=>typeof value!=='string'||!value||value.length>100)))fail('invalidEntry');
   return {title:title.trim(),summary:summary.trim(),text:text.trim(),kind,activation,enabled,tags,archicad,
-    ...(input.id?{id:input.id}:{}),...(input.verifiedOn?{verifiedOn:input.verifiedOn}:{}),...(input.triggers?{triggers:input.triggers}:{}),...(input.related?{related:input.related}:{}),...(input.requiresExplicitApproval===true?{requiresExplicitApproval:true}:{})};
+    ...(input.id?{id:input.id}:{}),...(input.verifiedOn?{verifiedOn:input.verifiedOn}:{}),...(input.compatibility?{compatibility:input.compatibility}:{}),...(input.triggers?{triggers:input.triggers}:{}),...(input.related?{related:input.related}:{}),...(input.requiresExplicitApproval===true?{requiresExplicitApproval:true}:{})};
 }
 const serialize=entry=>`---\n${Object.entries(entry).filter(([key])=>key!=='text').map(([key,value])=>`${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n${entry.text}\n`;
 
@@ -108,7 +126,7 @@ export class KnowledgeLibrary {
   }
   async read(id,projectId,connection,{agent=false,selected=[]}={}) {
     const {entries}=await this.scan(projectId),entry=entries.find(item=>item.id===id);
-    if(!entry||agent&&(!entry.enabled||entry.activation==='manual'&&!selected.includes(id)))fail('unavailable');
+    if(!entry||agent&&(!entry.enabled||!matches(entry,connection)||entry.activation==='manual'&&!selected.includes(id)))fail('unavailable');
     return {...metadata(entry),text:entry.text,...applicability(entry,connection)};
   }
   async search({id,query='',offset=0,limit=10},projectId,connection,selected=[]) {

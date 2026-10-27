@@ -1,0 +1,852 @@
+{
+  "dashboards": {
+    "usage": 1058706,
+    "reliability": 1058707,
+    "knowledge": 1058708
+  },
+  "insights": [
+    [
+      "usage",
+      "Первые наблюдаемые запуски",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_first_seen",
+            "name": "archi_first_seen",
+            "math": "total"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "existing_profile",
+          "breakdown_type": "event"
+        }
+      },
+      "Первый контакт с телеметрией. existing_profile отделяет обновившиеся профили от новых; это не количество скачиваний."
+    ],
+    [
+      "usage",
+      "Активные профили: DAU / WAU / MAU",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_task_started",
+            "name": "archi_task_started",
+            "math": "dau"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "archi_task_started",
+            "name": "archi_task_started",
+            "math": "weekly_active"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "archi_task_started",
+            "name": "archi_task_started",
+            "math": "monthly_active"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsLineGraph"
+        }
+      },
+      "Активность определяется началом задачи. Профиль не равен человеку."
+    ],
+    [
+      "usage",
+      "Подключённые провайдеры",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_provider_status",
+            "name": "archi_provider_status",
+            "math": "dau",
+            "properties": [
+              {
+                "key": "status",
+                "value": [
+                  "configured",
+                  "verified"
+                ],
+                "operator": "exact",
+                "type": "event"
+              }
+            ]
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "provider_type",
+          "breakdown_type": "event"
+        }
+      },
+      "Профили с наблюдаемым подключением за период; не число учётных записей."
+    ],
+    [
+      "usage",
+      "Модели: обращения и профили",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "$ai_generation",
+            "name": "$ai_generation",
+            "math": "total"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "$ai_generation",
+            "name": "$ai_generation",
+            "math": "dau"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "$ai_model",
+          "breakdown_type": "event"
+        }
+      },
+      "Только имена из публичного каталога. Неизвестные или частные модели обозначаются custom."
+    ],
+    [
+      "usage",
+      "Версии Archicad",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_connection",
+            "name": "archi_connection",
+            "math": "dau",
+            "properties": [
+              {
+                "key": "connected",
+                "value": true,
+                "operator": "exact",
+                "type": "event"
+              }
+            ]
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "archicad_version",
+          "breakdown_type": "event"
+        }
+      },
+      "Наблюдаемые успешные подключения."
+    ],
+    [
+      "usage",
+      "Сборки Archicad",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_connection",
+            "name": "archi_connection",
+            "math": "dau"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "archicad_build",
+          "breakdown_type": "event"
+        }
+      },
+      "Build из текущего подключения, без сведений о проекте."
+    ],
+    [
+      "usage",
+      "Версии Tapir",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_connection",
+            "name": "archi_connection",
+            "math": "dau"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "tapir_version",
+          "breakdown_type": "event"
+        }
+      },
+      "Отсутствующее значение означает, что версия неизвестна."
+    ],
+    [
+      "usage",
+      "Версии приложения",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_app_started",
+            "name": "archi_app_started",
+            "math": "dau"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "app_version",
+          "breakdown_type": "event"
+        }
+      },
+      "Наблюдаемые запуски профилей по версии приложения."
+    ],
+    [
+      "reliability",
+      "Задачи, генерации, HTTP и инструменты",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_task_started",
+            "name": "archi_task_started",
+            "math": "total"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "$ai_generation",
+            "name": "$ai_generation",
+            "math": "total"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "archi_http_request",
+            "name": "archi_http_request",
+            "math": "total"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "archi_tool_finished",
+            "name": "archi_tool_finished",
+            "math": "total"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsLineGraph"
+        }
+      },
+      "Разные единицы учёта. HTTP включает повторы и обновление OAuth после 401; генерации включают сжатие контекста."
+    ],
+    [
+      "reliability",
+      "Результаты задач",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_task_finished",
+            "name": "archi_task_finished",
+            "math": "total"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "outcome",
+          "breakdown_type": "event"
+        }
+      },
+      "completed_unverified — завершение без доказательства результата; отмена и неизвестный исход выделены отдельно."
+    ],
+    [
+      "reliability",
+      "Категории ошибок инструментов",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_tool_finished",
+            "name": "archi_tool_finished",
+            "math": "total",
+            "properties": [
+              {
+                "key": "error_category",
+                "value": [
+                  "none"
+                ],
+                "operator": "is_not",
+                "type": "event"
+              }
+            ]
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "error_category",
+          "breakdown_type": "event"
+        }
+      },
+      "Только нормализованные категории. Сообщения исключений, пути и аргументы не передаются."
+    ],
+    [
+      "reliability",
+      "Ошибки генераций по модели",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "$ai_generation",
+            "name": "$ai_generation",
+            "math": "total",
+            "properties": [
+              {
+                "key": "$ai_is_error",
+                "value": true,
+                "operator": "exact",
+                "type": "event"
+              }
+            ]
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "$ai_model",
+          "breakdown_type": "event"
+        }
+      },
+      "Количество неуспешных генераций; не сравнивать без общего объёма обращений."
+    ],
+    [
+      "reliability",
+      "Длительность задач: медиана и p95",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_task_finished",
+            "name": "archi_task_finished",
+            "math": "median",
+            "math_property": "duration_ms"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "archi_task_finished",
+            "name": "archi_task_finished",
+            "math": "p95",
+            "math_property": "duration_ms"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsLineGraph"
+        }
+      },
+      "Миллисекунды; включает ожидание разрешений пользователя."
+    ],
+    [
+      "reliability",
+      "Входные и выходные токены",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "$ai_generation",
+            "name": "$ai_generation",
+            "math": "sum",
+            "math_property": "$ai_input_tokens"
+          },
+          {
+            "kind": "EventsNode",
+            "event": "$ai_generation",
+            "name": "$ai_generation",
+            "math": "sum",
+            "math_property": "$ai_output_tokens"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsLineGraph"
+        }
+      },
+      "Только usage, возвращённый провайдером. Пропуски не равны нулю; денежная стоимость не заявляется."
+    ],
+    [
+      "reliability",
+      "Сжатие контекста",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_task_finished",
+            "name": "archi_task_finished",
+            "math": "sum",
+            "math_property": "compaction_count"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsLineGraph"
+        }
+      },
+      "Число генераций, потраченных на сжатие контекста."
+    ],
+    [
+      "knowledge",
+      "Категории задач",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_task_started",
+            "name": "archi_task_started",
+            "math": "total"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "task_kind",
+          "breakdown_type": "event"
+        }
+      },
+      "Фиксированная локальная классификация; исходный запрос не отправляется."
+    ],
+    [
+      "knowledge",
+      "Встроенные статьи",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_knowledge_used",
+            "name": "archi_knowledge_used",
+            "math": "total"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "knowledge_ids",
+          "breakdown_type": "event"
+        }
+      },
+      "ID только встроенных статей. Личные записи не передаются."
+    ],
+    [
+      "knowledge",
+      "Оценка результата пользователем",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_task_feedback",
+            "name": "archi_task_feedback",
+            "math": "total"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "feedback",
+          "breakdown_type": "event"
+        }
+      },
+      "Самооценка пользователя; не является технической верификацией. Повторная изменённая оценка создаёт отдельное событие."
+    ],
+    [
+      "knowledge",
+      "Исходы наблюдаемых маршрутов",
+      {
+        "kind": "TrendsQuery",
+        "dateRange": {
+          "date_from": "-30d"
+        },
+        "interval": "day",
+        "filterTestAccounts": true,
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "series": [
+          {
+            "kind": "EventsNode",
+            "event": "archi_workflow_observed",
+            "name": "archi_workflow_observed",
+            "math": "total"
+          }
+        ],
+        "trendsFilter": {
+          "display": "ActionsBarValue"
+        },
+        "breakdownFilter": {
+          "breakdown": "outcome",
+          "breakdown_type": "event"
+        }
+      },
+      "Маршруты не становятся инструкциями автоматически. Python представлен одним шагом."
+    ],
+    [
+      "knowledge",
+      "Очередь технических наблюдений",
+      {
+        "kind": "EventsQuery",
+        "event": "archi_workflow_observed",
+        "filterTestAccounts": true,
+        "after": "-30d",
+        "limit": 100,
+        "orderBy": [
+          "timestamp DESC"
+        ],
+        "properties": [
+          {
+            "key": "environment",
+            "value": [
+              "production"
+            ],
+            "operator": "exact",
+            "type": "event"
+          }
+        ],
+        "select": [
+          "timestamp",
+          "properties.run_id",
+          "properties.task_kind",
+          "properties.outcome",
+          "properties.archicad_version",
+          "properties.archicad_build",
+          "properties.tapir_version",
+          "properties.coverage",
+          "properties.steps",
+          "properties.knowledge_ids"
+        ]
+      },
+      "Приватная очередь анализа. Для публикации создайте независимый синтетический пример; не переносите run_id, время или исходные наблюдения в статьи."
+    ]
+  ],
+  "eventDescriptions": {
+    "archi_first_seen": "First observed telemetry-enabled launch of a local app profile; not a download or a unique person.",
+    "archi_app_started": "Telemetry-enabled application launch. Disabled in development and when opted out.",
+    "archi_provider_status": "Normalized provider type and connection state; no account identity or endpoint.",
+    "archi_connection": "Current Archicad, build and Tapir versions. No project information.",
+    "archi_task_started": "One agent run or direct tool operation. run_id is randomly generated independently of local session IDs.",
+    "archi_task_finished": "Terminal run counters and outcome. completed_unverified does not assert that the user goal was achieved.",
+    "archi_tool_finished": "One tool operation; allowed command name, status, duration and error category only.",
+    "archi_http_request": "One physical model API attempt, including retries. No URL, headers or bodies.",
+    "archi_knowledge_used": "Built-in article IDs observed in model context or explicit tool reads. No private knowledge.",
+    "archi_task_feedback": "Optional user rating, distinct from machine-verified success.",
+    "archi_workflow_observed": "Bounded structured action sequence; untrusted candidate for review. No scripts, arguments or outputs.",
+    "$ai_generation": "One logical model generation, including context compaction. Metadata only: no prompts, reasoning or outputs."
+  }
+}

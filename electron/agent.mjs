@@ -16,6 +16,7 @@ import { KnowledgeLibrary } from './knowledge-library.mjs';
 import { exportLayoutsPdf } from './layout-export.mjs';
 import { normalizeElementReferences } from './element-references.mjs';
 import { modelResponseTimeout } from './model-limits.mjs';
+import { currentObservation } from './telemetry-context.mjs';
 const PROGRESS=readFileSync(new URL('./knowledge/prompts/progress.md',import.meta.url),'utf8').trim();
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
@@ -57,9 +58,13 @@ export class Agent extends MessageQueue {
     if(this.approval?.approval.id===id)this.approval=null;
     this.emit({type:'approval-done',sessionId:session.id,id});
     if(this.hasSteering)throw new Error(t('agent.actionSuperseded'));
-    if(!allowed)throw new Error(t('agent.theUserDeclinedTheActionDoNot'));
+    if(!allowed)throw Object.assign(new Error(t('agent.theUserDeclinedTheActionDoNot')),{telemetryCategory:'permission_denied'});
   }
   async execute(session,name,args,mode,signal) {
+    const observation=currentObservation(),action=()=>this.executeTool(session,name,args,mode,signal);
+    return observation?observation.tool(name,args,action,signal):action();
+  }
+  async executeTool(session,name,args,mode,signal) {
     signal.throwIfAborted();
     const root=await this.store.workspace(session.projectId,session.id);
     if(name==='get_knowledge')return this.selectedKnowledge.get(args.id)||this.knowledge.search(args,session.projectId,this.mcp.connectionInfo,[...this.selectedKnowledge.keys()]);
@@ -132,7 +137,11 @@ export class Agent extends MessageQueue {
     }
     throw new Error(t('agent.unknownTool',{value0:name}));
   }
-  async performTask(session,{providerId,model,mode='full',reasoningEffort,knowledge=[],text='',attachments=[]},signal) {
+  async performTask(session,input,signal) {
+    const action=()=>this.performObservedTask(session,input,signal);
+    return this.store.telemetry?this.store.telemetry.task(session,input,this.mcp.connectionInfo,action):action();
+  }
+  async performObservedTask(session,{providerId,model,mode='full',reasoningEffort,knowledge=[],text='',attachments=[]},signal) {
     const {projectId,id:sessionId}=session;
     const emit=e=>this.emit({...e,sessionId});
     let overflowRetries=0,responseRetries=0,silentRounds=0,toolFailed=false,streamId;
@@ -156,17 +165,20 @@ export class Agent extends MessageQueue {
       const workspace=await this.store.workspace(projectId,sessionId);
       const catalog=await saveApiCatalog(this.mcp,workspace);
       this.selectedKnowledge=new Map(knowledge.map(entry=>[entry.id,entry]));
+      currentObservation()?.knowledgeUsed(knowledge.map(entry=>entry.id),'selected');
       const tools=agentTools.filter(t=>provider.supportsImages||t.function.name!=='view_image');
       const referenceHints=new Set();
       let referenceConnection,system,referenceMessages,overhead,referenceQuery=[text,...attachments].join(' ');
       while(true) {
         signal.throwIfAborted();
         const corrections=await this.takeSteering(session);
+        if(corrections)currentObservation()?.steering(corrections.length);
         if(corrections)for(const item of corrections){referenceQuery=(item.text+' '+referenceQuery).slice(0,8000);for(const entry of item.knowledge||[])this.selectedKnowledge.set(entry.id,entry);}
         const contextQuery=[...referenceHints,referenceQuery].join(' ');
         const currentConnection=JSON.stringify([this.mcp.connectionInfo||null,contextQuery,[...this.selectedKnowledge.keys()]]);
         if(currentConnection!==referenceConnection) {
           const reference=await this.knowledge.context(projectId,this.mcp.connectionInfo,{query:contextQuery,selected:[...this.selectedKnowledge.keys()]});
+          currentObservation()?.knowledgeUsed(reference.automatic.map(entry=>entry.id),'automatic');
           system={role:'system',content:systemMessage(this.store.project(projectId).path,provider.supportsImages,mode,catalogSummary(catalog),{workspace,legacyProjectFiles:session.legacyProjectFiles,knowledge:reference.summary})};
           referenceMessages=reference.text?[{role:'user',content:reference.text}]:[];
           overhead=estimateTokens(system)+estimateTokens(tools)+estimateTokens(referenceMessages);
@@ -257,6 +269,7 @@ export class Agent extends MessageQueue {
         if(images.length){session.history.push({role:'user',content:images,_attachment:true});await this.store.saveSession(session);}
       }
     } catch(e) {
+      currentObservation()?.failure(e,signal);
       if(streamId)emit({type:'stream-reset',id:streamId});
       // Repair incomplete tool batches on cancellation/failure without replaying commands.
       this.repair(session.history);
