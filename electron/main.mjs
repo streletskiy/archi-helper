@@ -18,6 +18,7 @@ import { installUpdate, cleanupUpdateHelper } from './update-install.mjs';
 import { showAppWindow } from './window-visibility.mjs';
 import { installTapir, checkTapirUpdates } from './tapir-installer.mjs';
 import { saveAttachments, clipboardAttachments } from './attachments.mjs';
+import { Telemetry } from './telemetry.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWith('--archi-data-dir='))?.slice('--archi-data-dir='.length);
@@ -44,7 +45,7 @@ function answerProviderPrompt({id,response}) {
   pendingProviderPrompt=undefined;emit({type:'provider-prompt',prompt:null});pending.resolve({response});
 }
 const runtimeManifest=await fs.readFile(path.join(runtime,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({}));
-const publicState=()=>({...store.publicState(),providerPrompt:pendingProviderPrompt?.prompt,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:mcp.clients.has('archicad'),toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state,tapirProgress});
+const publicState=()=>({...store.publicState(),telemetry:store.telemetry?.state(),providerPrompt:pendingProviderPrompt?.prompt,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:mcp.clients.has('archicad'),toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state,tapirProgress});
 async function connect() {
   if(connecting)return connecting;
   connecting=(async()=>{
@@ -67,6 +68,7 @@ async function connect() {
         } catch { /* Project metadata is optional for a healthy connection. */ }
       }
     } catch(e) {connection={connected:false,message:e.message};}
+    store.telemetry?.connection(connection);
     emit({type:'connection',connection,toolCount:mcp.tools.length,runtimeReady:mcp.clients.has('archicad')});
     return connection;
   })().finally(()=>{connecting=null;});
@@ -91,6 +93,10 @@ async function scan() {
   }))).filter(Boolean);
 }
 const handlers={
+  telemetryStatus:async()=>store.telemetry.state(),
+  telemetryPreferences:async input=>store.telemetry.update(input),
+  telemetryRuns:async({projectId,sessionId})=>store.telemetry.runs(await agent.load(projectId,sessionId)),
+  telemetryFeedback:async({projectId,sessionId,id,feedback})=>agent.locked(async()=>store.telemetry.feedback(await agent.load(projectId,sessionId),id,feedback)),
   theme:async({theme})=>{
     if(!['system','light','dark'].includes(theme))throw new Error(t('theme.invalid'));
     const previous=store.state.theme;store.state.theme=theme;
@@ -120,6 +126,7 @@ const handlers={
     if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
     const providerId=await store.oauthManager.connect(definitionId,id,registrationId);
     const provider=store.state.providers.find(p=>p.id===providerId),definition=providerDefinitions.find(d=>d.id===definitionId);
+    store.telemetry?.provider(provider,'verified');
     store.selectModel(providerId);await store.save();
     if(provider.oauth.planEnabled&&!(store.state.planNotices||[]).includes(definitionId)) {
       showAppWindow(win);
@@ -161,7 +168,7 @@ const handlers={
   renameProject:async({id,name})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.renameProject(id,name);return publicState();}),
   deleteProject:async({id})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.deleteProject(id);return publicState();}),
   moveDraft:async({projectId,id,targetProjectId})=>agent.locked(async()=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));return store.moveDraft(projectId,id,targetProjectId||INBOX_ID);}),
-  saveProvider:async input=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.provider(input);return publicState();},
+  saveProvider:async input=>{if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));await store.provider(input);store.telemetry?.providers();return publicState();},
   deleteProvider:async({id})=>{
     if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
     const provider=store.state.providers.find(p=>p.id===id);
@@ -173,10 +180,12 @@ const handlers={
     if(response!==1)return publicState();
     if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
     if(provider.oauth)await store.oauthManager.disconnect(id);else await store.deleteProvider(id);
+    store.telemetry?.provider(provider,'removed');
     return publicState();
   },
   models:async({id})=>{
     const p=store.getProvider(id),list=await models(p);
+    store.telemetry?.provider(p,'verified');
     const provider=store.state.providers.find(p=>p.id===id);if(!provider)return [];
     if(p.oauth&&(provider.oauth?.connectionId!==p.oauth.connectionId||provider.oauth.status!=='connected'||provider.oauth.planEnabled===false))return [];
     provider.models=list;
@@ -206,7 +215,7 @@ const handlers={
   connect:async()=>connect(),
   scan:async()=>scan(),
   tools:async()=>mcp.tools.map(t=>({key:t.key,name:t.name,description:t.description,inputSchema:t.inputSchema,readOnly:t.annotations?.readOnlyHint===true})),
-  directTool:async({projectId,sessionId,key,args,mode})=>agent.runDirect({projectId,sessionId},async(s,controller)=>{
+  directTool:async({projectId,sessionId,key,args,mode})=>agent.runDirect({projectId,sessionId},async(s,controller)=>store.telemetry.task(s,{kind:'direct',mode},mcp.connectionInfo,async()=>{
     const m={id:crypto.randomUUID(),role:'tool',name:key,args,text:'',status:'running',at:Date.now()};
     s.messages.push(m);await store.saveSession(s);emit({type:'message',message:m,sessionId});
     let result;
@@ -215,7 +224,7 @@ const handlers={
     const artifact=await store.artifact(projectId,sessionId,key,result);
     Object.assign(m,{text:JSON.stringify(result).slice(0,24000),status:result.isError?'error':'done',artifact});
     await store.saveSession(s);emit({type:'message',message:m,sessionId});return m;
-  }),
+  })),
   send:async input=>{if(pendingProviderPrompt||store.oauthManager.pending||store.oauthManager.disconnecting.size)throw new Error(t('errors.oauthAlreadyConnecting'));return agent.enqueue(input);},
   queuedMessage:async input=>agent.changeQueued(input),
   resumeQueue:async input=>agent.resume(input),
@@ -296,10 +305,12 @@ else {
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
   });
    await store.init(app.getLocale());nativeTheme.themeSource=store.state.theme;store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);await agent.knowledge.init();
+  store.telemetry=new Telemetry(store,{runtimeEnabled:app.isPackaged&&process.env.ARCHI_TELEMETRY_DISABLED!=='1',version:app.getVersion(),installationKind:process.env.PORTABLE_EXECUTABLE_FILE?'portable':'installed'});
+  await store.telemetry.init();store.telemetry.start();
   updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>installUpdate({app,win,updater:updaterModule.autoUpdater,update:updates.state,language:store.state.language})});
   ipcMain.handle('archi:call',async(event,method,input={})=>{
     if(event.sender!==win?.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error(t('errors.untrustedRequest'));
-    if(updates.state.status==='installing'&&!['bootstrap','window'].includes(method))throw new Error(t('errors.anUpdateIsBeingInstalled'));
+    if(updates.state.status==='installing'&&!['bootstrap','window','telemetryPreferences','telemetryStatus'].includes(method))throw new Error(t('errors.anUpdateIsBeingInstalled'));
     if(!Object.hasOwn(handlers,method))throw new Error(t('errors.unknownOperation'));
     const tracked=!['bootstrap','updateIdle','checkUpdates','deferUpdate','restartUpdate','window'].includes(method);
     if(tracked){activeCalls++;updates.workChanged();}
@@ -322,6 +333,6 @@ else {
     if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop().catch(()=>{});setTimeout(()=>win.destroy(),500);}});}
   });
   app.on('window-all-closed',()=>app.quit());
-   let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;if(pendingProviderPrompt)answerProviderPrompt({id:pendingProviderPrompt.prompt.id,response:pendingProviderPrompt.prompt.cancelId});updates.dispose();store.oauthManager.dispose();Promise.allSettled([agent.stop(),mcp.close()]).finally(()=>app.quit());}});
+   let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;if(pendingProviderPrompt)answerProviderPrompt({id:pendingProviderPrompt.prompt.id,response:pendingProviderPrompt.prompt.cancelId});updates.dispose();store.oauthManager.dispose();Promise.allSettled([agent.stop(),mcp.close(),store.telemetry.shutdown()]).finally(()=>app.quit());}});
   }).catch(error=>{dialog.showErrorBox(t('errors.archiHelperStartupError'),error.message);app.quit();});
 }

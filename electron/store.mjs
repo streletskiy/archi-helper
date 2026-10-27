@@ -65,7 +65,7 @@ export class Store {
   }
   async save() { this.saving=(this.saving||Promise.resolve()).catch(()=>{}).then(()=>atomicJSON(this.file,this.state));await this.saving; }
   publicState() {
-    const {oauthRegistrations,...state}=this.state;
+    const {oauthRegistrations,telemetry,...state}=this.state;
     return { ...state, providers: state.providers.map(({ encryptedKey, encryptedOAuth, ...p }) => ({ ...p, hasKey: !!encryptedKey || !!encryptedOAuth })) };
   }
   async provider(input) {
