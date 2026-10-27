@@ -99,9 +99,13 @@ export class Agent extends MessageQueue {
     }
     if(name==='read_file') {
       const {file,scope}=await this.store.resolveFile(session.projectId,session.id,args.path,args);
-      const stat=await fs.stat(file);
-      if(stat.size>256*1024*1024)throw new Error(t('agent.theFileExceeds256MbProcessIt'));
-      let text=await fs.readFile(file,'utf8');
+      const handle=await fs.open(file,'r');
+      let text;
+      try {
+        const stat=await handle.stat();
+        if(stat.size>256*1024*1024)throw new Error(t('agent.theFileExceeds256MbProcessIt'));
+        text=await handle.readFile('utf8');
+      } finally {await handle.close();}
       if(args.json_pointer) {
         if(!args.json_pointer.startsWith('/'))throw new Error(t('agent.theJsonPointerMustStartWith'));
         let value=JSON.parse(text);

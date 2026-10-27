@@ -12,7 +12,7 @@ const dirs=await fs.readdir(path.join(runtime,'python'),{withFileTypes:true});
 const folder=dirs.find(x=>x.isDirectory() && x.name.startsWith('cpython-3.13.7') && x.name.includes('windows'))?.name;
 if(!folder)throw new Error('Managed Python not found');
 const python=path.join(runtime,'python',folder,'python.exe');
-const lock=path.join(root,'vendor','requirements.lock');
+const lock=path.join(root,'vendor','requirements.txt');
 try{await fs.access(lock);}catch{
   run(uv,['pip','compile','vendor/archicad-mcp/pyproject.toml','vendor/requirements.in','--python',python,'--output-file',lock]);
 }
