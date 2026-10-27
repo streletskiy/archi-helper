@@ -1,0 +1,7 @@
+{
+  "layouts_pdf": "pdf|publisher|layout|макет|публикац",
+  "schedules": "schedule|спецификац|каталог",
+  "properties": "propert|свойств|параметр",
+  "geometry": "wall|slab|geometry|геометри|стен|перекрыти",
+  "python": "python|питон|скрипт"
+}
