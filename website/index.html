@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f8f8f2">
+    <meta name="description" content="Archi Helper — помощник архитектора для Windows. Работа с Archicad, проверка макетов и обработка файлов через диалог с AI.">
+    <meta property="og:title" content="Archi Helper — меньше рутины, больше архитектуры">
+    <meta property="og:description" content="Помощник для Archicad. Опишите задачу обычными словами — и продолжайте проектировать.">
+    <meta property="og:type" content="website">
+    <title>Archi Helper — помощник архитектора</title>
+    <link rel="icon" type="image/png" href="./assets/helmet.png">
+    <script>
+      // Apply the saved or system theme before the stylesheet paints.
+      let initialTheme;
+      try { initialTheme = localStorage.getItem('archi-helper-theme'); } catch {}
+      if (initialTheme !== 'light' && initialTheme !== 'dark') {
+        initialTheme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.dataset.theme = initialTheme;
+      document.querySelector('meta[name="theme-color"]').content = initialTheme === 'dark' ? '#17181b' : '#f8f8f2';
+    </script>
+    <link rel="stylesheet" href="./styles.css">
+    <script type="module" src="./site.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Перейти к содержимому</a>
+    <header class="site-header wrap">
+      <a class="brand" href="#" aria-label="Archi Helper — на главную">
+        <img src="./assets/helmet.png" width="64" height="64" alt="">
+        <span>archi<span class="brand-light"> helper</span><span class="brand-dot">.</span></span>
+      </a>
+      <nav aria-label="Основная навигация">
+        <a href="#start">Начало работы</a>
+        <a href="https://github.com/streletskiy/archi-helper" class="github-link" aria-label="GitHub">GitHub <svg class="icon" aria-hidden="true"><use href="./icons.svg#external-link"/></svg></a>
+        <button class="theme-toggle" type="button" hidden aria-label="Включить тёмную тему" data-light-label="Включить светлую тему" data-dark-label="Включить тёмную тему">
+          <svg class="icon theme-moon" aria-hidden="true"><use href="./icons.svg#moon"/></svg>
+          <svg class="icon theme-sun" aria-hidden="true"><use href="./icons.svg#sun"/></svg>
+        </button>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero wrap" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> ПОМОЩНИК АРХИТЕКТОРА</p>
+          <h1 id="hero-title">Меньше рутины.<br>Больше <span class="highlight">архитектуры.</span></h1>
+          <p class="intro">Вы проектируете. Archi Helper помогает с&nbsp;остальным: работает с&nbsp;Archicad, проверяет макеты и&nbsp;разбирается с&nbsp;файлами.</p>
+          <div class="download-block">
+            <a class="button button-primary" data-download="setup" href="https://github.com/streletskiy/archi-helper/releases/latest">
+              Скачать для Windows <svg class="icon" aria-hidden="true"><use href="./icons.svg#download"/></svg>
+            </a>
+            <p class="release-meta" data-release-meta aria-live="polite" data-size-unit="МБ">Последняя версия · Windows x64</p>
+            <div class="download-alternatives">
+              <a data-download="portable" href="https://github.com/streletskiy/archi-helper/releases/latest">Portable без установки <svg class="icon" aria-hidden="true"><use href="./icons.svg#download"/></svg></a>
+              <span aria-hidden="true">/</span>
+              <a href="https://github.com/streletskiy/archi-helper/releases/latest">Что нового</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="hero-art" role="img" aria-label="Пиксельный строитель Archi Helper">
+          <div class="drawing">
+            <svg class="drawing-grid" viewBox="0 0 440 440" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+              <defs><pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path class="grid-lines" d="M 28 0 L 0 0 0 28" fill="none" stroke-width="1"/></pattern></defs>
+              <rect width="440" height="440" fill="url(#grid)"/>
+              <path class="drawing-lines" d="M40 62h360M62 40v360M378 40v360M40 378h360" fill="none" stroke-width="1"/>
+              <path class="drawing-marks" d="m57 67 10-10m306 10 10-10M57 383l10-10m306 10 10-10" stroke-width="1.5"/>
+            </svg>
+            <div class="mascot-halo" aria-hidden="true"></div>
+            <span class="mascot" aria-hidden="true"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="capabilities wrap" aria-labelledby="capabilities-title">
+        <div class="section-kicker"><h2 id="capabilities-title">МЕНЬШЕ КЛИКОВ. БОЛЬШЕ ДЕЛА.</h2><span>Всё начинается с обычного сообщения.</span></div>
+        <div class="capability-grid">
+          <article>
+            <svg class="icon" aria-hidden="true"><use href="./icons.svg#box"/></svg>
+            <h3>Archicad — в диалоге</h3>
+            <p>Найти элементы, прочитать свойства, выполнить доступные изменения. Просто опишите задачу.</p>
+          </article>
+          <article>
+            <svg class="icon" aria-hidden="true"><use href="./icons.svg#file-text"/></svg>
+            <h3>Второй взгляд на макеты</h3>
+            <p>Проверить тексты на опечатки и нестыковки, подготовить отчёт и предложить исправления.</p>
+          </article>
+          <article>
+            <svg class="icon" aria-hidden="true"><use href="./icons.svg#folder-open"/></svg>
+            <h3>Файлы тоже в работе</h3>
+            <p>Разобрать PDF, изображения и таблицы данных. Встроенный Python уже готов к работе.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="start" class="getting-started" aria-labelledby="start-title">
+        <div class="wrap">
+          <div class="section-heading"><div><p class="eyebrow">КОРОТКАЯ ИНСТРУКЦИЯ</p><h2 id="start-title">От установки — к делу.</h2></div><span class="section-aside">Три шага до первой задачи</span></div>
+          <ol class="steps">
+            <li><span class="step-number" aria-hidden="true">01</span><h3>Установите помощника</h3><p>Скачайте установщик для Windows x64 и запустите его. Python, uv и MCP уже внутри.</p><a data-download="setup" href="https://github.com/streletskiy/archi-helper/releases/latest">Скачать последнюю версию <svg class="icon" aria-hidden="true"><use href="./icons.svg#download"/></svg></a></li>
+            <li><span class="step-number" aria-hidden="true">02</span><h3>Подключите Archicad</h3><p>Откройте проект в Archicad. Через настройки помощника установите Tapir, завершите установку и перезапустите Archicad.</p><span class="step-note">Tapir связывает помощника с Archicad.</span></li>
+            <li><span class="step-number" aria-hidden="true">03</span><h3>Выберите AI и начните</h3><p>Войдите через lumv или ChatGPT в настройках либо укажите API-ключ своего провайдера. Выберите модель и напишите задачу.</p><span class="step-note">Например: «Какие свойства есть у стен?»</span></li>
+          </ol>
+          <p class="start-note"><span aria-hidden="true">↳</span> Для первого знакомства выберите режим «Только просмотр». Перед изменениями сохраните резервную копию PLN.</p>
+        </div>
+      </section>
+
+      <section class="faq wrap" aria-labelledby="faq-title">
+        <div class="faq-heading"><p class="eyebrow">ПОЛЕЗНО ЗНАТЬ</p><h2 id="faq-title">Без мелкого <br>шрифта.</h2><a href="https://github.com/streletskiy/archi-helper#readme">Полная документация <svg class="icon" aria-hidden="true"><use href="./icons.svg#external-link"/></svg></a></div>
+        <div class="faq-list">
+          <details><summary>Что нужно для работы?<span class="details-icon" aria-hidden="true">+</span></summary><p>Windows x64, установленный Archicad с подходящей версией Tapir и доступ к AI-провайдеру. Доступные инструменты зависят от версий Archicad и Tapir; помощник использует возможности текущего подключения.</p></details>
+          <details><summary>Сколько это стоит?<span class="details-icon" aria-hidden="true">+</span></summary><p>Archi Helper — бесплатное приложение с открытым исходным кодом под лицензией MIT. Доступ к моделям и стоимость запросов определяет выбранный AI-провайдер.</p></details>
+          <details><summary>Куда отправляются мои данные?<span class="details-icon" aria-hidden="true">+</span></summary><p>История и файлы хранятся локально. Запросы и необходимые материалы отправляются выбранному AI-провайдеру. Техническая статистика включена по умолчанию; её можно отключить в настройках. Тексты чата, файлы проектов и секреты в эту статистику не входят. <a href="https://github.com/streletskiy/archi-helper/blob/main/docs/TELEMETRY.md">Подробнее о данных</a>.</p></details>
+          <details><summary>Как обновляться?<span class="details-icon" aria-hidden="true">+</span></summary><p>Установленная версия сама проверяет стабильные релизы и предлагает перезапуск после завершения работы. Portable-версию нужно обновлять вручную: скачайте новый EXE из последнего релиза.</p></details>
+          <details><summary>Почему Windows предупреждает об установщике?<span class="details-icon" aria-hidden="true">+</span></summary><p>Установщики пока не подписаны сертификатом издателя. Скачивайте приложение только из официальных GitHub Releases; там же опубликован файл SHA256SUMS.txt для проверки скачанного файла.</p></details>
+        </div>
+      </section>
+
+      <section class="closing wrap" aria-labelledby="closing-title"><div><p class="eyebrow">ВАШ СЛЕДУЮЩИЙ ПРОЕКТ</p><h2 id="closing-title">С хорошим помощником — легче.</h2></div><a class="button button-primary" data-download="setup" href="https://github.com/streletskiy/archi-helper/releases/latest">Скачать Archi Helper <svg class="icon" aria-hidden="true"><use href="./icons.svg#download"/></svg></a></section>
+    </main>
+
+    <footer class="site-footer wrap"><div><span class="footer-name">Archi Helper</span><p>Независимый проект. Не продукт Graphisoft.</p></div><div class="footer-links"><a href="https://github.com/streletskiy/archi-helper/issues">Сообщить об ошибке <svg class="icon" aria-hidden="true"><use href="./icons.svg#external-link"/></svg></a><a href="https://github.com/streletskiy/archi-helper/blob/main/LICENSE">MIT License</a></div></footer>
+  </body>
+</html>

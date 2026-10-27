@@ -9,6 +9,8 @@
   "main": "electron/main.bundle.mjs",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "site:build": "node scripts/build-site.mjs",
+    "site:preview": "npm run site:build && vite preview --outDir .cache/site --host 127.0.0.1 --port 4173 --strictPort",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build && node scripts/build-main.mjs && node scripts/build-update-helper.mjs",
