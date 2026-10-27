@@ -1,4 +1,4 @@
 pillow
 pymupdf==1.28.2
-pypdf
+pypdf>=6.21.2
 archicad
