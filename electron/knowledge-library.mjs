@@ -98,19 +98,22 @@ export class KnowledgeLibrary {
           if(++count>2000)fail('scanLimit');
           files.add(file);
           try {
-            const stat=await fs.stat(file,{bigint:true});if(stat.size>BigInt(KNOWLEDGE_LIMITS.fileBytes))fail('fileLimit');
-            const signature=`${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-            let entry=this.cache.get(file);
-            if(!entry||entry.signature!==signature) {
-              const raw=await fs.readFile(file,'utf8'),parsed=parseKnowledge(raw);
-              const version=source==='bundled'&&rel.match(/^versions\/(\d+)\//)?.[1];
-              if(version&&(!parsed.archicad.length||parsed.archicad.some(v=>v!==Number(version))))fail('invalidEntry');
-              const id=source==='user'?`user:${rel.slice(0,-3)}`:parsed.id;
-              if(typeof id!=='string'||!id||id.length>240||source==='bundled'&&!/^[a-z0-9][a-z0-9-]*$/.test(id))fail('invalidEntry');
-              entry={...parsed,id,source,scope,file,relative:rel,revision:hash(raw),signature,searchText:parsed.text.toLocaleLowerCase()};
-              this.cache.set(file,entry);
-            }
-            if(seen.has(entry.id))fail('duplicateId');seen.add(entry.id);entries.push(entry);
+            const handle=await fs.open(file,'r');
+            try {
+              const stat=await handle.stat({bigint:true});if(stat.size>BigInt(KNOWLEDGE_LIMITS.fileBytes))fail('fileLimit');
+              const signature=`${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+              let entry=this.cache.get(file);
+              if(!entry||entry.signature!==signature) {
+                const raw=await handle.readFile('utf8'),parsed=parseKnowledge(raw);
+                const version=source==='bundled'&&rel.match(/^versions\/(\d+)\//)?.[1];
+                if(version&&(!parsed.archicad.length||parsed.archicad.some(v=>v!==Number(version))))fail('invalidEntry');
+                const id=source==='user'?`user:${rel.slice(0,-3)}`:parsed.id;
+                if(typeof id!=='string'||!id||id.length>240||source==='bundled'&&!/^[a-z0-9][a-z0-9-]*$/.test(id))fail('invalidEntry');
+                entry={...parsed,id,source,scope,file,relative:rel,revision:hash(raw),signature,searchText:parsed.text.toLocaleLowerCase()};
+                this.cache.set(file,entry);
+              }
+              if(seen.has(entry.id))fail('duplicateId');seen.add(entry.id);entries.push(entry);
+            } finally {await handle.close();}
           }catch(error){issues.push({file:rel,error:error.message});}
         }
       }catch(error){if(error.code!=='ENOENT')throw error;}

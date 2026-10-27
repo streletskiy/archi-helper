@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 const root=path.resolve(import.meta.dirname,'..');
 const sources=JSON.parse(await fs.readFile(path.join(root,'vendor/pymupdf-source.json'),'utf8'));
-const lock=await fs.readFile(path.join(root,'vendor/requirements.lock'),'utf8');
+const lock=await fs.readFile(path.join(root,'vendor/requirements.txt'),'utf8');
 if(!lock.split(/\r?\n/).includes(`pymupdf==${sources[0].version}`))throw new Error('Source version differs from runtime lock');
 await fs.mkdir(path.join(root,'release'),{recursive:true});
 for(const source of sources){

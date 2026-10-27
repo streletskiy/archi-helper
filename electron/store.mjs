@@ -33,9 +33,13 @@ export async function projectPath(root, relative = '.') {
   return result;
 }
 export async function imageFile(root, relative) {
-  const file=await projectPath(root,relative),stat=await fs.stat(file);
-  if(stat.size>12*1024*1024)throw new Error(t('errors.theImageExceeds12MbResizeIt'));
-  const data=await fs.readFile(file);
+  const file=await projectPath(root,relative),handle=await fs.open(file,'r');
+  let data;
+  try {
+    const stat=await handle.stat();
+    if(stat.size>12*1024*1024)throw new Error(t('errors.theImageExceeds12MbResizeIt'));
+    data=await handle.readFile();
+  } finally {await handle.close();}
   const mime=data.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))?'image/png':
     data[0]===255&&data[1]===216?'image/jpeg':
     data.subarray(0,4).toString()==='RIFF'&&data.subarray(8,12).toString()==='WEBP'?'image/webp':null;
