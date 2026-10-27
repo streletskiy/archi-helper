@@ -46,3 +46,5 @@ docs/screenshots/*
 !docs/screenshots/knowledge/*.png
 !docs/screenshots/theme/
 !docs/screenshots/theme/*.png
+posthog-dashboards*.json
+telemetry-private*.json
