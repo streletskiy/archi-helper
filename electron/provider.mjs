@@ -7,6 +7,7 @@ import { responsesCompletion } from './provider-responses.mjs';
 import { appFetch } from './network.mjs';
 import { argumentText, toolCallStream } from './tool-call-stream.mjs';
 import { modelOutputLimit } from './model-limits.mjs';
+import { currentObservation } from './telemetry-context.mjs';
 const noStreamUsage=new Set();
 const activeCredentials=new WeakMap();
 function providerError(provider,status,text) {
@@ -60,7 +61,9 @@ export async function api(provider, endpoint, init = {}) {
   const send=()=>{
     if(token)activeCredentials.set(provider,[...new Set([token,...(activeCredentials.get(provider)||[])])].slice(0,2));
     if(token)headers.set('Authorization',`Bearer ${token}`);
-    return appFetch(`${provider.baseURL}/${endpoint}`,{...init,headers,redirect:'error',signal:init.signal||AbortSignal.timeout(60000)});
+    const request=()=>appFetch(`${provider.baseURL}/${endpoint}`,{...init,headers,redirect:'error',signal:init.signal||AbortSignal.timeout(60000)});
+    const observation=currentObservation();
+    return observation?observation.http(provider,request,init.signal):request();
   };
   let response=await send();
   if(response.status===401&&provider.authorize) {
@@ -103,6 +106,12 @@ export function requestMessages(provider,model,messages) {
   return messages.map(({_attachment,_checkpoint,_responseItems,_responseBinding,reasoning_content,reasoning_details,...message})=>({...message,...(format==='deepseek'&&message.role==='assistant'?{reasoning_content:reasoning_content||''}:{}),...(format==='openrouter'&&reasoning_details?{reasoning_details}:{})}));
 }
 export async function completion(provider, model, messages, tools, signal, onDelta, effort='xhigh', onUsage=()=>{}) {
+  const measurement=currentObservation()?.generation(provider,model);let failure;
+  try{return await completeRequest(provider,model,messages,tools,signal,delta=>{measurement?.delta();onDelta(delta);},effort,value=>{measurement?.usage(value);onUsage(value);});}
+  catch(error){failure=error;throw error;}
+  finally{measurement?.end(failure,signal);}
+}
+async function completeRequest(provider, model, messages, tools, signal, onDelta, effort, onUsage) {
   if(provider.adapter==='openai-responses')return responsesCompletion(provider,model,messages,tools,signal,onDelta,effort,onUsage,api,providerError);
   const body={model,messages:requestMessages(provider,model,messages),stream:true,...reasoningOptions(provider,model,effort),...(tools.length?{tools,tool_choice:'auto'}:{})};
   const output=tools.length?modelOutputLimit(provider,model,messages,tools):undefined;

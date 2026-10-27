@@ -1,0 +1,18 @@
+.telemetry-settings{display:grid;gap:14px;margin-top:24px}
+.telemetry-settings>h4{display:flex;align-items:center;gap:8px;margin:0}
+.telemetry-settings .settings-description{margin:0;line-height:1.5}
+.telemetry-settings .chat-preference p{margin-top:6px}
+.telemetry-settings .settings-switch{background:var(--theme-border,#dce3d6)}
+.telemetry-settings .settings-switch[aria-checked="true"]{background:var(--theme-accent,#7e9e65)}
+.telemetry-settings .settings-switch>span{background:var(--theme-surface,#fcfcf9)}
+.telemetry-details{font-size:12px;line-height:1.6}
+.telemetry-details summary,.workflow-review summary{cursor:pointer}
+.telemetry-details code{overflow-wrap:anywhere}
+.workflow-review{font-size:12px;margin:0 0 8px;opacity:.85}
+.workflow-review[open]{opacity:1}
+.workflow-review-content{max-height:240px;overflow:auto;padding:4px 0 10px}
+.workflow-review-content p{line-height:1.5;margin:8px 0}
+.workflow-feedback{display:flex;gap:8px;flex-wrap:wrap}
+.workflow-feedback button{font-size:12px;display:flex;align-items:center;gap:6px}
+.workflow-feedback button[aria-pressed=true]{outline:2px solid currentColor;outline-offset:1px}
+.workflow-review pre{font-size:11px;max-height:180px;overflow:auto;padding:10px;white-space:pre-wrap;overflow-wrap:anywhere;background:rgba(128,128,128,.08);border-radius:8px}

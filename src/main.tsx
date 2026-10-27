@@ -23,6 +23,7 @@ import { providerDefinitions } from '../electron/provider-definitions.mjs';
 import { ActionMenu, ProjectPicker, type Project } from './WorkspaceControls';
 import { needsModelRefresh, reasoningProfile, selectedEffort } from '../electron/reasoning.mjs';
 import { ModelSelect } from './ModelSelect';
+import { TelemetrySettings, WorkflowReview, type TelemetryState } from './TelemetrySettings';
 
 declare global { interface Window { archi: {call:(method:string,input?:unknown)=>Promise<any>;attachFiles:(input:{projectId:string;sessionId:string},files:File[])=>Promise<string[]>;onEvent:(cb:(e:any)=>void)=>()=>void} } }
 const INBOX_ID='00000000-0000-0000-0000-000000000000';
@@ -34,7 +35,7 @@ type Session={id:string;title:string;messages:Message[];updatedAt:number;archive
 type SessionGroup={projectId:string;sessions:Session[];error?:string};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
 type TapirDownloadProgress={status:'checking'|'downloading'|'verifying'|'installing'|'launched'|'error';version:string;percent:number;transferred:number;total:number;bytesPerSecond:number;message:string};
-type State={showToolDetails?:boolean;theme?:ThemeMode;onboardingVersion?:number;appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
+type State={telemetry?:TelemetryState;showToolDetails?:boolean;theme?:ThemeMode;onboardingVersion?:number;appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
 const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',definitionId:p.definitionId||'',oauth:p.oauth,supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
 const emptyProvider=()=>({id:'',name:'',baseURL:'',apiKey:'',definitionId:'',oauth:undefined as Provider['oauth'],supportsImages:false,reasoningFormat:'auto',reasoningEfforts:''});
 const effortLabel=(value:string)=>t(({none:'ui.reasoningNone',minimal:'ui.reasoningMinimal',low:'ui.reasoningLow',medium:'ui.reasoningMedium',high:'ui.reasoningHigh',xhigh:'ui.reasoningXhigh',max:'ui.reasoningMax',ultra:'ui.reasoningUltra'} as const)[value as 'xhigh']);
@@ -403,6 +404,7 @@ function App(){
         {showScrollToLatest&&<button className="scroll-to-latest" title={t('ui.scrollToLatest')} aria-label={t('ui.scrollToLatest')} onClick={scrollToLatest}><ArrowDown size={19}/></button>}
         </div>
         <div className="composer-wrap">
+          <WorkflowReview projectId={projectId} sessionId={session?.id} busy={busy}/>
           {!!session?.pendingMessages?.length&&<section className="message-queue" aria-label={t('ui.messageQueue')}>
             <div className="message-queue-heading"><span role="status">{session.queuePaused?t('ui.queuePaused'):t('ui.queuedMessageCount',{count:session.pendingMessages.length})}</span>{session.queuePaused&&<button className="text-button" disabled={busy||submitting} onClick={()=>guard(()=>api('resumeQueue',{projectId,sessionId:session.id}))}><Play size={13}/>{t('ui.resumeQueue')}</button>}</div>
             <ol>{session.pendingMessages.map(item=><li key={item.id}>
@@ -450,6 +452,7 @@ function App(){
           {modal==='preferences'&&<section className="settings-page" aria-labelledby="preferences-heading">
             <div className="settings-page-header"><div><h3 id="preferences-heading">{t('ui.applicationSettings')}</h3><p>{t('ui.chatAppearance')}</p></div></div>
             <div className="settings-card chat-preference"><div><h4 id="tool-details-label">{t('ui.showToolDetails')}</h4><p id="tool-details-hint" className="settings-description">{t('ui.showToolDetailsHint')}</p></div><button className="settings-switch" role="switch" aria-checked={state.showToolDetails===true} aria-labelledby="tool-details-label" aria-describedby="tool-details-hint" disabled={!!working} onClick={()=>guard(async()=>{const next=await api('chatPreferences',{showToolDetails:!state.showToolDetails});setState(current=>current?{...current,...next}:current);},t('ui.saving'))}><span/></button></div>
+            <TelemetrySettings value={state.telemetry} onChange={telemetry=>setState(current=>current?{...current,telemetry}:current)}/>
           </section>}
           {modal==='providers'&&<section className="settings-page" aria-labelledby="providers-heading">
             <div className="settings-page-header"><div><h3 id="providers-heading">{t('ui.aiProviders')}</h3><p>{t('ui.providerSectionDescription')}</p></div><button className="secondary" disabled={busy||!!working} onClick={()=>editProvider()}><Plus size={16}/>{t('ui.addProvider')}</button></div>
