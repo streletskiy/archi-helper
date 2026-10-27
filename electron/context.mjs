@@ -1,6 +1,7 @@
 import { completion, requestMessages } from './provider.mjs';
 import { readFileSync } from 'node:fs';
 import { estimateTokens } from './model-limits.mjs';
+import { withObservationPurpose } from './telemetry-context.mjs';
 export { estimateTokens } from './model-limits.mjs';
 const COMPACTION=readFileSync(new URL('./knowledge/prompts/compaction.md',import.meta.url),'utf8').trim();
 
@@ -62,7 +63,7 @@ export async function compactSession({store,session,provider,model,signal,overhe
   const artifacts=session.messages.filter(m=>m.artifact).slice(-8).map(m=>`${m.name}: ${m.status||'done'}; ${m.artifact.path}`);
   let summary='';
   try {
-    const result=await complete(provider,model,[{role:'system',content:COMPACTION},{role:'user',content:JSON.stringify(requestMessages(provider,model,prefix))}],[],AbortSignal.any([signal,AbortSignal.timeout(120000)]),()=>{},'low');
+    const result=await withObservationPurpose('compaction',()=>complete(provider,model,[{role:'system',content:COMPACTION},{role:'user',content:JSON.stringify(requestMessages(provider,model,prefix))}],[],AbortSignal.any([signal,AbortSignal.timeout(120000)]),()=>{},'low'));
     summary=result.content||'';
   } catch(error) {
     signal.throwIfAborted();
