@@ -1,6 +1,7 @@
 import catalog from './telemetry-catalog.json' with {type:'json'};
 import taskPatterns from '../locales/telemetry-patterns.json' with {type:'json'};
 import {providerDefinition} from './provider-definitions.mjs';
+import {sanitizeDiagnostic} from './tool-diagnostics.mjs';
 
 const taskMatchers=Object.entries(taskPatterns).map(([kind,pattern])=>[kind,new RegExp(pattern,'i')]);
 
@@ -23,7 +24,10 @@ const feedback=oneOf(['helpful','unhelpful','uncertain']);
 const strings=(check,max=20)=>value=>Array.isArray(value)?[...new Set(value.map(check).filter(v=>v!==undefined))].slice(0,max):undefined;
 const steps=value=>Array.isArray(value)?value.slice(0,60).flatMap(step=>{
   if(!step||!tool(step.tool))return [];
-  return [{tool:step.tool,command:commands(step.command)||'other',status:oneOf(['done','error','unknown'])(step.status)||'unknown',error_category:errorCategory(step.error_category)||'unknown'}];
+  const diagnostic=sanitizeDiagnostic(step.diagnostic);
+  return [{tool:step.tool,command:commands(step.command)||'other',status:oneOf(['done','error','unknown'])(step.status)||'unknown',error_category:errorCategory(step.error_category)||'unknown',
+    ...(diagnostic?{diagnostic}:{}),...(positiveInteger(1e6)(step.step_index)?{step_index:step.step_index}:{}),
+    ...(positiveInteger(1e6)(step.previous_failed_step)?{previous_failed_step:step.previous_failed_step}:{})}];
 }):undefined;
 const common={run_id:uuid,provider_type:providerType,auth_mode:oneOf(['api_key','oauth','local']),model:value=>models(value)||'custom',
   task_kind:taskKind,permission_mode:oneOf(['read','review','full']),archicad_version:positiveInteger(99),archicad_build:positiveInteger(999999),tapir_version:version,
@@ -37,6 +41,7 @@ export const EVENT_SCHEMAS=Object.freeze({
   archi_task_started:common,
   archi_task_finished:common,
   archi_tool_finished:{run_id:uuid,tool,command:value=>commands(value)||'other',duration_ms:common.duration_ms,outcome,error_category:errorCategory},
+  archi_tool_diagnostic:{run_id:uuid,tool,command:value=>commands(value)||'other',step_index:positiveInteger(1e6),previous_failed_step:positiveInteger(1e6),outcome,error_category:errorCategory,diagnostic:sanitizeDiagnostic},
   archi_http_request:{run_id:uuid,provider_type:providerType,http_status:integer(599),duration_ms:common.duration_ms,purpose:oneOf(['agent','compaction']),error_category:errorCategory},
   archi_knowledge_used:{run_id:uuid,knowledge_ids:strings(articles),activation:oneOf(['automatic','selected','read'])},
   archi_task_feedback:{...common,feedback},

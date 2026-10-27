@@ -17,6 +17,7 @@ import { exportLayoutsPdf } from './layout-export.mjs';
 import { normalizeElementReferences } from './element-references.mjs';
 import { modelResponseTimeout } from './model-limits.mjs';
 import { currentObservation } from './telemetry-context.mjs';
+import { normalizeExecutionResult } from './tool-diagnostics.mjs';
 const PROGRESS=readFileSync(new URL('./knowledge/prompts/progress.md',import.meta.url),'utf8').trim();
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
@@ -87,7 +88,7 @@ export class Agent extends MessageQueue {
         else if(mode!=='full')await this.confirm(session,'archicad',args.purpose||titles[tool.name]||tool.name,args.arguments,signal);
       }
       signal.throwIfAborted();
-      const result=await this.mcp.call(tool.key,args.arguments,signal);
+      const result=normalizeExecutionResult(await this.mcp.call(tool.key,args.arguments,signal));
       if(tool.name==='TestConnection'&&!result.isError)await saveApiCatalog(this.mcp,root);
       return result;
     }

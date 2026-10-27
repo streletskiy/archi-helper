@@ -4,11 +4,13 @@ import {t} from '../locales/index.mjs';
 import {TELEMETRY_CONFIG} from './telemetry-config.mjs';
 import {sanitizeEvent,providerMetadata,connectionMetadata,publicModel,publicCommand,publicArticles,classifyError,classifyTask} from './telemetry-schema.mjs';
 import {withObservation,observationPurpose} from './telemetry-context.mjs';
+import {normalizeExecutionResult,toolDiagnostic} from './tool-diagnostics.mjs';
 
 const uuid=()=>crypto.randomUUID();
 const validId=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 const integer=value=>Number.isSafeInteger(value)&&value>=0?value:undefined;
 const TTL=24*60*60*1000,MAX_QUEUE=1000,MAX_RUNS=5;
+const workflowEvent=event=>event==='archi_workflow_observed'||event==='archi_tool_diagnostic';
 
 export class Telemetry {
   constructor(store,{runtimeEnabled=false,version='0.0.0',installationKind='installed',fetcher=appFetch,config=TELEMETRY_CONFIG,environment='production',now=Date.now}={}) {
@@ -26,7 +28,7 @@ export class Telemetry {
       existingProfile:previous?.existingProfile??!!(this.store.state.providers?.length||this.store.state.projects?.length)};
     try{await this.store.save();}catch{this.blocked=true;this.lastDelivery='storage_error';}
   }
-  get active(){return this.runtimeEnabled&&this.store.state.telemetry?.enabled===true&&!this.blocked;}
+  get active(){return this.runtimeEnabled&&!!this.config.projectToken&&this.store.state.telemetry?.enabled===true&&!this.blocked;}
   get workflows(){return this.active&&this.store.state.telemetry.shareWorkflows===true;}
   state(){const s=this.store.state.telemetry;return {enabled:s?.enabled!==false,shareWorkflows:s?.shareWorkflows!==false,
     installationId:s?.installationId,active:this.active,development:!this.runtimeEnabled,queued:this.queue.length,delivery:this.lastDelivery};}
@@ -52,7 +54,7 @@ export class Telemetry {
     const desired=this.desiredPreferences={enabled:this.store.state.telemetry.enabled,shareWorkflows:this.store.state.telemetry.shareWorkflows,...this.desiredPreferences,...input};
     // Apply revocation synchronously, before any disk I/O or a queued preference write.
     if(input.enabled===false){this.store.state.telemetry.enabled=false;this.epoch++;this.workflowEpoch++;this.queue=[];this.controller?.abort();this.lastDelivery='disabled';}
-    if(input.shareWorkflows===false){this.store.state.telemetry.shareWorkflows=false;this.workflowEpoch++;this.queue=this.queue.filter(item=>item.event!=='archi_workflow_observed');this.controller?.abort();}
+    if(input.shareWorkflows===false){this.store.state.telemetry.shareWorkflows=false;this.workflowEpoch++;this.queue=this.queue.filter(item=>!workflowEvent(item.event));this.controller?.abort();}
     const update=this.preferences.catch(()=>{}).then(async()=>{
       if(revision!==this.preferenceRevision)return this.state();
       const before=this.active;
@@ -67,7 +69,7 @@ export class Telemetry {
     this.preferences=update;return update;
   }
   capture(event,properties,{id=uuid(),timestamp=new Date(this.now()).toISOString()}={}) {
-    if(!this.active||this.closing||event==='archi_workflow_observed'&&!this.workflows)return false;
+    if(!this.active||this.closing||workflowEvent(event)&&!this.workflows)return false;
     const safe=sanitizeEvent(event,properties);if(!safe)return false;
     this.queue=this.queue.filter(item=>this.now()-item.queuedAt<TTL);
     if(this.queue.length>=MAX_QUEUE)this.queue.shift();
@@ -77,7 +79,7 @@ export class Telemetry {
   async flush() {
     if(this.sending)return this.sending;
     if(!this.active||this.now()<(this.retryAt||0))return;
-    this.queue=this.queue.filter(item=>item.epoch===this.epoch&&this.now()-item.queuedAt<TTL&&(item.event!=='archi_workflow_observed'||this.workflows));
+    this.queue=this.queue.filter(item=>item.epoch===this.epoch&&this.now()-item.queuedAt<TTL&&(!workflowEvent(item.event)||this.workflows));
     if(!this.queue.length)return;
     const epoch=this.epoch,workflowEpoch=this.workflowEpoch,batch=this.queue.splice(0,50),controller=new AbortController();this.controller=controller;
     this.sending=(async()=>{
@@ -99,7 +101,7 @@ export class Telemetry {
       } catch {
         if(this.active&&epoch===this.epoch&&!this.closing){
           this.lastDelivery='unavailable';this.failures=Math.min(5,(this.failures||0)+1);this.retryAt=this.now()+Math.min(300000,15000*2**this.failures);
-          this.queue=[...batch.filter(item=>item.event!=='archi_workflow_observed'||this.workflows&&workflowEpoch===this.workflowEpoch),...this.queue].slice(-MAX_QUEUE);
+          this.queue=[...batch.filter(item=>!workflowEvent(item.event)||this.workflows&&workflowEpoch===this.workflowEpoch),...this.queue].slice(-MAX_QUEUE);
         }
       } finally {if(this.controller===controller)this.controller=null;this.sending=null;}
     })();
@@ -140,7 +142,7 @@ export class Telemetry {
 class TaskObservation {
   constructor(telemetry,input,connection) {
     this.telemetry=telemetry;this.epoch=telemetry.epoch;this.workflowEpoch=telemetry.workflowEpoch;this.started=telemetry.now();this.id=uuid();
-    this.collectRoute=telemetry.workflows;this.steps=[];this.knowledge=new Set();this.counts={tool_count:0,tool_errors:0,request_count:0,generation_count:0,generation_errors:0,compaction_count:0,steering_count:0};
+    this.collectRoute=telemetry.workflows;this.steps=[];this.failedSteps=new Map();this.knowledge=new Set();this.counts={tool_count:0,tool_errors:0,request_count:0,generation_count:0,generation_errors:0,compaction_count:0,steering_count:0};
     const provider=telemetry.store.state.providers?.find(p=>p.id===input.providerId);
     this.meta={run_id:this.id,...providerMetadata(provider),model:publicModel(input.model),task_kind:input.kind==='direct'?'direct':classifyTask(input.text||''),
       permission_mode:input.mode,...connectionMetadata(connection)};
@@ -176,7 +178,7 @@ class TaskObservation {
   }
   async tool(name,args,action,signal) {
     const started=this.telemetry.now();let result,error;
-    try{result=await action();return result;}catch(e){error=e;throw e;}finally {
+    try{result=await action();if(name==='call_archicad')result=normalizeExecutionResult(result);return result;}catch(e){error=e;throw e;}finally {
       if(this.active){
         this.counts.tool_count++;const failed=!!error||result?.isError===true;
         const category=error?classifyError(error,signal):result?.termination==='timeout'?'timeout':result?.termination==='cancelled'?'cancelled':failed?(name==='run_python'?'python_error':'tool_error'):'none';
@@ -186,7 +188,11 @@ class TaskObservation {
         this.emit('archi_tool_finished',{run_id:this.id,tool:name,command,duration_ms:this.telemetry.now()-started,outcome:unknown?'outcome_unknown':failed?'failed':'completed_unverified',error_category:category});
         if(!failed&&name==='get_knowledge'&&args?.id)this.knowledgeUsed([args.id],'read');
         if(this.collectRoute&&this.telemetry.workflows&&this.workflowEpoch===this.telemetry.workflowEpoch){
-          if(this.steps.length<60)this.steps.push({tool:name,command,status:unknown?'unknown':failed?'error':'done',error_category:category});else this.truncated=true;
+          const step_index=this.counts.tool_count,key=`${name}:${command}`,previous_failed_step=this.failedSteps.get(key);
+          const diagnostic=['call_archicad','run_python'].includes(name)?toolDiagnostic(name,args,result,error,{failed,unknown}):undefined;
+          if(diagnostic)this.emit('archi_tool_diagnostic',{run_id:this.id,tool:name,command,step_index,previous_failed_step,outcome:unknown?'outcome_unknown':failed?'failed':'completed_unverified',error_category:category,diagnostic});
+          if(failed)this.failedSteps.set(key,step_index);else if(!unknown)this.failedSteps.delete(key);
+          if(this.steps.length<60)this.steps.push({tool:name,command,status:unknown?'unknown':failed?'error':'done',error_category:category,step_index,previous_failed_step,diagnostic});else this.truncated=true;
         }
       }
     }
