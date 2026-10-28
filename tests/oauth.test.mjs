@@ -10,11 +10,106 @@ import { loopbackAuthorization } from '../electron/oauth-loopback.mjs';
 import { oauthDefinition,oauthPost,tokenResponse } from '../electron/oauth-config.mjs';
 import { readOAuthTokens } from '../electron/oauth-store.mjs';
 import { api } from '../electron/provider.mjs';
+import { ClaudeCode,findClaude } from '../electron/claude-code.mjs';
+import { installClaude } from '../electron/claude-install.mjs';
 
 const definition={id:'test-provider',name:'Test Provider',baseURL:'https://provider.example/v1',adapter:'openai-compatible',
   oauth:{clientId:'registered-public-client',authorizationURL:'https://identity.example/authorize',
     tokenURL:'https://identity.example/token',revocationURL:'https://identity.example/revoke',
     profileURL:'https://identity.example/me',scopes:['models:read','offline_access'],redirectPath:'/oauth/callback'}};
+
+test('Claude uses official CLI authentication, persists only status, and requires explicit API billing selection',async t=>{
+  const {store}=await fixture(t);let authMethod='claude.ai',email='synthetic@example.test',loggedIn=false;
+  const calls=[];
+  const manager=new ClaudeCode(store,{find:async value=>value||'C:/synthetic/claude.exe',run:async(executable,args,options)=>{
+    calls.push(args);
+    if(args[0]==='--version')return {code:0,stdout:'2.1.300 (Claude Code)'};
+    if(args[1]==='login')loggedIn=true;
+    if(args[1]==='logout')assert.fail('Disconnect must preserve the existing CLI login');
+    return {code:loggedIn||args[1]==='logout'?0:1,stdout:JSON.stringify({loggedIn,authMethod,email,subscriptionType:'max',accessToken:'MUST-NOT-BE-SAVED'})};
+  }});
+  const id=await manager.connect(),provider=store.getProvider(id);
+  assert.equal(provider.cli.authMethod,'claude.ai');assert.equal(store.publicState().providers[0].hasKey,true);
+  assert.ok(calls.some(args=>args.join(' ')==='auth login'));
+  assert.doesNotMatch(await fs.readFile(store.file,'utf8'),/MUST-NOT-BE-SAVED|accessToken/);
+  assert.equal(provider.encryptedOAuth,undefined);
+  await assert.rejects(store.provider({id,baseURL:'https://synthetic.example'}),/Claude/);
+  authMethod='api_key';await assert.rejects(manager.verify(provider),/billing method changed/);
+  assert.equal(store.getProvider(id).cli.authMethod,'claude.ai');
+  await assert.rejects(manager.connect(),error=>error.code==='CLAUDE_OTHER_AUTH'&&/API or cloud credentials/.test(error.message));
+  await manager.connect({allowOtherAuth:true});assert.equal(store.getProvider(id).cli.authMethod,'api_key');
+  await manager.disconnect(id);assert.equal(store.state.providers.length,0);assert.equal(loggedIn,true);
+});
+
+test('Claude reuses an installed authenticated CLI and pins its profile without downloading or logging in',async t=>{
+  const {store}=await fixture(t),shared=path.join(store.directory,'synthetic-shared'),calls=[],progress=[];
+  const manager=new ClaudeCode(store,{env:{CLAUDE_CONFIG_DIR:shared},find:async()=>'/synthetic/claude.exe',install:async()=>assert.fail('Must not reinstall'),onProgress:value=>progress.push(value),run:async(_exe,args,options)=>{
+    calls.push(args);assert.equal(options.env.CLAUDE_CONFIG_DIR,shared);
+    if(args[0]==='--version')return {code:0,stdout:'2.1.312 (Claude Code)'};
+    assert.deepEqual(args,['auth','status']);return {code:0,stdout:JSON.stringify({loggedIn:true,authMethod:'claude.ai',email:'synthetic@example.test',configDirectory:shared})};
+  }});
+  const id=await manager.connect();assert.equal(store.getProvider(id).cli.profile,'shared');
+  manager.env={CLAUDE_CONFIG_DIR:path.join(store.directory,'another-profile')};await manager.verify(store.getProvider(id));
+  await manager.disconnect(id);assert.ok(!calls.some(args=>args[1]==='login'||args[1]==='logout'));
+  assert.deepEqual(progress.map(value=>value?.stage),['detecting','checking',undefined]);
+});
+
+test('Claude installs once when absent, starts official login only when needed, and reuses it on reconnect',async t=>{
+  const {store}=await fixture(t);let installed=false,loggedIn=false,installs=0,logins=0;
+  const manager=new ClaudeCode(store,{env:{},find:async()=>{if(!installed)throw Object.assign(new Error('missing'),{code:'CLAUDE_NOT_FOUND'});return '/synthetic/claude.exe';},
+    install:async({signal,onProgress})=>{signal.throwIfAborted();installs++;onProgress({stage:'installing'});installed=true;return '/synthetic/claude.exe';},run:async(_exe,args)=>{
+      if(args[0]==='--version')return {code:0,stdout:'2.1.312 (Claude Code)'};
+      if(args[1]==='login'){logins++;loggedIn=true;}
+      return {code:loggedIn?0:1,stdout:JSON.stringify({loggedIn,authMethod:loggedIn?'claude.ai':'none',email:'synthetic@example.test'})};
+    }});
+  const id=await manager.connect();await manager.connect();assert.equal(installs,1);assert.equal(logins,1);assert.equal(store.state.providers.length,1);
+  assert.equal(store.getProvider(id).cli.profile,'shared');assert.equal(manager.pending,null);assert.equal(manager.progress,null);
+});
+
+test('Claude preserves legacy private sign-in and cancels automatic setup without saving a connection',async t=>{
+  const {store}=await fixture(t),privateDirectory=path.join(store.directory,'claude-code');
+  store.state.providers.push({id:'synthetic-existing',adapter:'claude-code',cli:{status:'connected',authMethod:'claude.ai'},executable:'/synthetic/claude.exe'});
+  const existing=new ClaudeCode(store,{find:async value=>value,run:async(_exe,args,options)=>{
+    if(args[0]==='--version')return {code:0,stdout:'2.1.312 (Claude Code)'};
+    assert.deepEqual(args,['auth','status']);assert.equal(options.env.CLAUDE_CONFIG_DIR,privateDirectory);
+    return {code:0,stdout:JSON.stringify({loggedIn:true,authMethod:'claude.ai'})};
+  }});
+  assert.equal(await existing.connect(),'synthetic-existing');assert.equal(store.state.providers[0].cli.profile,'private');
+  await existing.disconnect('synthetic-existing');
+  let started;const installing=new Promise(resolve=>{started=resolve;});
+  const manager=new ClaudeCode(store,{find:async()=>{throw Object.assign(new Error('missing'),{code:'CLAUDE_NOT_FOUND'});},install:async({signal})=>new Promise((resolve,reject)=>{signal.addEventListener('abort',()=>reject(signal.reason),{once:true});started();})});
+  const pending=manager.connect();await installing;await assert.rejects(manager.connect(),/current connection/i);manager.cancel();await assert.rejects(pending);
+  assert.equal(store.state.providers.length,0);assert.equal(manager.pending,null);assert.equal(manager.progress,null);
+});
+
+test('Claude native discovery includes user and current npm binary layouts',async t=>{
+  const {store}=await fixture(t),home=path.join(store.directory,'synthetic-home'),prefix=path.join(store.directory,'synthetic-npm');
+  const native=path.join(home,'.local','bin','claude.exe'),npm=path.join(prefix,'node_modules','@anthropic-ai','claude-code','bin','claude.exe');
+  await fs.mkdir(path.dirname(npm),{recursive:true});await fs.writeFile(npm,'synthetic');
+  assert.equal(await findClaude(undefined,{env:{PATH:prefix},home,platform:'win32'}),npm);
+  await fs.mkdir(path.dirname(native),{recursive:true});await fs.writeFile(native,'synthetic');
+  assert.equal(await findClaude(undefined,{env:{PATH:prefix},home,platform:'win32'}),native);
+  await assert.rejects(findClaude(path.join(home,'missing.exe'),{env:{},home,platform:'win32'}),{code:'CLAUDE_NOT_FOUND'});
+});
+
+test('Claude installer verifies official download size and digest before running the native installer',async t=>{
+  const {store}=await fixture(t),folder=path.join(store.directory,'downloads'),bytes=Buffer.from('synthetic native installer'),version='2.1.312';let corrupt=false,runCount=0;
+  const checksum=crypto.createHash('sha256').update(bytes).digest('hex'),requests=[],progress=[];
+  const fetcher=async(url,options)=>{
+    requests.push(url);assert.equal(options.redirect,'error');assert.ok(url.startsWith('https://downloads.claude.ai/claude-code-releases/'));
+    if(url.endsWith('/latest'))return new Response(version);
+    if(url.endsWith('/manifest.json'))return Response.json({version,platforms:{'win32-x64':{binary:'claude.exe',size:bytes.length,checksum}}});
+    return new Response(corrupt?Buffer.alloc(bytes.length):bytes);
+  };
+  const input={folder,fetcher,platform:'win32',arch:'x64',signal:new AbortController().signal,options:{},find:async()=>'/synthetic/installed.exe',onProgress:value=>progress.push(value.stage),run:async(file,args)=>{
+    runCount++;
+    if(args[0]==='install'){assert.deepEqual(args,['install',version]);assert.deepEqual(await fs.readFile(file),bytes);return {code:0};}
+    return {code:0,stdout:`${version} (Claude Code)`};
+  }};
+  assert.equal(await installClaude(input),'/synthetic/installed.exe');assert.equal(runCount,2);assert.deepEqual(await fs.readdir(folder),[]);
+  assert.ok(progress.includes('verifying')&&progress.includes('installing'));assert.equal(requests.length,3);
+  corrupt=true;await assert.rejects(installClaude(input),/integrity/);assert.equal(runCount,2);assert.deepEqual(await fs.readdir(folder),[]);
+});
 
 async function fixture(t) {
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-oauth-'));

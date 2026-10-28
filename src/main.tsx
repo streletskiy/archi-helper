@@ -18,7 +18,7 @@ import {useStream} from './useStream';
 import {VirtualMessages} from './VirtualMessages';
 import {TapirSettings} from './TapirSettings';
 import {maskAccount} from './maskAccount';
-import { OAuthConnect, ProviderPrompt, type ProviderPromptData } from './ProviderConnections';
+import { ClaudeConnect, OAuthConnect, ProviderPrompt, type ProviderPromptData, type ClaudeProgress } from './ProviderConnections';
 import { providerDefinitions } from '../electron/provider-definitions.mjs';
 import { ActionMenu, ProjectPicker, type Project } from './WorkspaceControls';
 import { needsModelRefresh, reasoningProfile, selectedEffort } from '../electron/reasoning.mjs';
@@ -28,16 +28,16 @@ import { TelemetrySettings, WorkflowReview, type TelemetryState } from './Teleme
 declare global { interface Window { archi: {call:(method:string,input?:unknown)=>Promise<any>;attachFiles:(input:{projectId:string;sessionId:string},files:File[])=>Promise<string[]>;onEvent:(cb:(e:any)=>void)=>()=>void} } }
 const INBOX_ID='00000000-0000-0000-0000-000000000000';
 type Model={id:string;name:string;reasoningEfforts?:string[];contextWindow?:number};
-type Provider={id:string;name:string;baseURL:string;hasKey:boolean;definitionId?:string;oauth?:{status:string;accountName:string;planEnabled?:boolean};catalogVersion?:number;catalogUpdatedAt?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
+type Provider={id:string;name:string;baseURL:string;hasKey:boolean;definitionId?:string;cli?:{status:string;authMethod:string;accountName:string;subscriptionType?:string};oauth?:{status:string;accountName:string;planEnabled?:boolean};catalogVersion?:number;catalogUpdatedAt?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
 type Message={id:string;role:string;text:string;at?:number;usageAction?:string;name?:string;status?:string;summary?:string;args?:unknown;artifact?:{path:string;bytes:number};model?:string};
 type QueuedMessage={id:string;text:string;attachments:string[];knowledge?:KnowledgeSelection[];model:string;delivery:'queue'|'steer'};
 type Session={id:string;title:string;messages:Message[];updatedAt:number;archivedAt?:number;count?:number;pendingMessages?:QueuedMessage[];queuePaused?:boolean};
 type SessionGroup={projectId:string;sessions:Session[];error?:string};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
 type TapirDownloadProgress={status:'checking'|'downloading'|'verifying'|'installing'|'launched'|'error';version:string;percent:number;transferred:number;total:number;bytesPerSecond:number;message:string};
-type State={telemetry?:TelemetryState;showToolDetails?:boolean;theme?:ThemeMode;onboardingVersion?:number;appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
-const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',definitionId:p.definitionId||'',oauth:p.oauth,supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
-const emptyProvider=()=>({id:'',name:'',baseURL:'',apiKey:'',definitionId:'',oauth:undefined as Provider['oauth'],supportsImages:false,reasoningFormat:'auto',reasoningEfforts:''});
+type State={claudeProgress?:ClaudeProgress|null;telemetry?:TelemetryState;showToolDetails?:boolean;theme?:ThemeMode;onboardingVersion?:number;appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
+const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',definitionId:p.definitionId||'',cli:p.cli,oauth:p.oauth,supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
+const emptyProvider=()=>({id:'',name:'',baseURL:'',apiKey:'',definitionId:'',cli:undefined as Provider['cli'],oauth:undefined as Provider['oauth'],supportsImages:false,reasoningFormat:'auto',reasoningEfforts:''});
 const effortLabel=(value:string)=>t(({none:'ui.reasoningNone',minimal:'ui.reasoningMinimal',low:'ui.reasoningLow',medium:'ui.reasoningMedium',high:'ui.reasoningHigh',xhigh:'ui.reasoningXhigh',max:'ui.reasoningMax',ultra:'ui.reasoningUltra'} as const)[value as 'xhigh']);
 const api=(method:string,input?:unknown)=>window.archi.call(method,input);
 const pretty=(v:unknown)=>typeof v==='string'?v:JSON.stringify(v,null,2);
@@ -138,6 +138,7 @@ function App(){
       if(e.type==='provider-prompt')setProviderPrompt(e.prompt);
       if(e.type==='update')setUpdate(e.update);
       if(e.type==='tapir-progress')setTapirProgress(e.progress);
+      if(e.type==='claude-progress')setState(s=>s?{...s,claudeProgress:e.progress}:s);
       if(e.type==='connection')setState(s=>s?{...s,connection:e.connection,toolCount:e.toolCount,runtimeReady:e.runtimeReady}:s);
       if(e.type==='busy'){setBusy(e.busy);setState(s=>s?{...s,busy:e.busy,canSteer:e.canSteer,activeSession:e.busy?e.sessionId:undefined,activeProject:e.busy?e.projectId:undefined}:s);if(!e.busy){setApproval(null);guard(async()=>{await refresh();await refreshSessions();});}}
       if(e.type==='queue-error')notify(e.message,'error');
@@ -180,7 +181,7 @@ function App(){
   useLayoutEffect(()=>{if(followLatest.current)scrollToLatest();},[session?.messages,stream,approval,scrollToLatest]);
   const syncModels=async(id:string)=>{try{await api('models',{id});}finally{await refresh();}};
   const oauthConnected=async({providerId,state:next}:{providerId:string;state:State})=>{
-    setState(next);const provider=next.providers.find(p=>p.id===providerId)!;setProviderForm(providerToForm(provider));
+    setState(next);const provider=next.providers.find(p=>p.id===providerId)!;setProviderForm(provider.cli?emptyProvider():providerToForm(provider));
     if(provider.oauth?.planEnabled!==false){await syncModels(providerId);notify(t('ui.providerConnected'));}
   };
   const chooseSettings=(input:Record<string,string>)=>guard(async()=>{
@@ -328,7 +329,7 @@ function App(){
   };
   useEffect(()=>{
     document.querySelector('.settings-content')?.scrollTo(0,0);
-    if(modal==='providers'&&!providerForm.id&&!providerForm.baseURL&&selectedProvider)setProviderForm(providerToForm(selectedProvider));
+    if(modal==='providers'&&!providerForm.id&&!providerForm.baseURL&&selectedProvider&&!selectedProvider.cli)setProviderForm(providerToForm(selectedProvider));
   },[modal]);
   const filteredTools=tools.filter(t=>`${t.name} ${t.description}`.toLowerCase().includes(toolSearch.toLowerCase()));
   const hasMessages=!!messageIds.length||!!approval;
@@ -456,17 +457,19 @@ function App(){
           </section>}
           {modal==='providers'&&<section className="settings-page" aria-labelledby="providers-heading">
             <div className="settings-page-header"><div><h3 id="providers-heading">{t('ui.aiProviders')}</h3><p>{t('ui.providerSectionDescription')}</p></div><button className="secondary" disabled={busy||!!working} onClick={()=>editProvider()}><Plus size={16}/>{t('ui.addProvider')}</button></div>
-            {!state.providers.length&&<p className="settings-description">{t('ui.providerWelcome')}</p>}<div className="settings-card"><h4>{t('ui.oauthSignIn')}</h4><p className="settings-description">{t('ui.oauthSignInDescription')}</p><div className="oauth-options">{providerDefinitions.filter(def=>def.oauth).map(def=>{const existing=state.providers.find(p=>p.definitionId===def.id&&p.oauth);return <OAuthConnect key={def.id} definition={def} providerId={existing?.id} onState={setState} disabled={busy||!!working||existing?.oauth?.status==='revoking'} onBusy={value=>setWorking(value?t('ui.oauthWaiting'):'')} onConnected={oauthConnected}/>;})}</div></div>
+            {!state.providers.length&&<p className="settings-description">{t('ui.providerWelcome')}</p>}<div className="settings-card"><h4>{t('ui.oauthSignIn')}</h4><p className="settings-description">{t('ui.oauthSignInDescription')}</p><div className="oauth-options">{providerDefinitions.filter(def=>def.oauth).map(def=>{const existing=state.providers.find(p=>p.definitionId===def.id&&p.oauth);return <OAuthConnect key={def.id} definition={def} providerId={existing?.id} onState={setState} disabled={busy||!!working||existing?.oauth?.status==='revoking'} onBusy={value=>setWorking(value?t('ui.oauthWaiting'):'')} onConnected={oauthConnected}/>;})}<ClaudeConnect disabled={busy||!!working} progress={state.claudeProgress} onBusy={value=>setWorking(value?t('claude.detecting'):'')} onState={setState} onConnected={oauthConnected}/></div></div>
             {!!state?.providers.length&&<div className="settings-provider-list">{state.providers.map(p=><div className={`provider-row ${state.providerId===p.id?'active':''}`} key={p.id}>
-              <button className="provider-select-row" disabled={busy||choosing||!!working} onClick={()=>chooseSettings({providerId:p.id})}><span className="provider-meta"><span className="provider-name-line"><strong>{p.name}{p.oauth&&` · ${maskAccount(p.oauth.accountName)}`}</strong>{state.providerId===p.id&&<span className="settings-badge">{t('ui.selectedInChat')}</span>}</span><small title={p.baseURL}>{p.baseURL} · {t('ui.modelCount',{count:p.models.length})}</small></span></button>
+              <button className="provider-select-row" disabled={busy||choosing||!!working} onClick={()=>chooseSettings({providerId:p.id})}><span className="provider-meta"><span className="provider-name-line"><strong>{p.name}{(p.oauth||p.cli)&&` · ${maskAccount(p.oauth?.accountName||p.cli?.accountName||'')}`}</strong>{state.providerId===p.id&&<span className="settings-badge">{t('ui.selectedInChat')}</span>}</span><small title={p.baseURL}>{p.cli?t('claude.localConnection'):p.baseURL} · {t('ui.modelCount',{count:p.models.length})}</small></span></button>
               <div className="provider-actions"><IconButton title={t('ui.editProvider')} disabled={busy||!!working} onClick={()=>editProvider(p)}><Pencil size={15}/></IconButton><IconButton title={t('ui.refreshModels')} disabled={busy||!!working||choosing||!!p.oauth&&p.oauth.status!=='connected'} onClick={()=>guard(()=>syncModels(p.id),t('ui.fetchingModels'))}><RotateCw size={15}/></IconButton><IconButton title={t(p.oauth?'ui.oauthDisconnect':'ui.deleteProvider')} disabled={busy||!!working||choosing} onClick={()=>guard(async()=>{try{const next=await api('deleteProvider',{id:p.id});setState(next);if(providerForm.id===p.id&&!next.providers.some((item:Provider)=>item.id===p.id))setProviderForm(next.providers.length?providerToForm(next.providers[0]):emptyProvider());}catch(error){setState(await api('bootstrap'));throw error;}},t('ui.providerRemoving'))}><X size={16}/></IconButton></div>
             </div>)}</div>}
             <div className="settings-card settings-editor" ref={providerEditor}>
-              <div className="settings-card-heading"><h4>{providerForm.id?t('ui.providerConnection',{name:providerForm.name}):t('ui.addProvider')}</h4><p>{providerForm.id?t('ui.editingConnection'):t('ui.newConnection')}</p></div>
-              {!providerForm.id&&<div className="settings-presets">{[...providerDefinitions.filter(def=>!def.oauth?.dynamicRegistration).map(def=>[def.name,def.baseURL]),[t('ui.localModel'),'http://localhost:1234/v1'],[t('ui.otherProvider'),'https://']].map(([name,baseURL])=><button key={baseURL} disabled={busy||!!working} onClick={()=>setProviderForm({...emptyProvider(),name,baseURL})}>{name}</button>)}</div>}
+              <div className="settings-card-heading"><h4>{providerForm.cli?t('claude.setup'):providerForm.id?t('ui.providerConnection',{name:providerForm.name}):t('ui.addProvider')}</h4><p>{providerForm.id?t('ui.editingConnection'):t('ui.newConnection')}</p></div>
+              {!providerForm.id&&<div className="settings-presets">{[...providerDefinitions.filter(def=>!def.oauth?.dynamicRegistration&&def.adapter!=='claude-code').map(def=>[def.name,def.baseURL]),[t('ui.localModel'),'http://localhost:1234/v1'],[t('ui.otherProvider'),'https://']].map(([name,baseURL])=><button key={baseURL} disabled={busy||!!working} onClick={()=>setProviderForm({...emptyProvider(),name,baseURL})}>{name}</button>)}</div>}
+              {providerForm.cli&&<div className="settings-description"><p>{maskAccount(providerForm.cli.accountName)} · {t(providerForm.cli.status!=='connected'?'ui.oauthSignedOut':providerForm.cli.authMethod==='claude.ai'?'claude.subscription':'claude.apiBilling')}</p><p>{t('claude.modelsHint')}</p><button className="secondary" onClick={()=>guard(()=>api('external',{url:'https://claude.ai/settings/usage'}))}>{t('ui.manageUsage')}<ExternalLink size={14}/></button></div>}
+              {providerForm.cli&&<ClaudeConnect settings disabled={busy||!!working} progress={state.claudeProgress} onBusy={value=>setWorking(value?t('claude.detecting'):'')} onState={setState} onConnected={oauthConnected}/>}
               {providerForm.oauth&&<div className="settings-description"><p>{t('ui.oauthAccount',{name:maskAccount(providerForm.oauth.accountName)})} · {t(providerForm.oauth.status==='signed-out'?'ui.oauthSignedOut':providerForm.oauth.planEnabled===false?'ui.oauthPlanDisabled':providerForm.oauth.status==='connected'?'ui.oauthConnected':'ui.oauthNeedsAttention')}</p>{providerDefinitions.filter(def=>def.id===providerForm.definitionId).map(def=><OAuthConnect key={def.id} definition={def} providerId={providerForm.id} disabled={busy||!!working} onBusy={value=>setWorking(value?t('ui.oauthWaiting'):'')} onState={setState} onConnected={oauthConnected}/>)}</div>}
               {providerForm.oauth&&editorDefinition?.manageUsageURL&&<div className="plan-usage provider-plan"><span>{t(providerForm.oauth.status==='connected'&&providerForm.oauth.planEnabled?editorDefinition.planLabel!:'ui.oauthNeedsAttention')}</span><button className="secondary" onClick={()=>guard(()=>api('external',{url:editorDefinition.manageUsageURL}))}>{t('ui.manageUsage')}<ExternalLink size={14}/></button></div>}
-              <div className="settings-form">
+              {!providerForm.cli&&<div className="settings-form">
                 <div className="settings-fields"><label className="settings-field"><span>{t('ui.name')}</span><input value={providerForm.name} onChange={e=>setProviderForm(v=>({...v,name:e.target.value}))}/></label><label className="settings-field"><span>{t('ui.apiAddress')}</span><input disabled={!!providerForm.oauth} value={providerForm.baseURL} onChange={e=>setProviderForm(v=>({...v,baseURL:e.target.value}))} placeholder="https://api.example.com/v1"/></label></div>
                 {!providerForm.oauth&&<label className="settings-field"><span>{t('ui.apiKey')}</span><input type="password" autoComplete="off" value={providerForm.apiKey} onChange={e=>setProviderForm(v=>({...v,apiKey:e.target.value}))} placeholder={providerForm.id?t('ui.leaveBlankToKeepTheKey'):t('ui.pasteYourProviderKey')}/></label>}
                 <label className="settings-checkbox"><input type="checkbox" checked={providerForm.supportsImages} onChange={e=>setProviderForm(v=>({...v,supportsImages:e.target.checked}))}/>{t('ui.theApiAndModelSupportImages')}</label>
@@ -475,7 +478,7 @@ function App(){
                   <details className="settings-advanced"><summary>{t('ui.modelById')}<ChevronRight size={16}/></summary><div className="settings-advanced-content"><div className="settings-control-row"><label className="settings-field"><span>{t('ui.modelId')}</span><input placeholder="model-id" value={manualModel} onChange={e=>setManualModel(e.target.value)}/></label><button className="secondary" disabled={!manualModel.trim()||!providerForm.id||busy||choosing||!!working} onClick={()=>guard(async()=>{await api('settings',{providerId:providerForm.id,model:manualModel.trim()});await refresh();setModal('');})}>{t('ui.select')}</button></div></div></details>
                 </div>}
                 <div className="settings-actions"><button className="primary" disabled={!!working||busy||choosing||!!providerForm.oauth&&providerForm.oauth.status!=='connected'} onClick={()=>guard(async()=>{const next=await api('saveProvider',{...providerForm,reasoningEfforts:providerForm.reasoningEfforts.split(',').map(v=>v.trim()).filter(Boolean)});setState(next);const saved=next.providers.find((p:Provider)=>p.id===providerForm.id)||next.providers.at(-1);setProviderForm(providerToForm(saved));if(saved.oauth?.planEnabled!==false)await syncModels(saved.id);notify(t('ui.providerConnected'));},t('ui.checkingApi'))}>{working||t('ui.saveAndCheck')}</button></div>
-              </div>
+              </div>}
             </div>
           </section>}
           {modal==='archicad'&&<section className="settings-page" aria-labelledby="archicad-heading">

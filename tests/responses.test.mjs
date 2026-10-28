@@ -1,4 +1,13 @@
 import test from 'node:test';
+import { claudeTurn,claudeInput } from '../electron/claude-code.mjs';
+import { claudeBridge } from '../electron/claude-bridge.mjs';
+import { Client as ClaudeTestClient } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { Store,projectPath } from '../electron/store.mjs';
+import { Agent,agentTools } from '../electron/agent.mjs';
 import assert from 'node:assert/strict';
 import { completion, models, requestMessages } from '../electron/provider.mjs';
 import { responseInput } from '../electron/provider-responses.mjs';
@@ -11,6 +20,106 @@ const reasoning={type:'reasoning',id:'rs_1',summary:[],encrypted_content:'privat
 const call={type:'function_call',id:'fc_1',namespace:'archi',name:'read_file',call_id:'call-1',arguments:'{"path":"a.txt"}',status:'completed'};
 function stream(events) {return new Response(events.map(e=>`data: ${JSON.stringify(e)}\r\n\r\n`).join(''),{headers:{'Content-Type':'text/event-stream'}});}
 function mock(t,handler) {const original=globalThis.fetch;globalThis.fetch=handler;t.after(()=>{globalThis.fetch=original;});}
+
+test('project paths accept aliased roots while rejecting traversal and escaping links',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-project-path-'));
+  t.after(async()=>{assert.equal(path.dirname(root),path.resolve(os.tmpdir()));await fs.rm(root,{recursive:true,force:true});});
+  const actual=path.join(root,'project'),alias=path.join(root,'linked-project'),outside=path.join(root,'outside');
+  await fs.mkdir(actual);await fs.mkdir(outside);
+  await fs.symlink(actual,alias,'junction');await fs.symlink(outside,path.join(actual,'escape'),'junction');
+  assert.equal(await projectPath(alias,'.'),alias);
+  assert.equal(await projectPath(alias,'nested/synthetic.txt'),path.join(alias,'nested/synthetic.txt'));
+  await assert.rejects(projectPath(alias,'../outside/synthetic.txt'),/outside/i);
+  await assert.rejects(projectPath(alias,'escape/synthetic.txt'),/outside/i);
+});
+
+test('Claude input preserves conversation and images without copying provider reasoning or credentials',()=>{
+  const input=claudeInput([{role:'system',content:'separate system prompt'},{role:'assistant',content:'Earlier answer',reasoning_content:'private reasoning',_responseItems:['private items']},
+    {role:'user',content:[{type:'text',text:'Inspect this image'},{type:'image_url',image_url:{url:'data:image/png;base64,YQ=='}}]}]);
+  assert.doesNotMatch(input,/private reasoning|private items|separate system prompt/);
+  const parsed=JSON.parse(input);assert.equal(parsed.type,'user');assert.equal(parsed.message.content[1].source.data,'YQ==');
+});
+
+test('Claude MCP is authenticated and guarded by application permissions; duplicate requests cannot replay operations',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-claude-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const store=new Store(root,{});await store.init('en');const session=await store.newSession();
+  const agent=new Agent(store,{tools:[]},()=>{}),controller=new AbortController();let count=0;
+  const bridge=await claudeBridge(agentTools,async(name,args)=>{
+    count++;try{return {content:[{type:'text',text:JSON.stringify(await agent.execute(session,name,args,'read',controller.signal))}]};}
+    catch(error){return {isError:true,content:[{type:'text',text:error.message}]};}
+  },controller.signal);t.after(()=>bridge.close());
+  const config=bridge.config.mcpServers.archi;
+  assert.equal((await fetch(config.url,{method:'POST',body:'{}'})).status,403);
+  assert.equal((await fetch(config.url,{method:'POST',headers:{...config.headers,Origin:'https://synthetic.invalid'},body:'{}'})).status,403);
+  const client=new ClaudeTestClient({name:'synthetic-client',version:'1.0.0'});t.after(()=>client.close());
+  await client.connect(new StreamableHTTPClientTransport(new URL(config.url),{requestInit:{headers:config.headers}}));
+  assert.equal((await client.listTools()).tools.length,agentTools.length);
+  const denied=await client.callTool({name:'write_file',arguments:{path:'synthetic.txt',content:'must not write'}});
+  assert.equal(denied.isError,true);assert.match(denied.content[0].text,/Read-Only|read.only/i);
+  await assert.rejects(fs.access(path.join(await store.workspace(session.projectId,session.id),'synthetic.txt')));
+  await assert.rejects(client.callTool({name:'Bash',arguments:{command:'ignored'}}),/Unknown tool/);
+  const headers={...config.headers,'Content-Type':'application/json',Accept:'application/json, text/event-stream'};
+  const body=JSON.stringify({jsonrpc:'2.0',id:90001,method:'tools/call',params:{name:'list_files',arguments:{}}});
+  const before=count;
+  for(let i=0;i<2;i++){const response=await fetch(config.url,{method:'POST',headers,body});assert.equal(response.status,200);await response.text();}
+  assert.equal(count,before+1);
+  controller.abort();assert.equal((await fetch(config.url,{method:'POST',headers,body})).status,403);
+});
+
+test('Claude requires a successful terminal event, keeps tools constrained, and removes temporary prompts',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-claude-turn-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  let terminal={type:'result',subtype:'success',is_error:false},code=0;
+  const manager={verify:async()=>'/synthetic/claude',options:async signal=>({cwd:root,env:{},signal}),run:async(_exe,args,options)=>{
+    assert.equal(args[args.indexOf('--tools')+1],'');assert.ok(args.includes('--strict-mcp-config'));assert.ok(args.includes('--no-session-persistence'));assert.ok(!args.includes('--bare'));
+    assert.deepEqual(JSON.parse(args[args.indexOf('--settings')+1]),{disableAllHooks:true});
+    assert.equal(await fs.readFile(args[args.indexOf('--system-prompt-file')+1],'utf8'),'Synthetic system');
+    await options.onEvent({type:'assistant',message:{id:'synthetic',content:[{type:'text',text:'Partial answer'}]}});
+    if(terminal)await options.onEvent(terminal);return {code};
+  }};
+  const args={manager,provider:{},model:'default',messages:[{role:'system',content:'Synthetic system'}],signal:new AbortController().signal,onEvent:async()=>{}};
+  await claudeTurn(args);assert.deepEqual(await fs.readdir(root),[]);
+  terminal=undefined;await assert.rejects(claudeTurn(args),/did not complete/);assert.deepEqual(await fs.readdir(root),[]);
+  terminal={type:'result',subtype:'error_during_execution',is_error:true};await assert.rejects(claudeTurn(args));
+  terminal={type:'result',subtype:'success',is_error:false};code=1;await assert.rejects(claudeTurn(args));
+});
+
+test('Claude agent persists streamed blocks once and routes tool execution through the ordinary history and permissions',{timeout:15000},async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-claude-agent-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const store=new Store(root,{});await store.init('en');const session=await store.newSession();
+  const provider={id:'synthetic-claude',adapter:'claude-code',baseURL:'https://claude.ai',supportsImages:true};store.state.providers.push(provider);
+  let finished;const done=new Promise(resolve=>{finished=resolve;});
+  const agent=new Agent(store,{tools:[],apiDefinitions:Promise.resolve({})},event=>{if(event.type==='busy'&&!event.busy)finished();});
+  agent.prepareKnowledge=async()=>[];
+  agent.knowledge.context=async()=>({automatic:[],summary:'',text:''});
+  store.claudeCode={verify:async()=>'/synthetic/claude',options:async signal=>({cwd:root,env:{},signal}),run:async(_exe,args,options)=>{
+    const send=options.onEvent;
+    await send({type:'stream_event',event:{type:'message_start',message:{id:'synthetic-message'}}});
+    await send({type:'assistant',message:{id:'synthetic-message',content:[{type:'thinking',thinking:'private reasoning'}]}});
+    for(const text of ['First block. ','Second block.']) {
+      await send({type:'stream_event',event:{type:'content_block_delta',delta:{type:'text_delta',text}}});
+      await send({type:'assistant',message:{id:'synthetic-message',content:[{type:'text',text}]}});
+    }
+    await send({type:'stream_event',event:{type:'message_stop'}});
+    const config=JSON.parse(args[args.indexOf('--mcp-config')+1]).mcpServers.archi;
+    const client=new ClaudeTestClient({name:'synthetic',version:'1.0.0'});
+    try {
+      await client.connect(new StreamableHTTPClientTransport(new URL(config.url),{requestInit:{headers:config.headers}}));
+      assert.equal((await client.callTool({name:'write_file',arguments:{path:'forbidden.txt',content:'synthetic'}})).isError,true);
+    } catch(error) {throw new Error(`${error.stack}\n${error.cause?.stack||''}`);}
+    finally {await client.close();}
+    await send({type:'assistant',uuid:'synthetic-final-block',message:{id:'synthetic-final',content:[{type:'text',text:'Write was denied.'}]}});
+    await send({type:'result',subtype:'success',is_error:false});return {code:0};
+  }};
+  await agent.enqueue({projectId:session.projectId,sessionId:session.id,providerId:provider.id,model:'default',mode:'read',text:'Synthetic task'});
+  await done;
+  const saved=await store.session(session.projectId,session.id);
+  assert.deepEqual(saved.messages.filter(m=>m.role==='notice'),[]);assert.equal(saved.queuePaused,false);
+  assert.deepEqual(saved.messages.filter(m=>m.role==='assistant').map(m=>m.text),['First block. Second block.','Write was denied.']);
+  assert.equal(saved.messages.find(m=>m.role==='tool').status,'error');
+  assert.equal(saved.history.filter(m=>m.role==='tool').length,1);
+  assert.doesNotMatch(JSON.stringify(saved),/private reasoning/);
+  await assert.rejects(fs.access(path.join(await store.workspace(session.projectId,session.id),'forbidden.txt')));
+});
 
 test('compatible replies reject truncated or malformed tool batches before execution',async t=>{
   let streamed=true,finish='length',argumentsText='{"query":"synthetic',body;

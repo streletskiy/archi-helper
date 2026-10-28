@@ -12,6 +12,8 @@ export const providerDefinitions = [
       redirectPath:'/oauth/callback',installationParameter:'installation_id'},
   },
   {id:'openai',name:'OpenAI',baseURL:'https://api.openai.com/v1',adapter:'openai-compatible'},
+  {id:'claude-code',name:'Claude',logo:'providers/claude.svg',baseURL:'https://claude.ai',adapter:'claude-code',supportsImages:true,
+    connectLabel:'claude.connect',manageUsageURL:'https://claude.ai/settings/usage'},
   {
     id:'chatgpt',name:'ChatGPT',logo:'providers/chatgpt.svg',logoMonochrome:true,baseURL:'https://api.openai.com/v1',adapter:'openai-responses',supportsImages:true,
     connectLabel:'ui.continueWithChatGPT',planLabel:'ui.usingChatGPTPlan',manageUsageURL:'https://chatgpt.com/settings/usage',

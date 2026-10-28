@@ -23,8 +23,8 @@ export async function readJSON(file, fallback) {
 export async function projectPath(root, relative = '.') {
   if (typeof relative !== 'string') throw new Error(t('errors.expectedAFileName'));
   const result = path.resolve(root, relative), base = await fs.realpath(root);
-  const inside = p => { const r = path.relative(base, p); return !r.startsWith('..') && !path.isAbsolute(r); };
-  if (!inside(result)) throw new Error(t('errors.theFileIsOutsideTheProjectFolder'));
+  const inside = (p, parent = base) => { const r = path.relative(parent, p); return !r.startsWith('..') && !path.isAbsolute(r); };
+  if (!inside(result, path.resolve(root))) throw new Error(t('errors.theFileIsOutsideTheProjectFolder'));
   let ancestor = result;
   while (true) {
     try { if (!inside(await fs.realpath(ancestor))) throw new Error(t('errors.theLinkLeadsOutsideTheProject')); break; }
@@ -70,11 +70,12 @@ export class Store {
   async save() { this.saving=(this.saving||Promise.resolve()).catch(()=>{}).then(()=>atomicJSON(this.file,this.state));await this.saving; }
   publicState() {
     const {oauthRegistrations,telemetry,...state}=this.state;
-    return { ...state, providers: state.providers.map(({ encryptedKey, encryptedOAuth, ...p }) => ({ ...p, hasKey: !!encryptedKey || !!encryptedOAuth })) };
+    return { ...state, providers: state.providers.map(({ encryptedKey, encryptedOAuth, ...p }) => ({ ...p, hasKey: !!encryptedKey || !!encryptedOAuth || p.cli?.status==='connected' })) };
   }
   async provider(input) {
     const id = input.id || uid();
     const old = this.state.providers.find(p => p.id === id);
+    if(old?.adapter==='claude-code')throw new Error(t('claude.managedConnection'));
     const url = new URL(input.baseURL.trim().replace(/\/+$/, ''));
     if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
       throw new Error(t('errors.useHttpsOrALocalServer'));
