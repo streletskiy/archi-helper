@@ -28,7 +28,7 @@ async function fixture(t,handler) {
   const telemetry=new Telemetry(store,{runtimeEnabled:true,version:'0.0.0',environment:'test',config:{projectToken:'synthetic',host:'https://synthetic.invalid',schemaVersion:3}});
   await telemetry.init();
   t.after(async()=>{clearInterval(telemetry.timer);server.closeAllConnections();await new Promise(resolve=>server.close(resolve));assert.equal(path.dirname(root),path.resolve(os.tmpdir()));await fs.rm(root,{recursive:true,force:true});});
-  const mcp={python,runtime:root,port:server.address().port};
+  const mcp={python,runtime:root,port:String(server.address().port)};
   const run=(code,signal=new AbortController().signal)=>telemetry.task(session,{text:'synthetic Python check',mode:'full'},null,()=>currentObservation().tool('run_python',{},()=>runPython({store,mcp,session,code,signal}),signal));
   return {store,session,telemetry,mcp,run};
 }
