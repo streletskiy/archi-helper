@@ -41,7 +41,7 @@ export const EVENT_SCHEMAS=Object.freeze({
   archi_task_started:common,
   archi_task_finished:common,
   archi_tool_finished:{run_id:uuid,tool,command:value=>commands(value)||'other',duration_ms:common.duration_ms,outcome,error_category:errorCategory},
-  archi_tool_diagnostic:{run_id:uuid,tool,command:value=>commands(value)||'other',step_index:positiveInteger(1e6),previous_failed_step:positiveInteger(1e6),outcome,error_category:errorCategory,diagnostic:sanitizeDiagnostic},
+  archi_tool_diagnostic:{run_id:uuid,tool,command:value=>commands(value)||'other',source:oneOf(['python_json_api']),api_step_index:positiveInteger(40),step_index:positiveInteger(1e6),previous_failed_step:positiveInteger(1e6),outcome,error_category:errorCategory,diagnostic:sanitizeDiagnostic},
   archi_http_request:{run_id:uuid,provider_type:providerType,http_status:integer(599),duration_ms:common.duration_ms,purpose:oneOf(['agent','compaction']),error_category:errorCategory},
   archi_knowledge_used:{run_id:uuid,knowledge_ids:strings(articles),activation:oneOf(['automatic','selected','read'])},
   archi_task_feedback:{...common,feedback},
