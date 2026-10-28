@@ -110,9 +110,6 @@
       "oneClick": false,
       "useZip": false,
       "differentialPackage": true,
-      "preCompressedFileExtensions": [
-        ".7z"
-      ],
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
