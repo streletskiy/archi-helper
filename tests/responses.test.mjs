@@ -6,7 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { Store } from '../electron/store.mjs';
+import { Store,projectPath } from '../electron/store.mjs';
 import { Agent,agentTools } from '../electron/agent.mjs';
 import assert from 'node:assert/strict';
 import { completion, models, requestMessages } from '../electron/provider.mjs';
@@ -20,6 +20,18 @@ const reasoning={type:'reasoning',id:'rs_1',summary:[],encrypted_content:'privat
 const call={type:'function_call',id:'fc_1',namespace:'archi',name:'read_file',call_id:'call-1',arguments:'{"path":"a.txt"}',status:'completed'};
 function stream(events) {return new Response(events.map(e=>`data: ${JSON.stringify(e)}\r\n\r\n`).join(''),{headers:{'Content-Type':'text/event-stream'}});}
 function mock(t,handler) {const original=globalThis.fetch;globalThis.fetch=handler;t.after(()=>{globalThis.fetch=original;});}
+
+test('project paths accept aliased roots while rejecting traversal and escaping links',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-project-path-'));
+  t.after(async()=>{assert.equal(path.dirname(root),path.resolve(os.tmpdir()));await fs.rm(root,{recursive:true,force:true});});
+  const actual=path.join(root,'project'),alias=path.join(root,'linked-project'),outside=path.join(root,'outside');
+  await fs.mkdir(actual);await fs.mkdir(outside);
+  await fs.symlink(actual,alias,'junction');await fs.symlink(outside,path.join(actual,'escape'),'junction');
+  assert.equal(await projectPath(alias,'.'),alias);
+  assert.equal(await projectPath(alias,'nested/synthetic.txt'),path.join(alias,'nested/synthetic.txt'));
+  await assert.rejects(projectPath(alias,'../outside/synthetic.txt'),/outside/i);
+  await assert.rejects(projectPath(alias,'escape/synthetic.txt'),/outside/i);
+});
 
 test('Claude input preserves conversation and images without copying provider reasoning or credentials',()=>{
   const input=claudeInput([{role:'system',content:'separate system prompt'},{role:'assistant',content:'Earlier answer',reasoning_content:'private reasoning',_responseItems:['private items']},
