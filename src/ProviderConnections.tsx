@@ -5,6 +5,40 @@ import type { TranslationKey } from '../locales/index.mjs';
 import { providerDefinitions } from '../electron/provider-definitions.mjs';
 
 export type ProviderPromptData={id:string;kind:'info'|'remove'|'account';definitionId?:string;message:string;detail:string;buttons:string[];defaultId:number;cancelId:number};
+export type ClaudeProgress={stage:'detecting'|'downloading'|'verifying'|'installing'|'checking'|'authorizing';percent?:number};
+const claudeStages:Record<ClaudeProgress['stage'],TranslationKey>={detecting:'claude.detecting',downloading:'claude.downloading',verifying:'claude.verifying',installing:'claude.installing',checking:'claude.checking',authorizing:'claude.authorizing'};
+type ConnectionDefinition={id:string;name:string;logo?:string;logoMonochrome?:boolean;connectLabel?:TranslationKey};
+const claudeDefinition=providerDefinitions.find(def=>def.id==='claude-code')!;
+
+function ConnectButton({definition,reconnecting,disabled,onClick}:{definition:ConnectionDefinition;reconnecting?:boolean;disabled:boolean;onClick:()=>void}) {
+  return <button className="secondary oauth-sign-in" disabled={disabled} onClick={onClick}>{definition.logo?<img className={definition.logoMonochrome?'oauth-logo monochrome':'oauth-logo'} src={definition.logo} alt="" width={24} height={24}/>:<ExternalLink size={24}/>}<span>{t(definition.connectLabel||(reconnecting?'ui.oauthReconnectProvider':'ui.oauthConnectProvider'),{name:definition.name})}</span></button>;
+}
+
+export function ClaudeConnect({disabled,progress,settings=false,onBusy,onState,onConnected}:{disabled:boolean;progress?:ClaudeProgress|null;settings?:boolean;onBusy:(busy:boolean)=>void;onState:(state:any)=>void;onConnected:(result:{providerId:string;state:any})=>Promise<void>}) {
+  const [pending,setPending]=useState(false),[error,setError]=useState('');
+  const active=pending||!!progress;
+  async function connect(options={}) {
+    setPending(true);setError('');onBusy(true);
+    try {await onConnected(await window.archi.call('connectClaude',options));}
+    catch(error){setError((error as Error).message);try{onState(await window.archi.call('bootstrap'));}catch{}}
+    finally {setPending(false);onBusy(false);}
+  }
+  return <div className="oauth-connect">
+    <div className="oauth-controls"><ConnectButton definition={claudeDefinition} disabled={disabled||active} onClick={()=>connect()}/>
+      {active&&<button className="secondary" onClick={()=>window.archi.call('cancelClaude')}><X size={16}/>{t('ui.cancel')}</button>}</div>
+    {active&&<p role="status" className="oauth-message">{t(claudeStages[progress?.stage||'detecting'])}{progress?.stage==='downloading'&&progress.percent!==undefined?` ${progress.percent}%`:''}</p>}
+    {progress?.stage==='downloading'&&<progress aria-label={t('claude.downloading')} max={100} value={progress.percent} style={{width:'100%'}}/>}
+    {error&&<p role="alert" className="oauth-message oauth-error">{error}</p>}
+    {settings&&<div className="settings-advanced-content">
+      <p>{t('claude.description')}</p><p>{t('claude.setupHint')}</p><div className="oauth-controls">
+        <button className="secondary" onClick={()=>window.archi.call('external',{url:'https://code.claude.com/docs/en/setup'})}>{t('claude.install')}<ExternalLink size={14}/></button>
+        <button className="secondary" disabled={disabled||active} onClick={()=>connect({chooseExecutable:true})}>{t('claude.chooseExecutable')}</button>
+        <button className="secondary" disabled={disabled||active} onClick={()=>connect({login:true})}>{t('claude.switchAccount')}</button>
+        <button className="secondary" disabled={disabled||active} onClick={()=>connect({login:true,consoleLogin:true})}>{t('claude.consoleLogin')}</button>
+        <button className="secondary" disabled={disabled||active} onClick={()=>connect({allowOtherAuth:true})}>{t('claude.currentAuth')}</button>
+      </div></div>}
+  </div>;
+}
 
 export function ProviderPrompt({prompt}:{prompt:ProviderPromptData}) {
   const ref=useRef<HTMLDialogElement>(null),[pending,setPending]=useState(false),[error,setError]=useState('');
@@ -28,7 +62,7 @@ export function ProviderPrompt({prompt}:{prompt:ProviderPromptData}) {
 }
 
 export function OAuthConnect({definition,providerId,disabled,onBusy,onConnected,onState}:{
-  definition:{id:string;name:string;logo?:string;logoMonochrome?:boolean;connectLabel?:TranslationKey};providerId?:string;disabled:boolean;
+  definition:ConnectionDefinition;providerId?:string;disabled:boolean;
   onState?:(state:any)=>void;
   onBusy:(busy:boolean)=>void;onConnected:(result:{providerId:string;state:any})=>Promise<void>;
 }) {
@@ -42,7 +76,7 @@ export function OAuthConnect({definition,providerId,disabled,onBusy,onConnected,
     finally {setPending(false);onBusy(false);}
   }
   return <div className="oauth-connect">
-    <div className="oauth-controls"><button className="secondary oauth-sign-in" disabled={disabled||pending} onClick={connect}>{definition.logo?<img className={definition.logoMonochrome?'oauth-logo monochrome':'oauth-logo'} src={definition.logo} alt="" width={24} height={24}/>:<ExternalLink size={24}/>}<span>{t(definition.connectLabel||(providerId?'ui.oauthReconnectProvider':'ui.oauthConnectProvider'),{name:definition.name})}</span></button>
+    <div className="oauth-controls"><ConnectButton definition={definition} reconnecting={!!providerId} disabled={disabled||pending} onClick={connect}/>
       {pending&&<button className="secondary" onClick={()=>window.archi.call('cancelOAuth')}><X size={16}/>{t('ui.cancel')}</button>}</div>
     {pending&&<p role="status" className="oauth-message">{t('ui.oauthWaiting')}</p>}
     {error&&<p role="alert" className="oauth-message oauth-error">{error}</p>}
