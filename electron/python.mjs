@@ -27,8 +27,9 @@ export async function runPython({store,mcp,session,code,timeoutSeconds=300,signa
   signal.throwIfAborted();
   const observation=currentObservation();
   const observe=observation?.active&&observation.collectRoute&&observation.telemetry.workflows&&observation.workflowEpoch===observation.telemetry.workflowEpoch;
-  const config=script.replace(/\.py$/,'.observer.json'),journal=script.replace(/\.py$/,'.observer.jsonl');let observing=false;
-  if(observe&&Number.isInteger(mcp.port)&&mcp.port>0&&mcp.port<=65535) {
+  const config=script.replace(/\.py$/,'.observer.json'),journal=script.replace(/\.py$/,'.observer.jsonl'),port=Number(mcp.port);let observing=false;
+  if(observe&&Number.isInteger(port)&&port>0&&port<=65535) {
+    env.ARCHICAD_PORT=String(port);
     try{await fs.writeFile(config,JSON.stringify(PYTHON_OBSERVER_CONFIG),'utf8');await fs.writeFile(journal,'','utf8');observing=true;}catch{}
   }
   const started=Date.now();
