@@ -105,6 +105,14 @@ Var archiRuntimeResult
     StrCpy $archiRuntimeResult "reused"
   ${else}
     !insertmacro archiUpdateProgress "extracting"
+    ; Keep the runtime's compressed bytes intact for differential downloads.
+    ; Only materialize the archive when the verified directory cannot be reused.
+    SetOutPath "$INSTDIR\resources"
+    SetCompress off
+    File /oname=runtime.7z "${PROJECT_DIR}\.cache\runtime-package\runtime.7z"
+    !ifdef COMPRESS
+      SetCompress "${COMPRESS}"
+    !endif
     SetOutPath "$INSTDIR\resources\runtime"
     Nsis7z::Extract "$INSTDIR\resources\runtime.7z"
     SetOutPath "$INSTDIR"

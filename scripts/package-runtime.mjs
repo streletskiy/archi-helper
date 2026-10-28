@@ -40,13 +40,16 @@ export default async function packageRuntime(context) {
   const metadata=path.join(project,'.cache','runtime-package');
   await fs.mkdir(metadata,{recursive:true});
   await fs.writeFile(path.join(metadata,'manifest.json'),JSON.stringify({schema:1,files}));
-  const archive=path.join(resources,'runtime.7z');
+  // Embed this archive explicitly with SetCompress off. The builder's
+  // preCompressedFileExtensions excludes it from app-64.7z but still lets
+  // NSIS deflate it, destroying block reuse after small runtime changes.
+  const archive=path.join(metadata,'runtime.7z');
   await archiveRuntime(runtime,archive);
   const runtimeBytes=files.reduce((sum,file)=>sum+file.size,0);
   const archiveBytes=(await fs.stat(archive)).size;
   // Reserve space for extraction while the archive still exists. The registry
   // estimate describes the installed tree after that archive has been removed.
-  await fs.writeFile(path.join(metadata,'size.nsh'),`!define ARCHI_RUNTIME_KIB ${Math.ceil(runtimeBytes/1024)}\n!define ARCHI_RUNTIME_INSTALLED_KIB ${Math.ceil((runtimeBytes-archiveBytes)/1024)}\n`);
+  await fs.writeFile(path.join(metadata,'size.nsh'),`!define ARCHI_RUNTIME_KIB ${Math.ceil((runtimeBytes+archiveBytes)/1024)}\n!define ARCHI_RUNTIME_INSTALLED_KIB ${Math.ceil(runtimeBytes/1024)}\n`);
   // This is the copied build output, never the developer's source runtime.
   if(path.dirname(runtime)!==resources||path.dirname(resources)!==output)throw new Error('Invalid runtime removal target');
   await fs.rm(runtime,{recursive:true,force:true});
