@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | [Надпись площади в штампе зоны](common/zone-stamp-area-label.md) · `zone-stamp-area-label` | Согласованная надпись без изменения расчётной площади | Явное одобрение, проверка штампа, проба на одной зоне |
 | [Интерактивные каталоги](common/interactive-schedules.md) · `interactive-schedules` | Данные, ячейки или настройки спецификации | Проверка API текущей версии |
-| [Маршруты API](common/archicad-capabilities.md) · `archicad-capabilities` | Навигатор, databaseId, результаты MCP | Сверка текущей схемы |
+| [Маршруты API](common/archicad-capabilities.md) · `archicad-capabilities` | Навигатор, databaseId, фильтр деталей элементов, результаты MCP | Сверка текущей схемы |
 | [Аудит макетов](common/layout-audit.md) · `layout-audit` | Комплект, Publisher, PDF | Раздельный учёт покрытия |
 | [Python](common/python-workflow.md) · `python-workflow` | Работа с SDK и зависимостями | Точные сигнатуры, отдельная среда |
 | [Библиотечные элементы и GDL](common/library-parts-gdl.md) · `library-parts-gdl` | Окна, библиотечные части, материалы и параметры GDL | Точная схема, тип значения, поэлементный результат и чтение после изменения |

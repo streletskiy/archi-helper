@@ -1,12 +1,12 @@
 ---
 id: "archicad-capabilities"
 title: "Возможности Archicad и выбор инструментов"
-summary: "Идентификаторы навигатора и баз данных, ответы MCP и точные команды с учётом версии Archicad."
+summary: "Идентификаторы навигатора и баз данных, фильтр деталей элементов и ответы MCP с учётом версии Archicad."
 kind: "knowledge"
 activation: "auto"
 enabled: true
-tags: ["navigator","layout","database","макет","навигатор","версия"]
-triggers: ["tool","command","api","navigator","database","инструмент","команд","навигатор","databaseId","ChangeWindow","archicad","find_tools","call_archicad","get_api_catalog"]
+tags: ["navigator","layout","database","details","fields","макет","навигатор","версия","детали"]
+triggers: ["tool","command","api","navigator","database","инструмент","команд","навигатор","databaseId","ChangeWindow","archicad","find_tools","call_archicad","get_api_catalog","GetDetailsOfElements","fields","детал"]
 related: ["ac25-capabilities","ac27-capabilities"]
 ---
 
@@ -34,6 +34,20 @@ related: ["ac25-capabilities","ac27-capabilities"]
 | Растровый запасной путь | `SaveCurrentWindowAsImage`: `imageFilePath`, а не придуманное имя файла; нужное разрешение результата обязательно проверять |
 
 `PrintView` — печать, а не документированный универсальный PDF-экспорт. Не вызывайте его для получения PDF. `RunTapirCommand`, Python SDK и `ExecuteAddOnCommand` не добавляют отсутствующие команды. Версия определений в приложении и реально установленный Tapir могут различаться.
+
+## Узкое чтение деталей элементов
+
+Если у текущего `GetDetailsOfElements` есть `fields`, передавайте нужные поля верхнего уровня: `type`, `id`, `floorIndex`, `layerIndex`, `drawIndex`, `details`, `floorPlanPolygons`, `hotlinkId`. Например, свойства внутри `details` запрашиваются через `"details"`, а не через имя вложенного свойства вроде `"thickness"`. Пустой `fields` не проходит схему; отсутствие фильтра означает полный запрос.
+
+Явно синтетический запрос для проверки структуры, без обращения к существующему элементу:
+
+```json
+{"elements":[{"elementId":{"guid":"00000000-0000-4000-8000-000000000002"}}],"fields":["type","details"]}
+```
+
+По описанию команды невыбранные поля не вычисляются; исключение `floorPlanPolygons` позволяет не запрашивать извлечение чертёжных примитивов. Это граница контракта, а не измеренный прирост скорости. В фильтрованном ответе отсутствующее невыбранное поле не означает ошибку: обязательные поля полной схемы ответа относятся к запросу без фильтра.
+
+Сначала снимите оболочку MCP и прочитайте `detailsOfElements`. Если сведений недостаточно, расширьте `fields` по текущему каталогу и повторите чтение. Проверка структуры выполнена по поставляемым определениям `GetDetailsOfElements` / `ElementDetailsField` и [документации Tapir](https://enzyme-apd.github.io/tapir-archicad-automation/archicad-addon/) на синтетическом JSON; новый запуск в PLN и проверка геометрии не заявляются.
 
 ## Правильное чтение результатов
 
