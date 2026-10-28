@@ -19,7 +19,7 @@ export const OUTCOMES=['completed_unverified','failed','cancelled','outcome_unkn
 export const ERROR_CATEGORIES=['none','cancelled','timeout','permission_denied','authentication','rate_limit','context_limit','invalid_response','network','provider_error','python_error','tool_error','unknown'];
 const outcome=oneOf(OUTCOMES),errorCategory=oneOf(ERROR_CATEGORIES),tool=oneOf(TOOL_NAMES);
 const taskKind=oneOf(['general','layouts_pdf','schedules','properties','geometry','python','direct']);
-const providerType=oneOf(['openai','chatgpt','lumv','deepseek','openrouter','local','custom']);
+const providerType=oneOf(['openai','chatgpt','claude-code','lumv','deepseek','openrouter','local','custom']);
 const feedback=oneOf(['helpful','unhelpful','uncertain']);
 const strings=(check,max=20)=>value=>Array.isArray(value)?[...new Set(value.map(check).filter(v=>v!==undefined))].slice(0,max):undefined;
 const steps=value=>Array.isArray(value)?value.slice(0,60).flatMap(step=>{
@@ -60,7 +60,7 @@ export function sanitizeEvent(event,properties) {
 export function providerMetadata(provider) {
   const definition=providerDefinition(provider);let local=false;
   try{local=['localhost','127.0.0.1','[::1]'].includes(new URL(provider?.baseURL).hostname);}catch{}
-  return {provider_type:providerType(definition?.id)||(local?'local':'custom'),auth_mode:provider?.oauth?'oauth':local?'local':'api_key'};
+  return {provider_type:providerType(definition?.id)||(local?'local':'custom'),auth_mode:provider?.oauth?'oauth':provider?.cli||local?'local':'api_key'};
 }
 export const publicModel=value=>models(value)||'custom';
 export const publicCommand=value=>commands(typeof value==='string'?value.replace(/^archicad:/,''):value)||'other';

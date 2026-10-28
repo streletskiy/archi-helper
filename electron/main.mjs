@@ -8,6 +8,7 @@ import { Store, projectPath, INBOX_ID } from './store.mjs';
 import { models } from './provider.mjs';
 import { providerDefinitions } from './provider-definitions.mjs';
 import { OAuthManager } from './oauth-manager.mjs';
+import { ClaudeCode,claudeModels } from './claude-code.mjs';
 import { appFetch, configureAppFetch } from './network.mjs';
 import { EFFORTS } from './reasoning.mjs';
 import { MCP } from './mcp.mjs';
@@ -45,7 +46,7 @@ function answerProviderPrompt({id,response}) {
   pendingProviderPrompt=undefined;emit({type:'provider-prompt',prompt:null});pending.resolve({response});
 }
 const runtimeManifest=await fs.readFile(path.join(runtime,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({}));
-const publicState=()=>({...store.publicState(),telemetry:store.telemetry?.state(),providerPrompt:pendingProviderPrompt?.prompt,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:mcp.clients.has('archicad'),toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state,tapirProgress});
+const publicState=()=>({...store.publicState(),telemetry:store.telemetry?.state(),providerPrompt:pendingProviderPrompt?.prompt,claudeProgress:store.claudeCode?.progress,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:mcp.clients.has('archicad'),toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state,tapirProgress});
 async function connect() {
   if(connecting)return connecting;
   connecting=(async()=>{
@@ -112,8 +113,32 @@ const handlers={
   bootstrap:async()=>publicState(),
   providerDefinitions:async()=>providerDefinitions,
   answerProviderPrompt:async input=>{answerProviderPrompt(input);return true;},
+  connectClaude:async({chooseExecutable=false,login=false,consoleLogin=false,allowOtherAuth=false}={})=>{
+    if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
+    if(store.oauthManager.pending||pendingProviderPrompt)throw new Error(t('errors.oauthAlreadyConnecting'));
+    let executable;
+    if(chooseExecutable) {
+      const selected=await dialog.showOpenDialog(win,{title:t('claude.chooseExecutable'),properties:['openFile'],filters:[{name:'Claude Code',extensions:['exe']}]});
+      if(selected.canceled)throw new Error(t('errors.oauthCancelled'));
+      executable=selected.filePaths[0];
+    }
+    if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
+    let providerId;
+    try {providerId=await store.claudeCode.connect({executable,login,consoleLogin,allowOtherAuth});}
+    catch(error) {
+      if(error.code!=='CLAUDE_OTHER_AUTH')throw error;
+      const {response}=await showProviderPrompt({kind:'account',definitionId:'claude-code',message:t('claude.authChoice'),detail:t('claude.apiDetected'),
+        buttons:[t('claude.switchAccount'),t('claude.currentAuth'),t('ui.cancel')],defaultId:2,cancelId:2});
+      if(response===2)throw new Error(t('errors.oauthCancelled'));
+      if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
+      providerId=await store.claudeCode.connect({executable,login:response===0,allowOtherAuth:response===1});
+    }
+    showAppWindow(win);return {providerId,state:publicState()};
+  },
+  cancelClaude:async()=>{store.claudeCode.cancel();return true;},
   connectOAuth:async({definitionId,id})=>{
     if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
+    if(store.claudeCode.pending)throw new Error(t('errors.oauthAlreadyConnecting'));
     let registrationId;
     const registrations=!id&&(store.state.oauthRegistrations||[]).filter(p=>p.definitionId===definitionId);
     if(registrations?.length) {
@@ -175,16 +200,16 @@ const handlers={
     if(!provider)throw new Error(t('errors.providerNotFound'));
     const {response}=await showProviderPrompt({kind:'remove',definitionId:provider.definitionId,
       message:t('ui.providerRemoveConfirm',{name:provider.name}),
-      detail:t(provider.oauth?'ui.oauthRemoveDescription':'ui.keyRemoveDescription',{account:provider.oauth?.accountName||provider.name}),
+      detail:t(provider.cli?'claude.removeDescription':provider.oauth?'ui.oauthRemoveDescription':'ui.keyRemoveDescription',{account:provider.oauth?.accountName||provider.name}),
       buttons:[t('ui.cancel'),t(provider.oauth?'ui.oauthDisconnect':'ui.deleteProvider')],defaultId:0,cancelId:0});
     if(response!==1)return publicState();
     if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
-    if(provider.oauth)await store.oauthManager.disconnect(id);else await store.deleteProvider(id);
+    if(provider.cli)await store.claudeCode.disconnect(id);else if(provider.oauth)await store.oauthManager.disconnect(id);else await store.deleteProvider(id);
     store.telemetry?.provider(provider,'removed');
     return publicState();
   },
   models:async({id})=>{
-    const p=store.getProvider(id),list=await models(p);
+    const p=store.getProvider(id),list=p.adapter==='claude-code'?(await store.claudeCode.verify(p,AbortSignal.timeout(30000)),claudeModels()):await models(p);
     store.telemetry?.provider(p,'verified');
     const provider=store.state.providers.find(p=>p.id===id);if(!provider)return [];
     if(p.oauth&&(provider.oauth?.connectionId!==p.oauth.connectionId||provider.oauth.status!=='connected'||provider.oauth.planEnabled===false))return [];
@@ -225,7 +250,7 @@ const handlers={
     Object.assign(m,{text:JSON.stringify(result).slice(0,24000),status:result.isError?'error':'done',artifact});
     await store.saveSession(s);emit({type:'message',message:m,sessionId});return m;
   })),
-  send:async input=>{if(pendingProviderPrompt||store.oauthManager.pending||store.oauthManager.disconnecting.size)throw new Error(t('errors.oauthAlreadyConnecting'));return agent.enqueue(input);},
+  send:async input=>{if(pendingProviderPrompt||store.claudeCode.pending||store.oauthManager.pending||store.oauthManager.disconnecting.size)throw new Error(t('errors.oauthAlreadyConnecting'));return agent.enqueue(input);},
   queuedMessage:async input=>agent.changeQueued(input),
   resumeQueue:async input=>agent.resume(input),
   stop:async input=>agent.stop(input),
@@ -304,7 +329,7 @@ else {
     encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error(t('errors.windowsEncryptionIsUnavailable'));return safeStorage.encryptString(value).toString('base64');},
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
   });
-   await store.init(app.getLocale());nativeTheme.themeSource=store.state.theme;store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);await agent.knowledge.init();
+   await store.init(app.getLocale());nativeTheme.themeSource=store.state.theme;store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});store.claudeCode=new ClaudeCode(store,{onProgress:progress=>emit({type:'claude-progress',progress})});connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);await agent.knowledge.init();
   store.telemetry=new Telemetry(store,{runtimeEnabled:app.isPackaged&&process.env.ARCHI_TELEMETRY_DISABLED!=='1',version:app.getVersion(),installationKind:process.env.PORTABLE_EXECUTABLE_FILE?'portable':'installed'});
   await store.telemetry.init();store.telemetry.start();
   updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>installUpdate({app,win,updater:updaterModule.autoUpdater,update:updates.state,language:store.state.language})});
@@ -333,6 +358,6 @@ else {
     if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop().catch(()=>{});setTimeout(()=>win.destroy(),500);}});}
   });
   app.on('window-all-closed',()=>app.quit());
-   let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;if(pendingProviderPrompt)answerProviderPrompt({id:pendingProviderPrompt.prompt.id,response:pendingProviderPrompt.prompt.cancelId});updates.dispose();store.oauthManager.dispose();Promise.allSettled([agent.stop(),mcp.close(),store.telemetry.shutdown()]).finally(()=>app.quit());}});
+   let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;if(pendingProviderPrompt)answerProviderPrompt({id:pendingProviderPrompt.prompt.id,response:pendingProviderPrompt.prompt.cancelId});updates.dispose();store.oauthManager.dispose();store.claudeCode.cancel();Promise.allSettled([agent.stop(),mcp.close(),store.telemetry.shutdown()]).finally(()=>app.quit());}});
   }).catch(error=>{dialog.showErrorBox(t('errors.archiHelperStartupError'),error.message);app.quit();});
 }
