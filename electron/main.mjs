@@ -108,7 +108,8 @@ const handlers={
   knowledgeRead:async({projectId,id})=>{store.project(projectId);return agent.knowledge.read(id,projectId,connection.data);},
   knowledgeSave:async({projectId,entry})=>{store.project(projectId);const saved=await agent.knowledge.save(entry,projectId);return agent.knowledge.read(saved.id,projectId,connection.data);},
   knowledgeRemove:async({projectId,id,revision})=>{store.project(projectId);return agent.knowledge.remove({id,revision},projectId);},
-  knowledgeFolder:async()=>{await agent.knowledge.init();const error=await shell.openPath(agent.knowledge.root);if(error)throw new Error(error);return true;},
+  findingUpdate:async({projectId,...input})=>{store.project(projectId);await agent.knowledge.findings.update(input);return agent.knowledge.read(input.id,projectId,connection.data);},
+  knowledgeFolder:async({source}={})=>{await agent.knowledge.init();const root=source==='agent'?agent.knowledge.findings.root:agent.knowledge.root;await fs.mkdir(root,{recursive:true});const error=await shell.openPath(root);if(error)throw new Error(error);return true;},
   knowledgePrompt:async()=>({text:await fs.readFile(new URL('./knowledge/prompts/system.md',import.meta.url),'utf8')}),
   bootstrap:async()=>publicState(),
   providerDefinitions:async()=>providerDefinitions,
@@ -330,7 +331,7 @@ else {
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
   });
    await store.init(app.getLocale());nativeTheme.themeSource=store.state.theme;store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});store.claudeCode=new ClaudeCode(store,{onProgress:progress=>emit({type:'claude-progress',progress})});connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);await agent.knowledge.init();
-  store.telemetry=new Telemetry(store,{runtimeEnabled:app.isPackaged&&process.env.ARCHI_TELEMETRY_DISABLED!=='1',version:app.getVersion(),installationKind:process.env.PORTABLE_EXECUTABLE_FILE?'portable':'installed'});
+  store.telemetry=new Telemetry(store,{runtimeEnabled:app.isPackaged&&process.env.ARCHI_TELEMETRY_DISABLED!=='1',version:app.getVersion(),installationKind:process.env.PORTABLE_EXECUTABLE_FILE?'portable':'installed',findings:agent.knowledge.findings});
   await store.telemetry.init();store.telemetry.start();
   updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>installUpdate({app,win,updater:updaterModule.autoUpdater,update:updates.state,language:store.state.language})});
   ipcMain.handle('archi:call',async(event,method,input={})=>{
