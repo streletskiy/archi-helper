@@ -5,6 +5,9 @@ import { StringDecoder } from 'node:string_decoder';
 import { t } from '../locales/index.mjs';
 import { uid, projectPath } from './store.mjs';
 import { CATALOG_PATH } from './api-catalog.mjs';
+import {currentObservation} from './telemetry-context.mjs';
+import {PYTHON_OBSERVER_CONFIG} from './tool-diagnostics.mjs';
+import {PYTHON_OBSERVER,readPythonObservation} from './python-observer.mjs';
 
 export async function runPython({store,mcp,session,code,timeoutSeconds=300,signal}) {
   if(!Number.isInteger(timeoutSeconds)||timeoutSeconds<1||timeoutSeconds>1800)throw new Error(t('agent.invalidPythonTimeout'));
@@ -22,11 +25,17 @@ export async function runPython({store,mcp,session,code,timeoutSeconds=300,signa
   env[pathKey]=[path.dirname(mcp.python),mcp.runtime,env[pathKey]||''].join(path.delimiter);
   for(const key of Object.keys(env))if(/(?:api.?key|token|secret|password|credential)/i.test(key))delete env[key];
   signal.throwIfAborted();
+  const observation=currentObservation();
+  const observe=observation?.active&&observation.collectRoute&&observation.telemetry.workflows&&observation.workflowEpoch===observation.telemetry.workflowEpoch;
+  const config=script.replace(/\.py$/,'.observer.json'),journal=script.replace(/\.py$/,'.observer.jsonl');let observing=false;
+  if(observe&&Number.isInteger(mcp.port)&&mcp.port>0&&mcp.port<=65535) {
+    try{await fs.writeFile(config,JSON.stringify(PYTHON_OBSERVER_CONFIG),'utf8');await fs.writeFile(journal,'','utf8');observing=true;}catch{}
+  }
   const started=Date.now();
   return new Promise(resolve=>{
     let preview='',tail='',stderr='',total=0,chars=0,reason='',spawnError,logError,write=Promise.resolve();
     const decoders={stdout:new StringDecoder('utf8'),stderr:new StringDecoder('utf8')};
-    const child=spawn(mcp.python,['-u',script],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
+    const child=spawn(mcp.python,observing?['-u','-c',PYTHON_OBSERVER,script,config,journal]:['-u',script],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});
     const capture=(text,stream)=>{chars+=text.length;preview+=text.slice(0,Math.max(0,20000-preview.length));tail=(tail+text).slice(-4000);if(stream==='stderr')stderr=(stderr+text).slice(-6000);};
     const output=(chunk,stream)=>{
       total+=chunk.length;capture(decoders[stream].write(chunk),stream);
@@ -48,11 +57,14 @@ export async function runPython({store,mcp,session,code,timeoutSeconds=300,signa
       clearTimeout(timer);signal.removeEventListener('abort',abort);
       for(const stream of ['stdout','stderr'])capture(decoders[stream].end(),stream);
       await write;
+      const apiObservation=observe?(observing?await readPythonObservation(journal):{coverage:'unavailable',truncated:true,calls:[]}):undefined;
+      await Promise.allSettled([config,journal].map(file=>fs.rm(file,{force:true})));
       const isError=!!reason||!!spawnError||!!logError||exitCode!==0;
-      const exception=[...stderr.matchAll(/^([\w.]+(?:Error|Exception)|KeyboardInterrupt|SystemExit):.*$/gm)].at(-1)?.[0];
+      const exception=[...stderr.replaceAll('\r\n','\n').matchAll(/^([\w.]+(?:Error|Exception)|(?:[\w.]+\.)?UnsucceededCommandCall|KeyboardInterrupt|SystemExit)(?::.*)?$/gm)].at(-1)?.[0];
       const error=reason==='timeout'?t('agent.pythonTimedOut',{seconds:timeoutSeconds}):reason==='cancelled'?t('agent.pythonCancelled'):
         spawnError?.message||logError?.message||(isError?(exception||t('agent.pythonExited',{code:exitCode??exitSignal??'unknown'})):undefined);
       resolve({exitCode,isError,...(error?{error}:{}),termination:reason||(spawnError?'start-error':logError?'log-error':isError?'exit-error':'completed'),durationMs:Date.now()-started,timeoutSeconds,
+        ...(apiObservation?{apiObservation}:{}),
         output:chars>20000?`${preview.slice(0,16000)}\n…\n${tail}`:preview,
         stderr,bytes:total,log:path.relative(root,log).replaceAll('\\','/'),script:path.relative(root,script).replaceAll('\\','/'),
         ...(isError?{warning:t('agent.theProcessStoppedCheckTheOutcomeCompleted')}:{}),...(reason?{outcomeUnknown:true}:{})});

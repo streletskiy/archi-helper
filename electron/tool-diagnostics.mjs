@@ -1,17 +1,32 @@
 import fields from './telemetry-diagnostic-fields.json' with {type:'json'};
 import {resultData} from './progress.mjs';
+import catalog from './telemetry-catalog.json' with {type:'json'};
 
 const publicFields=new Set(fields);
 const kinds=new Set(['completed','execution_failure','unsupported_argument','missing_argument','missing_key','invalid_value_type','python_exception','tool_failure','unknown_outcome']);
 const types=new Set(['string','number','integer','boolean','object','array','null']);
-const exceptions=new Set(['KeyError','TypeError','ValueError','NameError','AttributeError','IndexError','ImportError','ModuleNotFoundError','SyntaxError','RuntimeError','TimeoutError','OSError']);
-const checks=new Set(['execution_results','python_exit','tool_response','unknown']);
+export const PYTHON_EXCEPTIONS=['KeyError','TypeError','ValueError','NameError','AttributeError','IndexError','ImportError','ModuleNotFoundError','SyntaxError','RuntimeError','TimeoutError','OSError','AssertionError','ArchicadError','UnsucceededCommandCall','ConnectionError','PermissionError','FileNotFoundError','JSONDecodeError'];
+export const API_ERROR_RULES=[
+  {category:'unsupported_element_class',pattern:'Only multi-plane roofs are supported'},
+  {category:'invalid_program_status',code:4001,pattern:'Invalid program status'},
+  {category:'parameter_change_failed',pattern:'Failed to change parameter'},
+];
+const exceptions=new Set(PYTHON_EXCEPTIONS),apiErrors=new Set(API_ERROR_RULES.map(rule=>rule.category));
+const checks=new Set(['execution_results','python_exit','tool_response','json_api_response','unknown']);
+const commands=new Set(catalog.commands);
+export const PYTHON_OBSERVER_CONFIG={commands:catalog.commands,fields,exceptions:PYTHON_EXCEPTIONS,errorRules:API_ERROR_RULES,maxCalls:40,maxResponseBytes:2097152};
 const safeField=value=>typeof value==='string'&&publicFields.has(value);
 const failure=value=>value&&typeof value==='object'&&(value.success===false||!!value.error);
 
 export function executionResults(result) {
   const data=resultData(result);
-  return Array.isArray(data?.executionResults)?data.executionResults:typeof data?.success==='boolean'?[data]:[];
+  return Array.isArray(data?.executionResults)?data.executionResults:typeof data?.success==='boolean'?[data]:
+    Array.isArray(data?.elements)?data.elements:Array.isArray(data?.attributeIds)?data.attributeIds:[];
+}
+
+function apiError(value) {
+  const text=typeof value==='string'?value:value?.message;
+  return API_ERROR_RULES.find(rule=>rule.code!==undefined&&value?.code===rule.code||typeof text==='string'&&text.includes(rule.pattern))?.category;
 }
 
 export function normalizeExecutionResult(result) {
@@ -65,6 +80,9 @@ export function sanitizeDiagnostic(value) {
     result_check:checks.has(value.result_check)?value.result_check:'unknown',verification:'unverified'};
   if(types.has(value.expected_type))result.expected_type=value.expected_type;
   if(exceptions.has(value.exception_type))result.exception_type=value.exception_type;
+  if(apiErrors.has(value.api_error))result.api_error=value.api_error;
+  if(['urllib_json_api','unavailable'].includes(value.api_coverage))result.api_coverage=value.api_coverage;
+  for(const key of ['api_observed','api_truncated','api_has_failures','api_outcome_unknown'])if(typeof value[key]==='boolean')result[key]=value[key];
   if(value.input_shape!==undefined)result.input_shape=cleanShape(value.input_shape);
   if(value.response_shape!==undefined)result.response_shape=cleanShape(value.response_shape);
   result.message=message(result);
@@ -78,17 +96,32 @@ export function toolDiagnostic(name,args,result,error,{failed=false,unknown=fals
   const diagnostic={kind:unknown?'unknown_outcome':failed?'tool_failure':'completed',fields:[],
     result_check:entries.length?'execution_results':name==='run_python'?'python_exit':'tool_response'};
   if(bad.length&&!unknown)diagnostic.kind='execution_failure';
+  diagnostic.api_error=bad.map(item=>apiError(item.error)).find(Boolean)||apiError(data?.error)||apiError(text);
   if(failed&&!unknown) {
     if(/Additional properties are not allowed/i.test(text))diagnostic.kind='unsupported_argument';
     else if(/is a required property/i.test(text))diagnostic.kind='missing_argument';
     else if(/KeyError:/.test(text))diagnostic.kind='missing_key';
     const expected=text.match(/(?:not an? |not of type ['"]?)(integer|number|string|boolean|object|array)\b/i)?.[1]?.toLowerCase();
     if(expected){diagnostic.kind='invalid_value_type';diagnostic.expected_type=expected;}
-    const exception=text.match(/\b([A-Za-z]+Error):/)?.[1];
+    const exception=text.match(new RegExp(`\\b(${PYTHON_EXCEPTIONS.join('|')})(?=:|$)`,'m'))?.[1];
     if(exceptions.has(exception)){diagnostic.exception_type=exception;if(diagnostic.kind==='tool_failure')diagnostic.kind='python_exception';}
     diagnostic.fields=[...text.matchAll(/['"]([A-Za-z_$][A-Za-z0-9_$]*)['"]/g)].map(match=>match[1]).filter(safeField);
   }
   if(name==='call_archicad')diagnostic.input_shape=shape(args?.arguments||{});
   if(data!==undefined)diagnostic.response_shape=shape(data);
+  if(name==='run_python'&&result?.apiObservation){
+    const observation=sanitizePythonObservation(result.apiObservation);
+    Object.assign(diagnostic,{api_coverage:observation.coverage,api_observed:observation.calls.length>0,api_truncated:observation.truncated,
+      api_has_failures:observation.calls.some(call=>['execution_failure','python_exception','tool_failure'].includes(call.diagnostic.kind)),
+      api_outcome_unknown:observation.calls.some(call=>call.diagnostic.kind==='unknown_outcome')});
+  }
   return sanitizeDiagnostic(diagnostic);
+}
+
+export function sanitizePythonObservation(value) {
+  return {coverage:value?.coverage==='urllib_json_api'?'urllib_json_api':'unavailable',truncated:value?.truncated===true||Array.isArray(value?.calls)&&value.calls.length>40,
+    calls:(Array.isArray(value?.calls)?value.calls:[]).slice(0,40).flatMap(call=>{
+      const diagnostic=sanitizeDiagnostic(call?.diagnostic);
+      return diagnostic?[{command:commands.has(call.command)?call.command:'other',diagnostic}]:[];
+    })};
 }

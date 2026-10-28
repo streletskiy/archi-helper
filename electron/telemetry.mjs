@@ -4,7 +4,7 @@ import {t} from '../locales/index.mjs';
 import {TELEMETRY_CONFIG} from './telemetry-config.mjs';
 import {sanitizeEvent,providerMetadata,connectionMetadata,publicModel,publicCommand,publicArticles,classifyError,classifyTask} from './telemetry-schema.mjs';
 import {withObservation,observationPurpose} from './telemetry-context.mjs';
-import {normalizeExecutionResult,toolDiagnostic} from './tool-diagnostics.mjs';
+import {normalizeExecutionResult,toolDiagnostic,sanitizePythonObservation} from './tool-diagnostics.mjs';
 
 const uuid=()=>crypto.randomUUID();
 const validId=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
@@ -191,6 +191,11 @@ class TaskObservation {
           const step_index=this.counts.tool_count,key=`${name}:${command}`,previous_failed_step=this.failedSteps.get(key);
           const diagnostic=['call_archicad','run_python'].includes(name)?toolDiagnostic(name,args,result,error,{failed,unknown}):undefined;
           if(diagnostic)this.emit('archi_tool_diagnostic',{run_id:this.id,tool:name,command,step_index,previous_failed_step,outcome:unknown?'outcome_unknown':failed?'failed':'completed_unverified',error_category:category,diagnostic});
+          if(name==='run_python'&&result?.apiObservation)for(const [index,call] of sanitizePythonObservation(result.apiObservation).calls.entries()) {
+            const uncertain=call.diagnostic.kind==='unknown_outcome',bad=['execution_failure','python_exception','tool_failure'].includes(call.diagnostic.kind);
+            this.emit('archi_tool_diagnostic',{run_id:this.id,tool:name,command:call.command,source:'python_json_api',step_index,api_step_index:index+1,
+              outcome:uncertain?'outcome_unknown':bad?'failed':'completed_unverified',error_category:uncertain?'unknown':bad?'tool_error':'none',diagnostic:call.diagnostic});
+          }
           if(failed)this.failedSteps.set(key,step_index);else if(!unknown)this.failedSteps.delete(key);
           if(this.steps.length<60)this.steps.push({tool:name,command,status:unknown?'unknown':failed?'error':'done',error_category:category,step_index,previous_failed_step,diagnostic});else this.truncated=true;
         }
@@ -206,6 +211,6 @@ class TaskObservation {
     const shared=this.collectRoute&&this.telemetry.workflows&&this.workflowEpoch===this.telemetry.workflowEpoch;
     const coverage=this.steps.some(step=>step.tool==='run_python')?'agent_tools_only':'agent_and_mcp';
     if(shared)this.emit('archi_workflow_observed',{...summary,steps:this.steps,coverage,verification:'unverified'});
-    return {id:this.id,installationId:this.telemetry.store.state.telemetry.installationId,summary,steps:shared?this.steps:[],coverage,shared};
+    return {id:this.id,installationId:this.telemetry.store.state.telemetry.installationId,appVersion:this.telemetry.version,schemaVersion:this.telemetry.config.schemaVersion,summary,steps:shared?this.steps:[],coverage,shared};
   }
 }
