@@ -13,7 +13,8 @@ import {sanitizeEvent} from '../electron/telemetry-schema.mjs';
 import {normalizeExecutionResult,sanitizeDiagnostic,toolDiagnostic} from '../electron/tool-diagnostics.mjs';
 import {AgentFindings} from '../electron/agent-findings.mjs';
 import {KnowledgeLibrary} from '../electron/knowledge-library.mjs';
-import {sanitizeFinding} from '../electron/finding-schema.mjs';
+import {sanitizeFinding,sanitizeFindingEvidence} from '../electron/finding-schema.mjs';
+import {FindingRecorder} from '../electron/finding-observer.mjs';
 
 const bundled=path.resolve('runtime/python/cpython-3.13.7-windows-x86_64-none/python.exe');
 const python=process.env.ARCHI_TEST_PYTHON||(await fs.access(bundled).then(()=>bundled).catch(()=>process.platform==='win32'?'python':'python3'));
@@ -200,7 +201,9 @@ test('finding telemetry reconstructs public cards and never exports notes or arb
 });
 
 test('finding delivery survives restarts and failures, repeats weekly and obeys live revocation',async t=>{
-  const {root,findings}=await findingFixture(t);await findings.save({...findingRecipe,notes:'SYNTHETIC_LOCAL_ONLY'},findingConnection,findingTrace);
+  const {root,findings}=await findingFixture(t);
+  const checkedRecipe={...findingRecipe,correction:{kind:'replace_field',field_path:['elements'],replacement_path:['stories'],value_type:'array'},notes:'SYNTHETIC_LOCAL_ONLY'};
+  await findings.save(checkedRecipe,findingConnection,[{...findingTrace[0],index:1,status:'done',diagnostic:toolDiagnostic('call_archicad',{}, {stories:[]})}]);
   const store=new Store(path.join(root,'profile'),{});await store.init('en');
   let now=1000000,fail=true;const batches=[];
   const options={runtimeEnabled:true,findings,now:()=>now,config:{projectToken:'synthetic',host:'https://synthetic.invalid',schemaVersion:4},
@@ -246,4 +249,120 @@ test('finding storage rejects corruption and symlink escapes without replacing o
   await assert.rejects(findings.save(findingRecipe,findingConnection,findingTrace));assert.equal(await fs.readFile(file,'utf8'),'synthetic corrupt input');
   const outside=path.join(root,'outside');await fs.mkdir(outside);await fs.unlink(file);await fs.rmdir(findings.root);await fs.symlink(outside,findings.root,'junction');
   await assert.rejects(findings.save(findingRecipe,findingConnection,findingTrace));assert.deepEqual(await fs.readdir(outside),[]);
+});
+
+const syntheticRun='11111111-1111-4111-8111-111111111111';
+const source=step_index=>({run_id:syntheticRun,step_index});
+const syntheticTools=[{name:'ModifyMorphs',annotations:{readOnlyHint:false}},{name:'GetDetailsOfElements',annotations:{readOnlyHint:true}}];
+const mutationArgs=fields=>({name:'archicad:ModifyMorphs',arguments:{morphsWithDetails:[{elementId:{guid:'SYNTHETIC_TARGET'},...fields}]}});
+const readbackArgs=target=>({name:'archicad:GetDetailsOfElements',arguments:{elements:[{elementId:{guid:target}}]}});
+const mutationResult={executionResults:[{success:true}]};
+
+test('error checkpoints survive interruption and recovery adds private-safe diagnostic evidence immediately',async t=>{
+  const {root,findings}=await findingFixture(t),recorder=new FindingRecorder(findings);
+  const failure={isError:true,error:"Additional properties are not allowed ('size' was unexpected). SYNTHETIC_PRIVATE_TEXT"};
+  await recorder.record('call_archicad',mutationArgs({size:{x:123}}),failure,null,findingConnection,source(1),syntheticTools);
+  let records=(await new AgentFindings(root).readState()).records;
+  assert.equal(records.length,1);assert.equal(records[0].confidence,'candidate');
+  assert.equal(records[0].card.condition.kind,'unsupported_argument');
+  assert.equal(records[0].evidence.failure.source.step_index,1);
+  assert.equal((await findings.pending(syntheticRun,100)).length,0,'unfinished hypotheses stay local');
+  await recorder.record('call_archicad',mutationArgs({uncutLinePen:4}),mutationResult,null,findingConnection,source(2),syntheticTools);
+  records=(await findings.readState()).records;
+  assert.equal(records.length,1,'recovery replaces its draft');assert.equal(records[0].confidence,'observed');
+  assert.equal(records[0].card.correction.kind,'remove_field');
+  assert.equal(records[0].evidence.route[0].source.step_index,2);
+  assert.equal(records[0].evidence.checks[0].kind,'per_item_errors');
+  assert.equal(records[0].evidence.checks[0].state,'no_failure_marker');
+  assert.equal(records[0].evidence.semantic_result,'unverified');
+  assert.equal(records[0].evidence.verification.status,'verified');
+  assert.deepEqual(records[0].evidence.verification.scopes,['call_contract']);
+  assert.equal((await findings.pending(syntheticRun,101)).length,1,'checked contract recovery is delivered immediately');
+  assert.doesNotMatch(JSON.stringify(records),/SYNTHETIC_PRIVATE_TEXT|SYNTHETIC_TARGET|123/);
+});
+
+test('readback evidence requires matching targets and stays separate from declared checks and value comparison',async t=>{
+  const {findings}=await findingFixture(t),recorder=new FindingRecorder(findings);
+  await recorder.record('call_archicad',mutationArgs({uncutLinePen:2}),mutationResult,null,findingConnection,source(1),syntheticTools);
+  const saved=await findings.save({...findingRecipe,steps:[{tool:'call_archicad',command:'ModifyMorphs',action:'modify'}],checks:['readback','synthetic']},findingConnection,recorder.trace);
+  assert.deepEqual(saved.evidence.checks.map(check=>check.kind),['per_item_errors']);
+  await recorder.record('call_archicad',readbackArgs('SYNTHETIC_OTHER_TARGET'),{detailsOfElements:[]},null,findingConnection,source(2),syntheticTools);
+  let updated=await findings.save({...findingRecipe,steps:[{tool:'call_archicad',command:'ModifyMorphs',action:'modify'}],checks:['readback','synthetic']},findingConnection,recorder.trace);
+  assert.equal(updated.evidence.checks.some(check=>check.kind==='readback'),false);
+  await recorder.record('call_archicad',readbackArgs('SYNTHETIC_TARGET'),{detailsOfElements:[{details:{uncutLinePen:2}}]},null,findingConnection,source(3),syntheticTools);
+  updated=await findings.save({...findingRecipe,steps:[{tool:'call_archicad',command:'ModifyMorphs',action:'modify'}],checks:['readback','synthetic']},findingConnection,recorder.trace);
+  const check=updated.evidence.checks.find(check=>check.kind==='readback');
+  assert.equal(check.state,'observed');assert.equal(check.comparison,'not_performed');assert.equal(check.observation.source.step_index,3);
+  assert.equal(updated.evidence.semantic_result,'unverified');
+  assert.equal(updated.evidence.verification.status,'verified');
+  assert.equal(updated.evidence.checks.find(check=>check.kind==='field_values').state,'matched');
+  assert.doesNotMatch(JSON.stringify(updated.evidence),/SYNTHETIC_TARGET|SYNTHETIC_OTHER_TARGET/);
+});
+
+test('mismatched or missing readback values prevent solution delivery, even when the agent claims success',async t=>{
+  const {findings}=await findingFixture(t),recorder=new FindingRecorder(findings);
+  await recorder.record('call_archicad',mutationArgs({uncutLinePen:2}),mutationResult,null,findingConnection,source(1),syntheticTools);
+  await recorder.record('call_archicad',readbackArgs('SYNTHETIC_TARGET'),{detailsOfElements:[{details:{uncutLinePen:3}}]},null,findingConnection,source(2),syntheticTools);
+  let saved=await findings.save({...findingRecipe,steps:[{tool:'call_archicad',command:'ModifyMorphs',action:'modify'}],checks:['readback','manual']},findingConnection,recorder.trace);
+  assert.equal(saved.evidence.verification.status,'failed');assert.equal((await findings.pending(syntheticRun,100)).length,0);
+  await recorder.record('call_archicad',mutationArgs({uncutLinePen:4}),mutationResult,null,findingConnection,source(3),syntheticTools);
+  await recorder.record('call_archicad',readbackArgs('SYNTHETIC_TARGET'),{detailsOfElements:[{details:{}}]},null,findingConnection,source(4),syntheticTools);
+  saved=await findings.save({...findingRecipe,steps:[{tool:'call_archicad',command:'ModifyMorphs',action:'modify'}],checks:['readback']},findingConnection,recorder.trace);
+  assert.equal(saved.evidence.verification.status,'unverified');assert.equal((await findings.pending(syntheticRun,101)).length,0);
+});
+
+test('nested Python recoveries link exact API steps and preserve partial coverage without promoting timeouts',async t=>{
+  const {findings}=await findingFixture(t),recorder=new FindingRecorder(findings);
+  const bad=toolDiagnostic('call_archicad',{arguments:{elements:[]}},{isError:true,error:"'fields' is a required property"},null,{failed:true});
+  const good=toolDiagnostic('call_archicad',{arguments:{elements:[],fields:['type']}},{detailsOfElements:[]});
+  await recorder.record('run_python',{}, {apiObservation:{coverage:'urllib_json_api',truncated:true,calls:[{command:'GetDetailsOfElements',diagnostic:bad},{command:'GetDetailsOfElements',diagnostic:good}]}},null,findingConnection,source(7),syntheticTools);
+  const record=(await findings.readState()).records[0];
+  assert.equal(record.confidence,'observed');assert.equal(record.card.correction.kind,'add_field');
+  assert.deepEqual(record.evidence.failure.source,{...source(7),api_step_index:1});
+  assert.deepEqual(record.evidence.route[0].source,{...source(7),api_step_index:2});
+  assert.equal(record.evidence.route[0].coverage,'partial');
+  const other=new FindingRecorder(findings);
+  await other.record('call_archicad',mutationArgs({}),{isError:true,outcomeUnknown:true},null,findingConnection,source(8),syntheticTools);
+  await other.record('call_archicad',mutationArgs({}),mutationResult,null,findingConnection,source(9),syntheticTools);
+  const uncertain=(await findings.readState()).records.find(item=>item.card.condition.kind==='unknown_outcome');
+  assert.equal(uncertain.confidence,'candidate');assert.equal(uncertain.evidence.route.length,0);
+});
+
+test('public evidence cannot carry arbitrary conditions, values, forged checks or recipe-dependent run IDs',()=>{
+  const card={...findingRecipe,schema:2,environment:{archicad:27,build:5000,tapir:'1.0.0'},condition:{kind:'missing_key',field_path:['detailsOfElements','details']},
+    correction:{kind:'replace_field',field_path:['details'],replacement_path:['detailsOfElements']}};
+  const input={route:[{tool:'call_archicad',command:'GetStories',status:'done',source:{...source(3),session_id:'SYNTHETIC_PRIVATE'},
+    diagnostic:{kind:'completed',result_check:'tool_response',response_shape:{name:'SYNTHETIC_PRIVATE_VALUE'},message:'SYNTHETIC_PRIVATE'}}],
+    checks:[{kind:'geometry',state:'passed',observation:{tool:'call_archicad',status:'done'}}],semantic_result:'verified',notes:'SYNTHETIC_PRIVATE'};
+  const cleaned=sanitizeFindingEvidence(input);
+  assert.equal(cleaned.semantic_result,'unverified');assert.equal(cleaned.checks.length,0);
+  assert.doesNotMatch(JSON.stringify(cleaned),/SYNTHETIC_PRIVATE|session_id/);
+  assert.equal(sanitizeFinding({...card,condition:{kind:'missing_key',field_path:['SYNTHETIC_PRIVATE']}}),undefined);
+  assert.equal(sanitizeFinding({...card,correction:{kind:'change_type',value_type:'SYNTHETIC_PRIVATE'}}),undefined);
+  assert.equal(sanitizeFinding({...card,evidence:input}).fingerprint,sanitizeFinding(card).fingerprint);
+  const event=sanitizeEvent('archi_finding_shared',{finding:card,evidence:input,confidence:'candidate',origin:'checkpoint',notes:'SYNTHETIC_PRIVATE'});
+  assert.equal(event.confidence,'candidate');assert.doesNotMatch(JSON.stringify(event),/SYNTHETIC_PRIVATE/);
+});
+
+test('legacy fingerprints remain readable and connection changes cannot reuse a previous route',async t=>{
+  const {findings}=await findingFixture(t),legacy=sanitizeFinding({...findingRecipe,environment:{archicad:27,build:5000,tapir:'1.0.0'}});
+  await findings.writeState({schema:1,records:[{card:legacy,notes:'Synthetic legacy.',confidence:'observed',enabled:true,pinned:false}]});
+  assert.equal((await findings.readState()).records[0].card.fingerprint,legacy.fingerprint);
+  assert.equal((await findings.save(findingRecipe,findingConnection,findingTrace)).id,`finding:${legacy.fingerprint}`);
+  const recorder=new FindingRecorder(findings);
+  await recorder.record('call_archicad',{name:'GetStories',arguments:{}},{stories:[]},null,findingConnection,source(1),[]);
+  recorder.connection({...findingConnection,archicad_build:5001});
+  const saved=await findings.save(findingRecipe,{...findingConnection,archicad_build:5001},recorder.trace);
+  assert.equal(saved.confidence,'candidate');assert.equal(saved.evidence.diagnostic_linkage,'unavailable');
+});
+
+test('host diagnostic references match emitted steps and disappear immediately on opt-out',async t=>{
+  const {telemetry,session}=await fixture(t,()=>({}));let reference;
+  await telemetry.task(session,{text:'Synthetic diagnostic linkage',mode:'read'},findingConnection,async()=>{
+    await currentObservation().tool('call_archicad',{name:'GetStories',arguments:{}},async()=>({stories:[]}));
+    reference=currentObservation().diagnosticReference();
+    const event=telemetry.queue.find(item=>item.event==='archi_tool_diagnostic');
+    assert.equal(reference.run_id,event.properties.run_id);assert.equal(reference.step_index,event.properties.step_index);
+    await telemetry.update({shareWorkflows:false});assert.equal(currentObservation().diagnosticReference(),undefined);
+  });
 });

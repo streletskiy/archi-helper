@@ -2,7 +2,7 @@ import catalog from './telemetry-catalog.json' with {type:'json'};
 import taskPatterns from '../locales/telemetry-patterns.json' with {type:'json'};
 import {providerDefinition} from './provider-definitions.mjs';
 import {sanitizeDiagnostic} from './tool-diagnostics.mjs';
-import {sanitizeFinding} from './finding-schema.mjs';
+import {sanitizeFinding,sanitizeFindingEvidence} from './finding-schema.mjs';
 
 const taskMatchers=Object.entries(taskPatterns).map(([kind,pattern])=>[kind,new RegExp(pattern,'i')]);
 
@@ -15,7 +15,7 @@ const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3
 const version=value=>typeof value==='string'&&/^\d{1,3}(?:\.\d{1,6}){0,3}$/.test(value)?value:undefined;
 const members=values=>{const set=new Set(values);return value=>set.has(value)?value:undefined;};
 const models=members(catalog.models),commands=members(catalog.commands),articles=members(catalog.articles);
-export const TOOL_NAMES=['get_knowledge','save_finding','get_api_catalog','find_tools','call_archicad','export_layouts_pdf','list_files','read_file','write_file','view_image','show_image','run_python'];
+export const TOOL_NAMES=['get_knowledge','save_finding','verify_finding','get_api_catalog','find_tools','call_archicad','export_layouts_pdf','list_files','read_file','write_file','view_image','show_image','run_python'];
 export const OUTCOMES=['completed_unverified','failed','cancelled','outcome_unknown'];
 export const ERROR_CATEGORIES=['none','cancelled','timeout','permission_denied','authentication','rate_limit','context_limit','invalid_response','network','provider_error','python_error','tool_error','unknown'];
 const outcome=oneOf(OUTCOMES),errorCategory=oneOf(ERROR_CATEGORIES),tool=oneOf(TOOL_NAMES);
@@ -35,7 +35,7 @@ const common={run_id:uuid,provider_type:providerType,auth_mode:oneOf(['api_key',
   duration_ms:number(86400000),outcome,error_category:errorCategory,tool_count:integer(),tool_errors:integer(),request_count:integer(),generation_count:integer(),
   generation_errors:integer(),compaction_count:integer(),steering_count:integer(),knowledge_ids:strings(articles),route_truncated:boolean};
 export const EVENT_SCHEMAS=Object.freeze({
-  archi_finding_shared:{finding:sanitizeFinding},
+  archi_finding_shared:{finding:sanitizeFinding,evidence:sanitizeFindingEvidence,confidence:oneOf(['candidate','observed']),origin:oneOf(['checkpoint','agent']),disposition:oneOf(['solution','withdrawn'])},
   archi_first_seen:{installation_kind:oneOf(['installed','portable']),existing_profile:boolean},
   archi_app_started:{installation_kind:oneOf(['installed','portable'])},
   archi_provider_status:{provider_type:providerType,auth_mode:common.auth_mode,status:oneOf(['configured','verified','removed','used']),configured_count:integer(1000)},

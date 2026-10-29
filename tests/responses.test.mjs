@@ -317,3 +317,36 @@ test('shared agent tools save observed findings in read-only mode without teleme
   const context=await agent.knowledge.context(undefined,mcp.connectionInfo,{query:'GetStories'});
   assert.ok(context.automatic.some(entry=>entry.id===saved.id));assert.match(context.text,/unreviewed observations/);
 });
+
+test('finding verification reads live state locally, compares scalars and sends only a scoped proof',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-finding-check-'));
+  t.after(async()=>{assert.equal(path.dirname(root),path.resolve(os.tmpdir()));await fs.rm(root,{recursive:true,force:true});});
+  const store=new Store(root,{});await store.init('en');const session=await store.newSession();
+  let current='SYNTHETIC_LOCAL_VALUE',calls=0;
+  const mcp={connectionInfo:{archicad_version:27,archicad_build:5000,tapir_installed:'1.0.0'},
+    tools:[{key:'archicad:GetDetailsOfElements',name:'GetDetailsOfElements',inputSchema:{type:'object',properties:{}},annotations:{readOnlyHint:true}},
+      {key:'archicad:ModifyMorphs',name:'ModifyMorphs',annotations:{readOnlyHint:false}}],
+    call:async()=>{calls++;return {detailsOfElements:[{details:{name:current}}]};}};
+  const agent=new Agent(store,mcp,()=>{}),signal=new AbortController().signal;
+  await agent.execute(session,'call_archicad',{name:'archicad:GetDetailsOfElements',arguments:{}},'read',signal);
+  const saved=await agent.execute(session,'save_finding',{category:'api_workflow',steps:[{tool:'call_archicad',action:'read',command:'GetDetailsOfElements'}],checks:['readback']},'read',signal);
+  const args={id:saved.id,command:'GetDetailsOfElements',arguments:{},field_path:['detailsOfElements','details','name'],expected:current};
+  const checked=await agent.execute(session,'verify_finding',args,'read',signal);
+  assert.equal(calls,2,'verification performs a fresh live read');assert.equal(checked.comparison,'matched');
+  assert.deepEqual(checked.verification,{status:'verified',scopes:['reported_expectation']});
+  const updated=await agent.execute(session,'save_finding',{category:'api_workflow',steps:[{tool:'call_archicad',action:'read',command:'GetDetailsOfElements'}],checks:['readback'],title:'Synthetic checked recipe'},'read',signal);
+  assert.equal(updated.evidence.verification.status,'verified','local metadata updates retain host verification in this run');
+  const installation='11111111-1111-4111-8111-111111111111';
+  const pending=(await agent.knowledge.findings.pending(installation,100))[0];assert.equal(pending.disposition,'solution');
+  assert.doesNotMatch(JSON.stringify(pending),/SYNTHETIC_LOCAL_VALUE|expected"/);
+  await agent.knowledge.findings.delivered([pending.eventId],installation,100);
+  current='SYNTHETIC_DIFFERENT_VALUE';
+  assert.equal((await agent.execute(session,'verify_finding',args,'read',signal)).comparison,'mismatched');
+  const withdrawn=(await agent.knowledge.findings.pending(installation,101))[0];assert.equal(withdrawn.disposition,'withdrawn');
+  assert.doesNotMatch(JSON.stringify(withdrawn),/SYNTHETIC_DIFFERENT_VALUE|SYNTHETIC_LOCAL_VALUE/);
+  await assert.rejects(agent.execute(session,'verify_finding',{...args,command:'ModifyMorphs'},'full',signal));
+  assert.equal(calls,3,'verification never invokes a mutation');
+  current='SYNTHETIC_LOCAL_VALUE';
+  mcp.call=async()=>({detailsOfElements:[{details:{name:current}},{details:{name:current}}]});
+  assert.equal((await agent.execute(session,'verify_finding',args,'read',signal)).comparison,'unavailable','ambiguous arrays are not accepted');
+});
