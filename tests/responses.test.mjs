@@ -302,3 +302,18 @@ test('empty terminal output cannot authorize partial, ambiguous or failed tool s
     [done]
   ]) {events=sequence;await assert.rejects(completion(provider,'model-a',[],tools,undefined,()=>{}));}
 });
+
+
+test('shared agent tools save observed findings in read-only mode without telemetry',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-agent-finding-'));
+  t.after(async()=>{assert.equal(path.dirname(root),path.resolve(os.tmpdir()));await fs.rm(root,{recursive:true,force:true});});
+  const store=new Store(root,{});await store.init('en');const session=await store.newSession();
+  const mcp={connectionInfo:{archicad_version:27,archicad_build:5000,tapir_installed:'1.0.0'},
+    tools:[{key:'archicad:GetStories',name:'GetStories',inputSchema:{type:'object',properties:{}},annotations:{readOnlyHint:true}}],call:async()=>({stories:[]})};
+  const agent=new Agent(store,mcp,()=>{}),signal=new AbortController().signal;
+  await agent.execute(session,'call_archicad',{name:'archicad:GetStories',arguments:{}},'read',signal);
+  const saved=await agent.execute(session,'save_finding',{category:'api_workflow',steps:[{tool:'call_archicad',action:'read',command:'GetStories'}],checks:['schema'],notes:'Synthetic general procedure.'},'read',signal);
+  assert.equal(saved.confidence,'observed');assert.equal(saved.verification,'unverified');
+  const context=await agent.knowledge.context(undefined,mcp.connectionInfo,{query:'GetStories'});
+  assert.ok(context.automatic.some(entry=>entry.id===saved.id));assert.match(context.text,/unreviewed observations/);
+});

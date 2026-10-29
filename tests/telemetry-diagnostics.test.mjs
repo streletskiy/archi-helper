@@ -11,6 +11,9 @@ import {Telemetry} from '../electron/telemetry.mjs';
 import {currentObservation} from '../electron/telemetry-context.mjs';
 import {sanitizeEvent} from '../electron/telemetry-schema.mjs';
 import {normalizeExecutionResult,sanitizeDiagnostic,toolDiagnostic} from '../electron/tool-diagnostics.mjs';
+import {AgentFindings} from '../electron/agent-findings.mjs';
+import {KnowledgeLibrary} from '../electron/knowledge-library.mjs';
+import {sanitizeFinding} from '../electron/finding-schema.mjs';
 
 const bundled=path.resolve('runtime/python/cpython-3.13.7-windows-x86_64-none/python.exe');
 const python=process.env.ARCHI_TEST_PYTHON||(await fs.access(bundled).then(()=>bundled).catch(()=>process.platform==='win32'?'python':'python3'));
@@ -136,4 +139,111 @@ time.sleep(10)
   revoke=true;
   const result=await run(code);await telemetry.preferences;
   assert.equal(result.exitCode,0);assert.equal(telemetry.queue.filter(x=>x.event==='archi_tool_diagnostic').length,0);
+});
+
+
+const findingConnection={archicad_version:27,archicad_build:5000,tapir_installed:'1.0.0'};
+const findingRecipe={category:'api_workflow',steps:[{tool:'call_archicad',action:'read',command:'GetStories',fields:[]}],checks:['schema'],cautions:['not_independently_verified']};
+const findingTrace=[{tool:'call_archicad',command:'GetStories',success:true}];
+async function findingFixture(t) {
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-findings-'));
+  t.after(async()=>{assert.equal(path.dirname(root),path.resolve(os.tmpdir()));await fs.rm(root,{recursive:true,force:true});});
+  return {root,findings:new AgentFindings(root)};
+}
+
+test('agent findings persist separately, filter by connection and archive only declared bundled replacements',async t=>{
+  const {root,findings}=await findingFixture(t),bundled=path.join(root,'bundled');
+  const library=new KnowledgeLibrary(root,{bundled});
+  const candidate=await findings.save({...findingRecipe,title:'Synthetic floor procedure',keywords:['floors','этаж'],notes:'SYNTHETIC_LOCAL_NOTE'},findingConnection,[]);
+  assert.equal(candidate.confidence,'candidate');
+  assert.equal((await library.context(undefined,findingConnection,{query:'GetStories'})).automatic.length,0);
+  assert.equal((await findings.save(findingRecipe,findingConnection,findingTrace)).id,candidate.id);
+  assert.equal((await library.context(undefined,findingConnection,{query:'GetStories'})).automatic[0].id,candidate.id);
+  assert.equal((await library.context(undefined,findingConnection,{query:'floors'})).automatic[0].id,candidate.id);
+  assert.equal((await library.context(undefined,findingConnection,{query:'проверка этажей'})).automatic[0].id,candidate.id);
+  assert.equal((await library.context(undefined,{...findingConnection,archicad_build:5001},{query:'GetStories'})).automatic.length,0);
+  assert.equal((await library.context(undefined,{...findingConnection,tapir_installed:'1.1.0'},{query:'GetStories'})).automatic.length,0);
+  assert.equal((await new AgentFindings(root).readState()).records.length,1);
+  await fs.mkdir(path.join(bundled,'common'),{recursive:true});
+  const article=path.join(bundled,'common','synthetic.md');
+  const header={id:'synthetic-procedure',title:'Synthetic procedure',summary:'Synthetic technical reference',kind:'knowledge',tags:['GetStories'],archicad:[27],compatibility:[{archicad:27,minBuild:5001}],absorbsFindings:[candidate.id.slice(8)]};
+  let articleVersion=0;
+  const write=async()=>{
+    await fs.writeFile(article,'---\n'+Object.entries(header).map(([key,value])=>`${key}: ${JSON.stringify(value)}`).join('\n')+'\n---\n\nSynthetic procedure.\n');
+    // Same-size rewrites must have distinct cache metadata on every filesystem.
+    const timestamp=++articleVersion;await fs.utimes(article,timestamp,timestamp);
+  };
+  await write();
+  assert.equal((await library.read(candidate.id,undefined,findingConnection)).archived,false,'other build cannot absorb the finding');
+  header.compatibility[0].minBuild=5000;await write();
+  let entry=await library.read(candidate.id,undefined,findingConnection);
+  assert.equal(entry.archived,true);assert.equal(entry.archive.articleId,header.id);assert.match(entry.text,/SYNTHETIC_LOCAL_NOTE/);
+  await assert.rejects(library.search({id:candidate.id},undefined,findingConnection));
+  await findings.update({id:entry.id,revision:entry.revision,archived:false});
+  entry=await library.read(candidate.id,undefined,findingConnection);assert.equal(entry.archived,false);assert.equal(entry.pinned,true);
+  await findings.update({id:entry.id,revision:entry.revision,pinned:false});
+  assert.equal((await library.read(candidate.id,undefined,findingConnection)).archived,true);
+  await fs.unlink(article);
+  entry=await library.read(candidate.id,undefined,findingConnection);assert.equal(entry.archived,false,'missing replacement restores the finding');
+  await findings.update({id:entry.id,revision:entry.revision,archived:true});
+  assert.equal((await library.read(candidate.id,undefined,findingConnection)).archive.reason,'user');
+  assert.equal((await fs.readdir(root)).includes('knowledge'),false,'findings never write personal knowledge');
+});
+
+test('finding telemetry reconstructs public cards and never exports notes or arbitrary fields',()=>{
+  const input={...findingRecipe,environment:{archicad:27,build:5000,tapir:'1.0.0'},title:'SYNTHETIC_PRIVATE_TITLE',keywords:['SYNTHETIC_PRIVATE_KEYWORD'],notes:'SYNTHETIC_PRIVATE_NOTE',fingerprint:'SYNTHETIC_PRIVATE_ID',project:'SYNTHETIC_PRIVATE_PROJECT'};
+  const card=sanitizeFinding(input);assert.ok(card);assert.match(card.fingerprint,/^[a-f0-9]{64}$/);
+  assert.doesNotMatch(JSON.stringify(sanitizeEvent('archi_finding_shared',{finding:input,notes:input.notes})),/SYNTHETIC_PRIVATE/);
+  assert.deepEqual(sanitizeFinding({...input,notes:'another synthetic note'}),card,'fingerprint derives only from the public recipe');
+  for(const patch of [{steps:[{...findingRecipe.steps[0],fields:['SYNTHETIC_PRIVATE_FIELD']}]},{steps:[{...findingRecipe.steps[0],command:'SYNTHETIC_PRIVATE_COMMAND'}]},
+    {checks:['SYNTHETIC_PRIVATE_CHECK']},{environment:{archicad:27,build:5000,tapir:'SYNTHETIC_PRIVATE_VERSION'}},{cautions:['SYNTHETIC_PRIVATE_CAUTION']}])assert.equal(sanitizeFinding({...input,...patch}),undefined);
+});
+
+test('finding delivery survives restarts and failures, repeats weekly and obeys live revocation',async t=>{
+  const {root,findings}=await findingFixture(t);await findings.save({...findingRecipe,notes:'SYNTHETIC_LOCAL_ONLY'},findingConnection,findingTrace);
+  const store=new Store(path.join(root,'profile'),{});await store.init('en');
+  let now=1000000,fail=true;const batches=[];
+  const options={runtimeEnabled:true,findings,now:()=>now,config:{projectToken:'synthetic',host:'https://synthetic.invalid',schemaVersion:4},
+    fetcher:async(_url,request)=>{batches.push(JSON.parse(request.body).batch);if(fail)throw new Error('synthetic offline');return new Response(null,{status:200});}};
+  let telemetry=new Telemetry(store,options);clearInterval(telemetry.timer);await telemetry.init();
+  const originalRevision=findings.entry((await findings.readState()).records[0]).revision;
+  await telemetry.flush();const first=batches[0][0];assert.equal(first.event,'archi_finding_shared');
+  assert.equal(findings.entry((await findings.readState()).records[0]).revision,originalRevision,'delivery bookkeeping does not invalidate editor revisions');
+  assert.doesNotMatch(JSON.stringify(batches),/SYNTHETIC_LOCAL_ONLY/);
+  assert.equal((await findings.readState()).records[0].delivery.deliveredAt,undefined);
+  telemetry=new Telemetry(store,{...options,findings:new AgentFindings(root)});clearInterval(telemetry.timer);await telemetry.init();
+  fail=false;await telemetry.flush();assert.equal(batches[1][0].uuid,first.uuid,'retry uses persisted event UUID');
+  await telemetry.flush();assert.equal(batches.length,2,'unchanged finding is not sent every flush');
+  now+=7*24*60*60*1000;await telemetry.flush();assert.notEqual(batches[2][0].uuid,first.uuid,'weekly snapshot has a fresh UUID');
+  await telemetry.update({shareWorkflows:false});now+=7*24*60*60*1000;await telemetry.flush();assert.equal(batches.length,3);
+  await telemetry.update({shareWorkflows:true});
+  const actualPending=telemetry.findings.pending.bind(telemetry.findings);
+  telemetry.findings.pending=async(...args)=>{const pending=await actualPending(...args);await telemetry.update({shareWorkflows:false});return pending;};
+  await telemetry.flush();assert.equal(batches.length,3,'revocation during disk read prevents capture');
+  telemetry.findings.pending=actualPending;
+  await telemetry.update({shareWorkflows:true});
+  telemetry.fetcher=async(_url,request)=>{await telemetry.update({enabled:false});assert.equal(request.signal.aborted,true);return new Response(null,{status:200});};
+  await telemetry.flush();assert.equal((await findings.readState()).records[0].delivery.deliveredAt,undefined,'revoked in-flight delivery is not acknowledged');
+});
+
+test('finding storage reads the inspected handle when the path is replaced',async t=>{
+  const {findings}=await findingFixture(t);
+  await findings.save({...findingRecipe,notes:'Synthetic original.'},findingConnection,findingTrace);
+  const file=path.join(findings.root,'findings.json'),original=await findings.readState();
+  const replacement=structuredClone(original);replacement.records[0].notes='Synthetic replacement.';
+  const lstat=fs.lstat.bind(fs);
+  t.mock.method(fs,'lstat',async target=>{
+    const stat=await lstat(target);
+    if(target===file){await fs.rename(file,`${file}.original`);await fs.writeFile(file,JSON.stringify(replacement));}
+    return stat;
+  });
+  assert.deepEqual(await findings.readState(),original);
+});
+
+test('finding storage rejects corruption and symlink escapes without replacing original data',async t=>{
+  const {root,findings}=await findingFixture(t);await findings.save(findingRecipe,findingConnection,findingTrace);
+  const file=path.join(findings.root,'findings.json');await fs.writeFile(file,'synthetic corrupt input');
+  await assert.rejects(findings.save(findingRecipe,findingConnection,findingTrace));assert.equal(await fs.readFile(file,'utf8'),'synthetic corrupt input');
+  const outside=path.join(root,'outside');await fs.mkdir(outside);await fs.unlink(file);await fs.rmdir(findings.root);await fs.symlink(outside,findings.root,'junction');
+  await assert.rejects(findings.save(findingRecipe,findingConnection,findingTrace));assert.deepEqual(await fs.readdir(outside),[]);
 });

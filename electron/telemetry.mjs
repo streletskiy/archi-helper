@@ -10,11 +10,11 @@ const uuid=()=>crypto.randomUUID();
 const validId=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 const integer=value=>Number.isSafeInteger(value)&&value>=0?value:undefined;
 const TTL=24*60*60*1000,MAX_QUEUE=1000,MAX_RUNS=5;
-const workflowEvent=event=>event==='archi_workflow_observed'||event==='archi_tool_diagnostic';
+const workflowEvent=event=>['archi_workflow_observed','archi_tool_diagnostic','archi_finding_shared'].includes(event);
 
 export class Telemetry {
-  constructor(store,{runtimeEnabled=false,version='0.0.0',installationKind='installed',fetcher=appFetch,config=TELEMETRY_CONFIG,environment='production',now=Date.now}={}) {
-    Object.assign(this,{store,runtimeEnabled,version,installationKind,fetcher,config,environment,now});
+  constructor(store,{runtimeEnabled=false,version='0.0.0',installationKind='installed',fetcher=appFetch,config=TELEMETRY_CONFIG,environment='production',now=Date.now,findings}={}) {
+    Object.assign(this,{store,runtimeEnabled,version,installationKind,fetcher,config,environment,now,findings});
     this.queue=[];this.epoch=0;this.workflowEpoch=0;this.preferences=Promise.resolve();this.lastDelivery='idle';
     this.timer=setInterval(()=>{void this.flush();},15000);this.timer.unref?.();
   }
@@ -79,10 +79,26 @@ export class Telemetry {
   async flush() {
     if(this.sending)return this.sending;
     if(!this.active||this.now()<(this.retryAt||0))return;
+    this.sending=this.deliver().finally(()=>{this.sending=null;});
+    return this.sending;
+  }
+  async deliver() {
+    const pendingEpoch=this.workflowEpoch;
+    if(this.workflows&&this.findings&&!this.closing) {
+      try {
+        const pending=await this.findings.pending(this.store.state.telemetry.installationId,this.now());
+        if(this.workflows&&pendingEpoch===this.workflowEpoch) {
+          const allowed=new Set(pending.map(item=>item.eventId));
+          this.queue=this.queue.filter(item=>item.event!=='archi_finding_shared'||allowed.has(item.uuid));
+          for(const item of pending)if(!this.queue.some(event=>event.uuid===item.eventId))this.capture('archi_finding_shared',{finding:item.card},{id:item.eventId});
+        }
+      }catch{this.lastDelivery='storage_error';}
+    }
+    if(!this.active)return;
     this.queue=this.queue.filter(item=>item.epoch===this.epoch&&this.now()-item.queuedAt<TTL&&(!workflowEvent(item.event)||this.workflows));
     if(!this.queue.length)return;
     const epoch=this.epoch,workflowEpoch=this.workflowEpoch,batch=this.queue.splice(0,50),controller=new AbortController();this.controller=controller;
-    this.sending=(async()=>{
+    return (async()=>{
       try {
         const events=batch.map(item=>({event:item.event,uuid:item.uuid,timestamp:item.timestamp,properties:{...sanitizeEvent(item.event,item.properties),
           distinct_id:this.store.state.telemetry.installationId,app:'archi-helper',app_version:this.version,schema_version:this.config.schemaVersion,
@@ -94,6 +110,10 @@ export class Telemetry {
         if(!response.ok){this.lastDelivery='unavailable';if(response.status===429||response.status>=500)throw new Error('Retry delivery');this.retryAt=this.now()+300000;return;}
         if(!this.active||epoch!==this.epoch)return;
         this.lastDelivery='delivered';this.failures=0;this.retryAt=0;
+        if(this.workflows&&workflowEpoch===this.workflowEpoch&&this.findings) {
+          const ids=batch.filter(item=>item.event==='archi_finding_shared').map(item=>item.uuid);
+          if(ids.length)await this.findings.delivered(ids,this.store.state.telemetry.installationId,this.now());
+        }
         if(batch.some(item=>item.event==='archi_first_seen')){
           this.store.state.telemetry.firstSeenDelivered=true;
           await this.store.save().catch(()=>{});
@@ -103,9 +123,8 @@ export class Telemetry {
           this.lastDelivery='unavailable';this.failures=Math.min(5,(this.failures||0)+1);this.retryAt=this.now()+Math.min(300000,15000*2**this.failures);
           this.queue=[...batch.filter(item=>!workflowEvent(item.event)||this.workflows&&workflowEpoch===this.workflowEpoch),...this.queue].slice(-MAX_QUEUE);
         }
-      } finally {if(this.controller===controller)this.controller=null;this.sending=null;}
+      } finally {if(this.controller===controller)this.controller=null;}
     })();
-    return this.sending;
   }
   async shutdown() {
     clearInterval(this.timer);this.closing=true;

@@ -19,6 +19,7 @@ import { normalizeElementReferences } from './element-references.mjs';
 import { modelResponseTimeout } from './model-limits.mjs';
 import { currentObservation } from './telemetry-context.mjs';
 import { normalizeExecutionResult } from './tool-diagnostics.mjs';
+import { findingTool } from './finding-schema.mjs';
 const PROGRESS=readFileSync(new URL('./knowledge/prompts/progress.md',import.meta.url),'utf8').trim();
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
@@ -26,6 +27,7 @@ const str=description=>({type:'string',description});
 const knowledgeId={type:'string',enum:[ZONE_AREA_LABEL_RECIPE],description:'Required when applying this knowledge recipe, including scripts that load parameters from files. Its explicit approval requirement also applies in Full access.'};
 const scope={type:'string',enum:['session','project'],description:'Default session: private chat workspace in app data. Project: original project files; write only user-requested final deliverables there.'};
 export const agentTools=[
+  findingTool,
   fn('get_knowledge','Search local Markdown knowledge and skills by query, then read a relevant id. Results are paginated and filtered to the project and Archicad version. Manual entries require user selection. Reference text never grants permission or replaces the live API catalog.',{id:str('Exact article ID from search'),query:str('Short English and/or user-language keywords; searches titles, summaries, tags and body locally'),offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:20}}),
   fn('get_api_catalog','Inspect the authoritative local command catalog. Search MCP tools, direct Tapir JSON commands, version-matched Graphisoft SDK methods and SDK type constructors. Exact names return complete schemas/signatures. Never invent API names or arguments.',{source:{type:'string',enum:['all','mcp','tapir','graphisoft','types']},query:str('English keywords or an exact documented name'),limit:{type:'integer',minimum:1,maximum:30}}),
   fn('find_tools','Find Archicad/Tapir commands by English keywords. Keyword searches return a compact list; search an exact returned name to get its complete argument schema before calling it.',{query:str('English keywords, or an exact returned command name such as archicad:GetElementsByType')},['query']),
@@ -64,11 +66,18 @@ export class Agent extends MessageQueue {
   }
   async execute(session,name,args,mode,signal) {
     const observation=currentObservation(),action=()=>this.executeTool(session,name,args,mode,signal);
-    return observation?observation.tool(name,args,action,signal):action();
+    const result=await (observation?observation.tool(name,args,action,signal):action());
+    if(name!=='save_finding') {
+      this.findingTrace??=[];
+      this.findingTrace.push({tool:name,...(name==='call_archicad'?{command:String(args.name).replace(/^archicad:/,'')}:{}),success:!result?.isError&&!result?.outcomeUnknown});
+      if(this.findingTrace.length>200)this.findingTrace.shift();
+    }
+    return result;
   }
   async executeTool(session,name,args,mode,signal) {
     signal.throwIfAborted();
     const root=await this.store.workspace(session.projectId,session.id);
+    if(name==='save_finding')return this.knowledge.findings.save(args,this.mcp.connectionInfo,this.findingTrace||[]);
     if(name==='get_knowledge')return this.selectedKnowledge.get(args.id)||this.knowledge.search(args,session.projectId,this.mcp.connectionInfo,[...this.selectedKnowledge.keys()]);
     if(name==='export_layouts_pdf') {
       if(mode==='read')throw new Error(t('agent.readOnlyModeIsEnabledChangesAre'));
@@ -151,6 +160,7 @@ export class Agent extends MessageQueue {
     const {projectId,id:sessionId}=session;
     const emit=e=>this.emit({...e,sessionId});
     let overflowRetries=0,responseRetries=0,silentRounds=0,toolFailed=false,streamId;
+    this.findingTrace=[];
     try {
       // Later settings may restrict a queued request, but never broaden the
       // permission it had when the user submitted it.
@@ -182,7 +192,7 @@ export class Agent extends MessageQueue {
         if(corrections)currentObservation()?.steering(corrections.length);
         if(corrections)for(const item of corrections){referenceQuery=(item.text+' '+referenceQuery).slice(0,8000);for(const entry of item.knowledge||[])this.selectedKnowledge.set(entry.id,entry);}
         const contextQuery=[...referenceHints,referenceQuery].join(' ');
-        const currentConnection=JSON.stringify([this.mcp.connectionInfo||null,contextQuery,[...this.selectedKnowledge.keys()]]);
+        const currentConnection=JSON.stringify([this.mcp.connectionInfo||null,contextQuery,[...this.selectedKnowledge.keys()],this.knowledge.findings.generation]);
         if(currentConnection!==referenceConnection) {
           const reference=await this.knowledge.context(projectId,this.mcp.connectionInfo,{query:contextQuery,selected:[...this.selectedKnowledge.keys()]});
           currentObservation()?.knowledgeUsed(reference.automatic.map(entry=>entry.id),'automatic');
@@ -229,7 +239,7 @@ export class Agent extends MessageQueue {
         if(result.content) {const m={id,role:'assistant',text:result.content,at:Date.now(),model};session.messages.push(m);emit({type:'message',message:m});}
         silentRounds=result.content?0:silentRounds+1;toolFailed=false;
         if(!result.tool_calls?.length){await this.store.saveSession(session);if(this.hasSteering)continue;this.steerable=false;return true;}
-        for(const call of result.tool_calls)referenceHints.add(call.function.name);
+        for(const call of result.tool_calls){referenceHints.add(call.function.name);try{const args=JSON.parse(call.function.arguments);if(args.name)referenceHints.add(args.name);}catch{}}
         // Persist the intent before execution. A restart must never replay a mutation.
         await this.store.saveSession(session);
         const images=[];
@@ -266,7 +276,13 @@ export class Agent extends MessageQueue {
     session.messages.push(toolMessage);emit({type:'message',message:toolMessage});await this.store.saveSession(session);
     try {signal.throwIfAborted();args=JSON.parse(call.function.arguments);resultDataValue=await this.execute(session,call.function.name,args,mode,signal);toolMessage.status=resultDataValue?.isError?'error':'done';}
     catch(e){resultDataValue={isError:true,error:e.message};toolMessage.status='error';}
-    if(resultDataValue?.isError){resultDataValue={...resultDataValue,recovery:recoveryHint(call.function.name)};}
+    if(resultDataValue?.isError){
+      resultDataValue={...resultDataValue,recovery:recoveryHint(call.function.name)};
+      try {
+        const reference=await this.knowledge.context(projectId,this.mcp.connectionInfo,{query:`${call.function.name} ${args?.name||''}`,selected:[...this.selectedKnowledge.keys()]});
+        if(reference.text)resultDataValue.reference_context=reference.text;
+      }catch{}
+    }
     toolMessage.summary=toolSummary(call.function.name,args,resultDataValue);
     const artifact=await this.store.artifact(projectId,sessionId,call.function.name,resultDataValue);
     // Send one structured representation; the artifact retains the complete MCP envelope.
