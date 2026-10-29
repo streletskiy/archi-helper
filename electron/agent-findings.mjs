@@ -18,9 +18,13 @@ export class AgentFindings {
     if(!this.root)return {schema:1,records:[]};
     try {
       if((await fs.lstat(this.root)).isSymbolicLink())fail();
-      const file=path.join(this.root,'findings.json'),stat=await fs.lstat(file);
-      if(stat.isSymbolicLink()||!stat.isFile()||stat.size>MAX_BYTES)fail();
-      const state=JSON.parse(await fs.readFile(file,'utf8'));
+      const file=path.join(this.root,'findings.json'),handle=await fs.open(file,'r');
+      let state;
+      try {
+        const stat=await handle.stat(),link=await fs.lstat(file);
+        if(link.isSymbolicLink()||!stat.isFile()||stat.size>MAX_BYTES||stat.dev!==link.dev||stat.ino!==link.ino)fail();
+        state=JSON.parse(await handle.readFile('utf8'));
+      } finally {await handle.close();}
       if(state?.schema!==1||!Array.isArray(state.records)||state.records.length>MAX_RECORDS)fail();
       const seen=new Set();
       for(const record of state.records) {
