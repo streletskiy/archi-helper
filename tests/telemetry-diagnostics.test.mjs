@@ -167,7 +167,12 @@ test('agent findings persist separately, filter by connection and archive only d
   await fs.mkdir(path.join(bundled,'common'),{recursive:true});
   const article=path.join(bundled,'common','synthetic.md');
   const header={id:'synthetic-procedure',title:'Synthetic procedure',summary:'Synthetic technical reference',kind:'knowledge',tags:['GetStories'],archicad:[27],compatibility:[{archicad:27,minBuild:5001}],absorbsFindings:[candidate.id.slice(8)]};
-  const write=()=>fs.writeFile(article,'---\n'+Object.entries(header).map(([key,value])=>`${key}: ${JSON.stringify(value)}`).join('\n')+'\n---\n\nSynthetic procedure.\n');
+  let articleVersion=0;
+  const write=async()=>{
+    await fs.writeFile(article,'---\n'+Object.entries(header).map(([key,value])=>`${key}: ${JSON.stringify(value)}`).join('\n')+'\n---\n\nSynthetic procedure.\n');
+    // Same-size rewrites must have distinct cache metadata on every filesystem.
+    const timestamp=++articleVersion;await fs.utimes(article,timestamp,timestamp);
+  };
   await write();
   assert.equal((await library.read(candidate.id,undefined,findingConnection)).archived,false,'other build cannot absorb the finding');
   header.compatibility[0].minBuild=5000;await write();
@@ -219,6 +224,20 @@ test('finding delivery survives restarts and failures, repeats weekly and obeys 
   await telemetry.update({shareWorkflows:true});
   telemetry.fetcher=async(_url,request)=>{await telemetry.update({enabled:false});assert.equal(request.signal.aborted,true);return new Response(null,{status:200});};
   await telemetry.flush();assert.equal((await findings.readState()).records[0].delivery.deliveredAt,undefined,'revoked in-flight delivery is not acknowledged');
+});
+
+test('finding storage reads the inspected handle when the path is replaced',async t=>{
+  const {findings}=await findingFixture(t);
+  await findings.save({...findingRecipe,notes:'Synthetic original.'},findingConnection,findingTrace);
+  const file=path.join(findings.root,'findings.json'),original=await findings.readState();
+  const replacement=structuredClone(original);replacement.records[0].notes='Synthetic replacement.';
+  const lstat=fs.lstat.bind(fs);
+  t.mock.method(fs,'lstat',async target=>{
+    const stat=await lstat(target);
+    if(target===file){await fs.rename(file,`${file}.original`);await fs.writeFile(file,JSON.stringify(replacement));}
+    return stat;
+  });
+  assert.deepEqual(await findings.readState(),original);
 });
 
 test('finding storage rejects corruption and symlink escapes without replacing original data',async t=>{
