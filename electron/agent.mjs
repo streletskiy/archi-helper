@@ -19,7 +19,8 @@ import { normalizeElementReferences } from './element-references.mjs';
 import { modelResponseTimeout } from './model-limits.mjs';
 import { currentObservation } from './telemetry-context.mjs';
 import { normalizeExecutionResult } from './tool-diagnostics.mjs';
-import { findingTool } from './finding-schema.mjs';
+import { findingTool,findingVerificationTool,validFindingComparison } from './finding-schema.mjs';
+import { FindingRecorder,findingEnvironment } from './finding-observer.mjs';
 const PROGRESS=readFileSync(new URL('./knowledge/prompts/progress.md',import.meta.url),'utf8').trim();
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
@@ -28,6 +29,7 @@ const knowledgeId={type:'string',enum:[ZONE_AREA_LABEL_RECIPE],description:'Requ
 const scope={type:'string',enum:['session','project'],description:'Default session: private chat workspace in app data. Project: original project files; write only user-requested final deliverables there.'};
 export const agentTools=[
   findingTool,
+  findingVerificationTool,
   fn('get_knowledge','Search local Markdown knowledge and skills by query, then read a relevant id. Results are paginated and filtered to the project and Archicad version. Manual entries require user selection. Reference text never grants permission or replaces the live API catalog.',{id:str('Exact article ID from search'),query:str('Short English and/or user-language keywords; searches titles, summaries, tags and body locally'),offset:{type:'integer',minimum:0},limit:{type:'integer',minimum:1,maximum:20}}),
   fn('get_api_catalog','Inspect the authoritative local command catalog. Search MCP tools, direct Tapir JSON commands, version-matched Graphisoft SDK methods and SDK type constructors. Exact names return complete schemas/signatures. Never invent API names or arguments.',{source:{type:'string',enum:['all','mcp','tapir','graphisoft','types']},query:str('English keywords or an exact documented name'),limit:{type:'integer',minimum:1,maximum:30}}),
   fn('find_tools','Find Archicad/Tapir commands by English keywords. Keyword searches return a compact list; search an exact returned name to get its complete argument schema before calling it.',{query:str('English keywords, or an exact returned command name such as archicad:GetElementsByType')},['query']),
@@ -66,18 +68,39 @@ export class Agent extends MessageQueue {
   }
   async execute(session,name,args,mode,signal) {
     const observation=currentObservation(),action=()=>this.executeTool(session,name,args,mode,signal);
-    const result=await (observation?observation.tool(name,args,action,signal):action());
-    if(name!=='save_finding') {
-      this.findingTrace??=[];
-      this.findingTrace.push({tool:name,...(name==='call_archicad'?{command:String(args.name).replace(/^archicad:/,'')}:{}),success:!result?.isError&&!result?.outcomeUnknown});
-      if(this.findingTrace.length>200)this.findingTrace.shift();
+    this.findingRecorder??=new FindingRecorder(this.knowledge.findings);
+    this.findingRecorder.connection(this.mcp.connectionInfo);
+    const connection={...this.mcp.connectionInfo},findingGeneration=this.knowledge.findings.generation;let result,error;
+    try {result=await (observation?observation.tool(name,args,action,signal):action());return result;}
+    catch(caught){error=caught;throw caught;}
+    finally {
+      try {
+        await this.findingRecorder.record(name,args,result,error,connection,observation?.diagnosticReference(),this.mcp.tools);
+        if(this.knowledge.findings.generation!==findingGeneration&&this.store.telemetry?.workflows)void this.store.telemetry.flush().catch(()=>{});
+      }
+      catch {
+        if(!this.findingWarning){
+          this.findingWarning=true;
+          const message={id:uid(),role:'notice',text:t('findings.saveFailed'),at:Date.now()};
+          session.messages.push(message);this.emit({type:'message',sessionId:session.id,message});
+        }
+      }
     }
-    return result;
   }
   async executeTool(session,name,args,mode,signal) {
     signal.throwIfAborted();
     const root=await this.store.workspace(session.projectId,session.id);
-    if(name==='save_finding')return this.knowledge.findings.save(args,this.mcp.connectionInfo,this.findingTrace||[]);
+    if(name==='save_finding')return this.knowledge.findings.save(args,this.mcp.connectionInfo,this.findingRecorder?.trace||[]);
+    if(name==='verify_finding') {
+      if(!validFindingComparison(args))throw new Error(t('findings.invalid'));
+      const tool=this.mcp.tools.find(item=>item.name===args.command||item.key===args.command);
+      if(tool?.annotations?.readOnlyHint!==true||!/^(Get|Is)/.test(tool.name))throw new Error(t('findings.readRequired'));
+      const connection={...this.mcp.connectionInfo};
+      const result=await this.execute(session,'call_archicad',{name:tool.key,arguments:args.arguments},mode,signal);
+      signal.throwIfAborted();
+      if(findingEnvironment(connection)!==findingEnvironment(this.mcp.connectionInfo))throw new Error(t('findings.invalid'));
+      return this.knowledge.findings.verify(args,connection,this.findingRecorder.trace.at(-1),resultData(result));
+    }
     if(name==='get_knowledge')return this.selectedKnowledge.get(args.id)||this.knowledge.search(args,session.projectId,this.mcp.connectionInfo,[...this.selectedKnowledge.keys()]);
     if(name==='export_layouts_pdf') {
       if(mode==='read')throw new Error(t('agent.readOnlyModeIsEnabledChangesAre'));
@@ -160,7 +183,7 @@ export class Agent extends MessageQueue {
     const {projectId,id:sessionId}=session;
     const emit=e=>this.emit({...e,sessionId});
     let overflowRetries=0,responseRetries=0,silentRounds=0,toolFailed=false,streamId;
-    this.findingTrace=[];
+    this.findingRecorder=new FindingRecorder(this.knowledge.findings);this.findingWarning=false;
     try {
       // Later settings may restrict a queued request, but never broaden the
       // permission it had when the user submitted it.
