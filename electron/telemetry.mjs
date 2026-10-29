@@ -90,7 +90,8 @@ export class Telemetry {
         if(this.workflows&&pendingEpoch===this.workflowEpoch) {
           const allowed=new Set(pending.map(item=>item.eventId));
           this.queue=this.queue.filter(item=>item.event!=='archi_finding_shared'||allowed.has(item.uuid));
-          for(const item of pending)if(!this.queue.some(event=>event.uuid===item.eventId))this.capture('archi_finding_shared',{finding:item.card},{id:item.eventId});
+          for(const item of pending)if(!this.queue.some(event=>event.uuid===item.eventId))this.capture('archi_finding_shared',
+            {finding:item.card,evidence:item.evidence,confidence:item.confidence,origin:item.origin,disposition:item.disposition},{id:item.eventId});
         }
       }catch{this.lastDelivery='storage_error';}
     }
@@ -168,6 +169,10 @@ class TaskObservation {
     telemetry.capture('archi_task_started',this.meta);if(provider)telemetry.provider(provider,'used');
   }
   get active(){return this.telemetry.active&&this.epoch===this.telemetry.epoch;}
+  diagnosticReference() {
+    if(this.active&&this.collectRoute&&this.telemetry.workflows&&this.workflowEpoch===this.telemetry.workflowEpoch)
+      return {run_id:this.id,step_index:this.counts.tool_count};
+  }
   emit(event,properties){if(this.active)this.telemetry.capture(event,properties);}
   failure(error,signal){this.error=classifyError(error,signal);}
   steering(count){if(this.active)this.counts.steering_count+=count;}
