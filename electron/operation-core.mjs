@@ -51,6 +51,19 @@ export function validateInput(value,schema,at='$',root=schema) {
 export const elementRefs=ids=>[...new Set(ids)].map(guid=>({elementId:{guid}}));
 export const identifier=value=>typeof value==='string'?value:value?.guid||value?.elementId?.guid||value?.navigatorItemId?.guid;
 
+function commandTool(tool){
+  // Tapir dispatches partial detail updates by the existing element's type.
+  // Its schema uses overlapping oneOf branches (for example Wall and Hotspot
+  // both accept height). Treat only that known union as anyOf; keep each
+  // branch's field/type restrictions and all other oneOf schemas strict.
+  if(tool.name!=='SetDetailsOfElements')return tool;
+  const schema=structuredClone(tool.inputSchema);
+  const details=schema?.properties?.elementsWithDetails?.items?.properties?.details?.properties?.typeSpecificDetails;
+  if(!Array.isArray(details?.oneOf))return tool;
+  details.anyOf=details.oneOf;delete details.oneOf;
+  return {...tool,inputSchema:schema};
+}
+
 export async function runOperation(context,kind,args,work) {
   const {mcp,root,signal}=context;
   const id=uid(),relative=`.archi/operations/${id}`,directory=await projectPath(root,relative);
@@ -59,7 +72,7 @@ export async function runOperation(context,kind,args,work) {
   const persist=()=>atomicJSON(path.join(directory,'manifest.json'),manifest);
   const op={...context,id,relative,directory,manifest,
     has:name=>mcp.tools.some(tool=>tool.server==='archicad'&&tool.name===name),
-    tool(name){const tool=mcp.tools.find(tool=>tool.server==='archicad'&&tool.name===name);if(!tool)throw new OperationError(t('operations.unsupportedCommand',{command:name}),'unsupported');return tool;},
+    tool(name){const tool=mcp.tools.find(tool=>tool.server==='archicad'&&tool.name===name);if(!tool)throw new OperationError(t('operations.unsupportedCommand',{command:name}),'unsupported');return commandTool(tool);},
     async save(name,value){const file=await projectPath(directory,name);await atomicJSON(file,value);return `${relative}/${name}`;},
     async checkpoint(){await persist();},
     async call(name,input={},options={}) {

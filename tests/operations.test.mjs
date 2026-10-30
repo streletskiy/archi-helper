@@ -34,6 +34,24 @@ test('unknown mutation outcomes are checkpointed and never retried',async t=>{
   assert.equal(manifest.steps[0].status,'outcome_unknown');assert.ok(manifest.steps[0].input);
 });
 
+test('Tapir overlapping partial-detail variants accept shared fields but reject unknown settings',async t=>{
+  const root=await fixture(t),branches=[
+    {type:'object',properties:{height:{type:'number'},bottomOffset:{type:'number'}},additionalProperties:false},
+    {type:'object',properties:{height:{type:'number'},penIndex:{type:'integer'}},additionalProperties:false}
+  ];
+  const union={type:'object',oneOf:branches};
+  const live={type:'object',properties:{elementsWithDetails:{type:'array',items:{type:'object',properties:{details:{type:'object',properties:{typeSpecificDetails:union},additionalProperties:false}},additionalProperties:false}}},additionalProperties:false};
+  let writes=0;const mcp=mockMcp({SetDetailsOfElements:live},()=>{writes++;return {executionResults:[{success:true}]};});
+  const context={mcp,root,signal:new AbortController().signal};
+  const run=details=>runOperation(context,'synthetic',{},op=>op.call('SetDetailsOfElements',{elementsWithDetails:[{details:{typeSpecificDetails:details}}]}));
+  assert.equal((await run({height:3.1})).status,'completed');
+  assert.equal((await run({height:'3.1'})).status,'failed');
+  assert.equal((await run({height:3.1,unexpected:true})).status,'failed');
+  assert.equal((await run({bottomOffset:0,penIndex:1})).status,'failed');
+  assert.equal(writes,1);assert.ok(union.oneOf);assert.equal(union.anyOf,undefined);
+  assert.throws(()=>validateInput({height:3.1},union));
+});
+
 test('element reader batches, deduplicates targets and retains per-item failures',async t=>{
   const root=await fixture(t),batches=[];
   const mcp=mockMcp({GetDetailsOfElements:schema({elements:{type:'array'},fields:{type:'array'}}),GetQuantitiesOfElements:schema({elements:{type:'array'}})},(name,args)=>{
