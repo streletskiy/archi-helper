@@ -11,3 +11,5 @@
 *.gif binary
 *.ico binary
 *.aseprite binary
+electron/dictionaries/*/index.aff binary
+electron/dictionaries/*/index.dic binary
