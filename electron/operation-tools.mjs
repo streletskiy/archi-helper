@@ -30,7 +30,11 @@ export const operationTools=[
     glossary:{type:'array',maxItems:10000,items:{type:'string',minLength:1,maxLength:100}},
     replacements:{type:'array',maxItems:200,items:{type:'object',properties:{from:{type:'string',minLength:1,maxLength:200},to:{type:'string',maxLength:200}},required:['from','to'],additionalProperties:false}},
     render_pages:{type:'array',maxItems:20,items:{type:'integer',minimum:1}},max_pages:{type:'integer',minimum:1,maximum:5000},max_findings:{type:'integer',minimum:1,maximum:20000}
-  },['files'])
+  },['files']),
+  fn('apply_change_plan','Preview or apply a saved plan of absolute element detail/property assignments. Preview reads all baselines without writes and returns a plan_id with before/after values. Apply accepts only that ID, checks the project and all baselines, follows the current permission mode, checkpoints each write and verifies by readback. Repeated apply skips values already matching; unknown outcomes are never blindly replayed. No creation/deletion, GDL scripts, relative moves, rollback or PLN save. Use exact live SetDetailsOfElements/SetPropertyValuesOfElements schemas. Only fields readable through the corresponding Get command are supported; property values use Tapir display strings.',{
+    action:{type:'string',enum:['preview','apply']},plan_id:string('Exact immutable ID returned by preview; apply only.'),purpose:string('Concrete change explanation in the user language; stored with the preview.'),
+    changes:{type:'array',minItems:1,maxItems:500,description:'Preview only. Combine detail assignments for one element into one entry.',items:{type:'object',properties:{kind:{type:'string',enum:['details','property']},element_id:ids('').items,property_id:ids('').items,after:{oneOf:[{type:'object',minProperties:1,description:'Exact SetDetailsOfElements details, including typeSpecificDetails when supported.'},{type:'string',description:'Exact Tapir property display string.'}]}},required:['kind','element_id','after'],additionalProperties:false}}
+  })
 ];
 
 export const operationToolNames=operationTools.map(tool=>tool.function.name);

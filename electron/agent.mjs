@@ -25,6 +25,7 @@ import {operationTools,operationToolNames} from './operation-tools.mjs';
 import {projectOverview,captureView,inspectElements} from './model-operations.mjs';
 import {validateInput} from './operation-core.mjs';
 import {exportLayoutPackage,auditLayoutText} from './document-operations.mjs';
+import {applyChangePlan} from './change-operations.mjs';
 const PROGRESS=readFileSync(new URL('./knowledge/prompts/progress.md',import.meta.url),'utf8').trim();
 
 const fn=(name,description,properties,required=[])=>({type:'function',function:{name,description,parameters:{type:'object',properties,required,additionalProperties:false}}});
@@ -97,9 +98,9 @@ export class Agent extends MessageQueue {
     const root=await this.store.workspace(session.projectId,session.id);
     if(operationToolNames.includes(name)){
       validateInput(args,operationTools.find(tool=>tool.function.name===name).function.parameters);
-      if((name==='capture_view'||name==='export_layout_package'&&args.action==='export')&&mode==='read')throw new Error(t('agent.readOnlyModeIsEnabledChangesAre'));
-      const handlers={get_project_overview:projectOverview,capture_view:captureView,inspect_elements:inspectElements,export_layout_package:exportLayoutPackage,audit_layout_text:auditLayoutText};
-      return handlers[name]({mcp:this.mcp,store:this.store,session,root,signal},args);
+      if((name==='capture_view'||name==='export_layout_package'&&args.action==='export'||name==='apply_change_plan'&&args.action==='apply')&&mode==='read')throw new Error(t('agent.readOnlyModeIsEnabledChangesAre'));
+      const handlers={get_project_overview:projectOverview,capture_view:captureView,inspect_elements:inspectElements,export_layout_package:exportLayoutPackage,audit_layout_text:auditLayoutText,apply_change_plan:applyChangePlan};
+      return handlers[name]({mcp:this.mcp,store:this.store,session,root,signal,authorize:plan=>mode==='full'?undefined:this.confirm(session,'archicad',plan.purpose||t('agent.changeElementParameters'),plan,signal)},args);
     }
     if(name==='save_finding')return this.knowledge.findings.save(args,this.mcp.connectionInfo,this.findingRecorder?.trace||[]);
     if(name==='verify_finding') {
