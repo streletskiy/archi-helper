@@ -34,6 +34,36 @@ test('unknown mutation outcomes are checkpointed and never retried',async t=>{
   assert.equal(manifest.steps[0].status,'outcome_unknown');assert.ok(manifest.steps[0].input);
 });
 
+test('Tapir overlapping partial-detail variants accept shared fields but reject unknown settings',async t=>{
+  const root=await fixture(t),branches=[
+    {type:'object',properties:{height:{type:'number'},bottomOffset:{type:'number'}},additionalProperties:false},
+    {type:'object',properties:{height:{type:'number'},penIndex:{type:'integer'}},additionalProperties:false}
+  ];
+  const union={type:'object',oneOf:branches};
+  const live={type:'object',properties:{elementsWithDetails:{type:'array',items:{type:'object',properties:{details:{type:'object',properties:{typeSpecificDetails:union},additionalProperties:false}},additionalProperties:false}}},additionalProperties:false};
+  let writes=0;const mcp=mockMcp({SetDetailsOfElements:live},()=>{writes++;return {executionResults:[{success:true}]};});
+  const context={mcp,root,signal:new AbortController().signal};
+  const run=details=>runOperation(context,'synthetic',{},op=>op.call('SetDetailsOfElements',{elementsWithDetails:[{details:{typeSpecificDetails:details}}]}));
+  assert.equal((await run({height:3.1})).status,'completed');
+  assert.equal((await run({height:'3.1'})).status,'failed');
+  assert.equal((await run({height:3.1,unexpected:true})).status,'failed');
+  assert.equal((await run({bottomOffset:0,penIndex:1})).status,'failed');
+  assert.equal(writes,1);assert.ok(union.oneOf);assert.equal(union.anyOf,undefined);
+  assert.throws(()=>validateInput({height:3.1},union));
+});
+
+test('the shipped MCP schema accepts overlapping partial height updates before dispatch',async()=>{
+  const base=new URL('../vendor/archicad-mcp/src/archicad_mcp/tapir/',import.meta.url);
+  const read=async name=>JSON.parse((await fs.readFile(new URL(name,base),'utf8')).replace(/^\s*var \w+ = /,'').trim().replace(/;$/,''));
+  const definitions=await read('common_schema_definitions.js'),groups=await read('command_definitions.js');
+  const command=groups.flatMap(group=>group.commands).find(cmd=>cmd.name==='SetDetailsOfElements');
+  const schema={...definitions,...command.inputScheme};
+  const input=settings=>({elementsWithDetails:[{elementId:{guid:guid(1)},details:{typeSpecificDetails:settings}}]});
+  assert.doesNotThrow(()=>validateInput(input({height:3.1}),schema));
+  assert.throws(()=>validateInput(input({height:'3.1'}),schema));
+  assert.throws(()=>validateInput(input({height:3.1,unknownSetting:true}),schema));
+});
+
 test('element reader batches, deduplicates targets and retains per-item failures',async t=>{
   const root=await fixture(t),batches=[];
   const mcp=mockMcp({GetDetailsOfElements:schema({elements:{type:'array'},fields:{type:'array'}}),GetQuantitiesOfElements:schema({elements:{type:'array'}})},(name,args)=>{

@@ -18,7 +18,7 @@
 | PyMuPDF / MuPDF 1.28.2 | AGPL-3.0; см. ниже |
 | archicad | Apache-2.0; полный текст в метаданных Python-пакета |
 
-[archicad-mcp](https://github.com/lgradisar/archicad-mcp) включён с исходниками и MIT-лицензией в `vendor/archicad-mcp`, коммит `13b8645cf9d6c59543a9c2f6b0021ac76e2b0b36`. Два файла определений команд и TAPIR_VERSION обновлены из официального Tapir 1.7.2: 314 команд, проверка соединения и универсальный вызов дают 316 инструментов.
+[archicad-mcp](https://github.com/lgradisar/archicad-mcp) включён с исходниками и MIT-лицензией в `vendor/archicad-mcp`, коммит `13b8645cf9d6c59543a9c2f6b0021ac76e2b0b36`. Два файла определений команд и TAPIR_VERSION обновлены из официального Tapir 1.7.2: 314 команд, проверка соединения и универсальный вызов дают 316 инструментов. Локальная поправка `TypeSpecificSettings` использует `anyOf` для пересекающихся частичных настроек существующего элемента; ограничения полей каждого варианта сохранены.
 
 [Tapir](https://github.com/ENZYME-APD/tapir-archicad-automation) — отдельное расширение ENZYME APD. Оно не вложено в установщик: приложение скачивает его из официального релиза с проверкой SHA-256.
 
