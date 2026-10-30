@@ -9844,9 +9844,9 @@ var gSchemaDefinitions = {
         "required": []
     },
     "TypeSpecificSettings": {
-        "description": "Defines the modifiable type-specific settings for an element. Used as input for SET requests.",
+        "description": "Defines partial modifiable settings for SET requests. Variants intentionally overlap: the target element type selects the applicable settings.",
         "type": "object",
-        "oneOf": [
+        "anyOf": [
             {
                 "$ref": "#/WallSettings"
             },
