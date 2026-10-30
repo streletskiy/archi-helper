@@ -52,6 +52,18 @@ test('Tapir overlapping partial-detail variants accept shared fields but reject 
   assert.throws(()=>validateInput({height:3.1},union));
 });
 
+test('the shipped MCP schema accepts overlapping partial height updates before dispatch',async()=>{
+  const base=new URL('../vendor/archicad-mcp/src/archicad_mcp/tapir/',import.meta.url);
+  const read=async name=>JSON.parse((await fs.readFile(new URL(name,base),'utf8')).replace(/^\s*var \w+ = /,'').trim().replace(/;$/,''));
+  const definitions=await read('common_schema_definitions.js'),groups=await read('command_definitions.js');
+  const command=groups.flatMap(group=>group.commands).find(cmd=>cmd.name==='SetDetailsOfElements');
+  const schema={...definitions,...command.inputScheme};
+  const input=settings=>({elementsWithDetails:[{elementId:{guid:guid(1)},details:{typeSpecificDetails:settings}}]});
+  assert.doesNotThrow(()=>validateInput(input({height:3.1}),schema));
+  assert.throws(()=>validateInput(input({height:'3.1'}),schema));
+  assert.throws(()=>validateInput(input({height:3.1,unknownSetting:true}),schema));
+});
+
 test('element reader batches, deduplicates targets and retains per-item failures',async t=>{
   const root=await fixture(t),batches=[];
   const mcp=mockMcp({GetDetailsOfElements:schema({elements:{type:'array'},fields:{type:'array'}}),GetQuantitiesOfElements:schema({elements:{type:'array'}})},(name,args)=>{
