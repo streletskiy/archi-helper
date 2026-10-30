@@ -42,7 +42,7 @@ const effortLabel=(value:string)=>t(({none:'ui.reasoningNone',minimal:'ui.reason
 const api=(method:string,input?:unknown)=>window.archi.call(method,input);
 const pretty=(v:unknown)=>typeof v==='string'?v:JSON.stringify(v,null,2);
 const bytes=(n:number)=>n>1048576?t('ui.mb',{value0:(n/1048576).toFixed(1)}):n>1024?t('ui.kb',{value0:Math.round(n/1024)}):t('ui.b',{value0:n});
-const labels=():Record<string,string>=>({get_knowledge:t('ui.knowledge'),get_api_catalog:t('ui.apiCatalog'),export_layouts_pdf:t('ui.exportLayoutsPdf'),find_tools:t('ui.findTools'),call_archicad:t('ui.archicadCommand'),list_files:t('ui.projectFiles'),read_file:t('ui.readResult'),view_image:t('ui.viewImage'),write_file:t('ui.saveFile'),run_python:t('ui.processData')});
+const labels=():Record<string,string>=>({get_project_overview:t('operations.name.get_project_overview'),capture_view:t('operations.name.capture_view'),inspect_elements:t('operations.name.inspect_elements'),export_layout_package:t('operations.name.export_layout_package'),audit_layout_text:t('operations.name.audit_layout_text'),apply_change_plan:t('operations.name.apply_change_plan'),get_knowledge:t('ui.knowledge'),get_api_catalog:t('ui.apiCatalog'),export_layouts_pdf:t('ui.exportLayoutsPdf'),find_tools:t('ui.findTools'),call_archicad:t('ui.archicadCommand'),list_files:t('ui.projectFiles'),read_file:t('ui.readResult'),view_image:t('ui.viewImage'),write_file:t('ui.saveFile'),run_python:t('ui.processData')});
 function IconButton({title,onClick,children,disabled=false}:{title:string;onClick:()=>void;children:React.ReactNode;disabled?:boolean}) {
   return <button className="icon-button" title={title} aria-label={title} onClick={onClick} disabled={disabled}>{children}</button>;
 }

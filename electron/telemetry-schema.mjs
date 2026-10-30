@@ -3,6 +3,7 @@ import taskPatterns from '../locales/telemetry-patterns.json' with {type:'json'}
 import {providerDefinition} from './provider-definitions.mjs';
 import {sanitizeDiagnostic} from './tool-diagnostics.mjs';
 import {sanitizeFinding,sanitizeFindingEvidence} from './finding-schema.mjs';
+import {operationToolNames} from './operation-tools.mjs';
 
 const taskMatchers=Object.entries(taskPatterns).map(([kind,pattern])=>[kind,new RegExp(pattern,'i')]);
 
@@ -15,7 +16,7 @@ const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3
 const version=value=>typeof value==='string'&&/^\d{1,3}(?:\.\d{1,6}){0,3}$/.test(value)?value:undefined;
 const members=values=>{const set=new Set(values);return value=>set.has(value)?value:undefined;};
 const models=members(catalog.models),commands=members(catalog.commands),articles=members(catalog.articles);
-export const TOOL_NAMES=['get_knowledge','save_finding','verify_finding','get_api_catalog','find_tools','call_archicad','export_layouts_pdf','list_files','read_file','write_file','view_image','show_image','run_python'];
+export const TOOL_NAMES=[...operationToolNames,'get_knowledge','save_finding','verify_finding','get_api_catalog','find_tools','call_archicad','export_layouts_pdf','list_files','read_file','write_file','view_image','show_image','run_python'];
 export const OUTCOMES=['completed_unverified','failed','cancelled','outcome_unknown'];
 export const ERROR_CATEGORIES=['none','cancelled','timeout','permission_denied','authentication','rate_limit','context_limit','invalid_response','network','provider_error','python_error','tool_error','unknown'];
 const outcome=oneOf(OUTCOMES),errorCategory=oneOf(ERROR_CATEGORIES),tool=oneOf(TOOL_NAMES);
@@ -42,7 +43,8 @@ export const EVENT_SCHEMAS=Object.freeze({
   archi_connection:{connected:boolean,archicad_version:common.archicad_version,archicad_build:common.archicad_build,tapir_version:version},
   archi_task_started:common,
   archi_task_finished:common,
-  archi_tool_finished:{run_id:uuid,tool,command:value=>commands(value)||'other',duration_ms:common.duration_ms,outcome,error_category:errorCategory},
+  archi_tool_finished:{run_id:uuid,tool,command:value=>commands(value)||'other',duration_ms:common.duration_ms,outcome,error_category:errorCategory,
+    operation_status:oneOf(['completed','partial','failed','unsupported','cancelled','outcome_unknown']),operation_action:oneOf(['preview','apply','plan','export']),readback_checked:boolean},
   archi_tool_diagnostic:{run_id:uuid,tool,command:value=>commands(value)||'other',source:oneOf(['python_json_api']),api_step_index:positiveInteger(40),step_index:positiveInteger(1e6),previous_failed_step:positiveInteger(1e6),outcome,error_category:errorCategory,diagnostic:sanitizeDiagnostic},
   archi_http_request:{run_id:uuid,provider_type:providerType,http_status:integer(599),duration_ms:common.duration_ms,purpose:oneOf(['agent','compaction']),error_category:errorCategory},
   archi_knowledge_used:{run_id:uuid,knowledge_ids:strings(articles),activation:oneOf(['automatic','selected','read'])},

@@ -18,7 +18,7 @@ export function activityLabel(messages,approval=false) {
   if(last?.role!=='tool'||last.status!=='running')return t(last?.role==='tool'?'activity.results':'activity.thinking');
   const args=last.args&&typeof last.args==='object'?last.args:{};
   if(typeof args.purpose==='string'&&args.purpose.trim())return args.purpose.trim().slice(0,180);
-  const stages={get_knowledge:'knowledge',get_api_catalog:'catalog',find_tools:'catalog',export_layouts_pdf:'export',list_files:'files',read_file:'reading',view_image:'image',show_image:'image',write_file:'writing',run_python:'python'};
+  const stages={get_project_overview:'project',capture_view:'image',inspect_elements:'elements',export_layout_package:'export',audit_layout_text:'reading',apply_change_plan:'properties',get_knowledge:'knowledge',get_api_catalog:'catalog',find_tools:'catalog',export_layouts_pdf:'export',list_files:'files',read_file:'reading',view_image:'image',show_image:'image',write_file:'writing',run_python:'python'};
   if(stages[last.name])return t(`activity.${stages[last.name]}`);
   const command=String(args.name||last.name||'').split(':').pop();
   const commands={TestConnection:'connection',GetProjectInfo:'project',GetNavigatorItemTree:'navigator',GetElementsByType:'elements',GetSelectedElements:'elements',GetQuantitiesOfElements:'quantities',GetPropertyValuesOfElements:'properties',GetPropertiesOfElements:'properties',GetLayoutSettings:'layouts',GetPublisherSetNames:'publishers',PublishPublisherSet:'export'};

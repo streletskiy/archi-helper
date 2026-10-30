@@ -69,6 +69,8 @@
           "manifest.json",
           "requirements.lock",
           "api-catalog.json",
+          "tessdata/**/*",
+          "dictionaries/**/*",
           "python/cpython-3.13.7-windows-x86_64-none/**/*",
           "!**/__pycache__/**",
           "!**/*.pyc",
