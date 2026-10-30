@@ -20,6 +20,13 @@ const bundled=path.resolve('runtime/python/cpython-3.13.7-windows-x86_64-none/py
 const python=process.env.ARCHI_TEST_PYTHON||(await fs.access(bundled).then(()=>bundled).catch(()=>process.platform==='win32'?'python':'python3'));
 assert.equal(spawnSync(python,['-c','import json,urllib.request,runpy,threading'],{windowsHide:true}).status,0,'Python standard library is required');
 
+test('operation telemetry retains only fixed status fields and never plan or document data',()=>{
+  const result=sanitizeEvent('archi_tool_finished',{tool:'apply_change_plan',operation_status:'partial',operation_action:'apply',readback_checked:true,plan_id:'PRIVATE_PLAN',changes:[{after:'PRIVATE_VALUE'}],files:['PRIVATE_PATH'],verified:17});
+  assert.equal(result.operation_status,'partial');assert.equal(result.readback_checked,true);assert.doesNotMatch(JSON.stringify(result),/PRIVATE|verified/);
+  const invalid=sanitizeEvent('archi_tool_finished',{tool:'audit_layout_text',operation_status:'PRIVATE_TEXT',operation_action:'PRIVATE_TEXT',readback_checked:'PRIVATE_TEXT'});
+  assert.ok(!Object.hasOwn(invalid,'operation_status'));assert.ok(!Object.hasOwn(invalid,'operation_action'));assert.ok(!Object.hasOwn(invalid,'readback_checked'));
+});
+
 async function fixture(t,handler) {
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-telemetry-'));
   const server=http.createServer(async(req,res)=>{

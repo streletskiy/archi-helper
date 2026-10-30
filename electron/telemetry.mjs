@@ -5,6 +5,7 @@ import {TELEMETRY_CONFIG} from './telemetry-config.mjs';
 import {sanitizeEvent,providerMetadata,connectionMetadata,publicModel,publicCommand,publicArticles,classifyError,classifyTask} from './telemetry-schema.mjs';
 import {withObservation,observationPurpose} from './telemetry-context.mjs';
 import {normalizeExecutionResult,toolDiagnostic,sanitizePythonObservation} from './tool-diagnostics.mjs';
+import {operationToolNames} from './operation-tools.mjs';
 
 const uuid=()=>crypto.randomUUID();
 const validId=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
@@ -209,7 +210,8 @@ class TaskObservation {
         const unknown=result?.outcomeUnknown===true||name==='call_archicad'&&(signal?.aborted||category==='timeout');
         if(failed)this.counts.tool_errors++;if(unknown)this.unknown=true;
         const command=name==='call_archicad'?publicCommand(args?.name):'other';
-        this.emit('archi_tool_finished',{run_id:this.id,tool:name,command,duration_ms:this.telemetry.now()-started,outcome:unknown?'outcome_unknown':failed?'failed':'completed_unverified',error_category:category});
+        this.emit('archi_tool_finished',{run_id:this.id,tool:name,command,duration_ms:this.telemetry.now()-started,outcome:unknown?'outcome_unknown':failed?'failed':'completed_unverified',error_category:category,
+          ...(result?.operation?{operation_status:result.status,operation_action:args?.action,readback_checked:result.checks?.includes('readback_after_write')===true}:{})});
         if(!failed&&name==='get_knowledge'&&args?.id)this.knowledgeUsed([args.id],'read');
         if(this.collectRoute&&this.telemetry.workflows&&this.workflowEpoch===this.telemetry.workflowEpoch){
           const step_index=this.counts.tool_count,key=`${name}:${command}`,previous_failed_step=this.failedSteps.get(key);
@@ -233,7 +235,7 @@ class TaskObservation {
       error_category:this.error||'none',knowledge_ids:[...this.knowledge],route_truncated:this.truncated===true});
     this.emit('archi_task_finished',summary);
     const shared=this.collectRoute&&this.telemetry.workflows&&this.workflowEpoch===this.telemetry.workflowEpoch;
-    const coverage=this.steps.some(step=>step.tool==='run_python')?'agent_tools_only':'agent_and_mcp';
+    const coverage=this.steps.some(step=>step.tool==='run_python'||operationToolNames.includes(step.tool))?'agent_tools_only':'agent_and_mcp';
     if(shared)this.emit('archi_workflow_observed',{...summary,steps:this.steps,coverage,verification:'unverified'});
     return {id:this.id,installationId:this.telemetry.store.state.telemetry.installationId,appVersion:this.telemetry.version,schemaVersion:this.telemetry.config.schemaVersion,summary,steps:shared?this.steps:[],coverage,shared};
   }

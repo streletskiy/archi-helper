@@ -1,0 +1,28 @@
+[
+  {
+    "language": "ru",
+    "package": "dictionary-ru",
+    "version": "3.0.0",
+    "license": "BSD-3-Clause",
+    "url": "https://registry.npmjs.org/dictionary-ru/-/dictionary-ru-3.0.0.tgz",
+    "integrity": "sha512-tigem0CDnNpxEciW6ktwVH3wWB4FYpuvpwA6IR6UlF7bVu2kez6vOejVNyZgBX1TJIjuYTCTuLxzg/YOls2mRQ==",
+    "files": {
+      "index.aff": "38ce7d4af78e211e9bafe4bf7e3d6a2c420591136cb738ec6648f8fdf6524cd7",
+      "index.dic": "f6047416a0204adbecf3a451b874ec8a97ee37e2cbc714466ef04d8dbcc0d6fc",
+      "license": "262af2f6ad70a61e5ee1332ff44fa8ee50edca819cf33207d8ad6ba6a0c9be52"
+    }
+  },
+  {
+    "language": "en",
+    "package": "dictionary-en",
+    "version": "4.0.0",
+    "license": "(MIT AND BSD)",
+    "url": "https://registry.npmjs.org/dictionary-en/-/dictionary-en-4.0.0.tgz",
+    "integrity": "sha512-3NHnE1uq33ZE/CIwaZ6gqxa4BnglHnxeAcTM0GJ7cmtRGcvX9InMK/IqLtYcUMFCUpUNgybH+DzkqdgAo3F1zg==",
+    "files": {
+      "index.aff": "8ae1f19d4840d957728ad90555d5a8dff6cc5c046279c95ff0c00fc0a0136c7b",
+      "index.dic": "f0b1a234bd178bdd01875b2a392a9647f888b8fe879f79c52aae62c2759b3647",
+      "license": "2a7e8d8ae9e8facc84818546ae2a8d83aec5e9c80a675ff789acd1c338b53b3d"
+    }
+  }
+]

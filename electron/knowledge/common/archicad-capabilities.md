@@ -1,12 +1,12 @@
 ---
 id: "archicad-capabilities"
 title: "Возможности Archicad и выбор инструментов"
-summary: "Идентификаторы навигатора и баз данных, фильтр деталей элементов и ответы MCP с учётом версии Archicad."
+summary: "Навигатор и базы данных, связанные элементы, фильтр деталей и ответы MCP с учётом версии Archicad."
 kind: "knowledge"
 activation: "auto"
 enabled: true
 tags: ["navigator","layout","database","details","fields","макет","навигатор","версия","детали"]
-triggers: ["tool","command","api","navigator","database","инструмент","команд","навигатор","databaseId","ChangeWindow","archicad","find_tools","call_archicad","get_api_catalog","GetDetailsOfElements","fields","детал"]
+triggers: ["tool","command","api","navigator","database","инструмент","команд","навигатор","databaseId","ChangeWindow","archicad","find_tools","call_archicad","get_api_catalog","GetDetailsOfElements","fields","детал","GetConnectedElements","connectedElementType"]
 related: ["ac25-capabilities","ac27-capabilities"]
 ---
 
@@ -30,10 +30,27 @@ related: ["ac25-capabilities","ac27-capabilities"]
 | Базы макетов из навигатора | `GetDatabaseIdFromNavigatorItemId`: массив `navigatorItemIds` с вложенными `navigatorItemId`, а не одиночный аргумент |
 | Открыть макет в AC25 | `ChangeWindow`: `windowType="Layout"`, `databaseId` из разрешённого идентификатора навигатора; вариант `navigatorItemId` требует AC27+ и на AC25 возвращал ошибку |
 | Размеры и поля листов | `GetLayoutSettings`: `layoutDatabaseIds`; сверять ответ и ошибки для каждого элемента |
-| Экспорт PDF для проверки | `export_layouts_pdf`: существующий PDF-набор, новая папка чата, без дополнительного подтверждения в обычном режиме |
+| Обзор и чтение | `get_project_overview`, `inspect_elements`: явная область, ограниченные пакеты, полные локальные результаты и частичное покрытие |
+| Снимок вида | `capture_view`: свежий PNG, проверка файла и типа окна; показ и передача vision-модели выполняются автоматически |
+| Экспорт PDF для проверки | `export_layout_package`: реестр, существующие PDF-наборы, локальный экспорт и сопоставление страниц; `audit_layout_text`: текст, координаты, словари и OCR |
+| Проверяемые изменения | `apply_change_plan`: предварительный план абсолютных присваиваний, проверка исходных значений, запись и обратное чтение |
 | Растровый запасной путь | `SaveCurrentWindowAsImage`: `imageFilePath`, а не придуманное имя файла; нужное разрешение результата обязательно проверять |
 
 `PrintView` — печать, а не документированный универсальный PDF-экспорт. Не вызывайте его для получения PDF. `RunTapirCommand`, Python SDK и `ExecuteAddOnCommand` не добавляют отсутствующие команды. Версия определений в приложении и реально установленный Tapir могут различаться.
+
+## Элементы, размещённые в элементах-владельцах
+
+Для окон и дверей стены или подэлементов составного элемента используйте Tapir `GetConnectedElements`, если команда доступна в текущем подключении. Вход содержит обязательные `elements` — ссылки на владельцев в форме `{elementId:{guid}}` — и `connectedElementType` — тип искомых связанных элементов. Поле `elementType` не входит в схему этой команды; его имя из `GetElementsByType` сюда не переносится.
+
+Явно синтетический запрос для проверки JSON-контракта:
+
+```json
+{"elements":[{"elementId":{"guid":"00000000-0000-4000-8000-000000000003"}}],"connectedElementType":"Window"}
+```
+
+При ошибке аргументов прочитайте текущую схему, исправьте имя поля и вложенность ссылок и повторите ограниченное чтение. После снятия оболочки MCP сначала проверьте верхнеуровневый `error`, затем `connectedElements` и вложенные массивы `elements`. Пустой список относится только к заданным владельцам и типу. Команда чтения не требует отката изменений модели.
+
+Контракт проверен 2026-10-29 по поставляемым определениям Tapir 1.7.2 (`GetConnectedElements`, `Elements`, `ConnectedElementsOrError`) и синтетическим JSON. [Описание Tapir](https://enzyme-apd.github.io/tapir-archicad-automation/archicad-addon/) задаёт отдельное пространство `TapirCommand`; доступность и схему сверяйте с установленным дополнением. Новый интеграционный запуск в PLN и полнота поиска связанных элементов не подтверждались.
 
 ## Узкое чтение деталей элементов
 
