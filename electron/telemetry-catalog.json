@@ -13095,13 +13095,18 @@
   "articles": [
     "ac25-capabilities",
     "ac27-capabilities",
+    "api-modal-recovery",
     "archicad-capabilities",
+    "geometry-boundary-checks",
     "interactive-schedules",
+    "layer-assignment-verification",
     "layout-audit",
     "library-parts-gdl",
     "mesh-creation-contract",
     "model-edit-verification",
+    "morph-face-surfaces",
     "python-workflow",
+    "wall-visibility-readback",
     "zone-stamp-area-label"
   ]
 }

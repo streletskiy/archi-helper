@@ -7,11 +7,16 @@
 | [Надпись площади в штампе зоны](common/zone-stamp-area-label.md) · `zone-stamp-area-label` | Согласованная надпись без изменения расчётной площади | Явное одобрение, проверка штампа, проба на одной зоне |
 | [Интерактивные каталоги](common/interactive-schedules.md) · `interactive-schedules` | Данные, ячейки или настройки спецификации | Проверка API текущей версии |
 | [Маршруты API](common/archicad-capabilities.md) · `archicad-capabilities` | Навигатор, databaseId, фильтр деталей элементов, результаты MCP | Сверка текущей схемы |
+| [Модальный диалог и JSON API](common/api-modal-recovery.md) · `api-modal-recovery` | Invalid program status с сообщением об открытом диалоге | Завершение диалога и повторное чтение; состояние изменений проверять отдельно |
 | [Аудит макетов](common/layout-audit.md) · `layout-audit` | Комплект, Publisher, PDF | Раздельный учёт покрытия |
 | [Python](common/python-workflow.md) · `python-workflow` | Работа с SDK и зависимостями | Точные сигнатуры, отдельная среда |
 | [Библиотечные элементы и GDL](common/library-parts-gdl.md) · `library-parts-gdl` | Окна, библиотечные части, материалы и параметры GDL | Точная схема, тип значения, поэлементный результат и чтение после изменения |
 | [Пакетные изменения и геометрия](common/model-edit-verification.md) · `model-edit-verification` | Создание элементов и атрибутов, перекрытия, Morph и частичные сбои | Снимок состояния, проверка каждой записи, чтение после изменения и ограниченный повтор |
 | [Рельеф Mesh](common/mesh-creation-contract.md) · `mesh-creation-contract` | Подготовка JSON для CreateMeshes | Текущая схема; геометрия требует отдельной проверки |
+| [Пересечение с гранью](common/geometry-boundary-checks.md) · `geometry-boundary-checks` | Граница, промах или допуск локального расчёта | Исходная точка, явная классификация и проверка граничных случаев |
+| [Назначение слоя](common/layer-assignment-verification.md) · `layer-assignment-verification` | Смена layerIndex и ошибка блокировки | Каталог индексов, состояния обоих слоёв и обратное чтение |
+| [Покрытия граней Morph](common/morph-face-surfaces.md) · `morph-face-surfaces` | Общий surfaceId не меняет ожидаемые покрытия | Полное тело, явные покрытия и отдельная проверка геометрии |
+| [Высота и видимость Wall](common/wall-visibility-readback.md) · `wall-visibility-readback` | Проверка незаданных полей после изменения стены | Полный снимок; возврат высоты и success не доказывают полного восстановления |
 
 `prompts/` хранит системные инструкции, `common/` — общие процедуры, `versions/25/` и `versions/27/` — отличия и границы проверки по версиям. Общий текст не дублируется. Для неизвестной версии доступны только общие статьи; отсутствие наблюдений не означает подтверждённой поддержки. Совпадение версии/build/Tapir с метаданными не означает нового успешного запуска.
 
