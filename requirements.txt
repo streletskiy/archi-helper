@@ -141,7 +141,7 @@ pyjwt==2.15.1
     # via mcp
 pymupdf==1.28.2
     # via -r vendor/requirements.in
-pypdf==6.21.2
+pypdf==6.21.4
     # via -r vendor/requirements.in
 pyperclip==1.11.0
     # via fastmcp-slim

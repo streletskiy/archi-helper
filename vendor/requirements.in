@@ -1,5 +1,5 @@
 pillow
 pymupdf==1.28.2
-pypdf>=6.21.2
+pypdf>=6.21.4
 archicad
 spylls==0.1.7
