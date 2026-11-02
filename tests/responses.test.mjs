@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { claudeTurn,claudeInput } from '../electron/claude-code.mjs';
+import { claudeTurn,claudeInput,claudeModels } from '../electron/claude-code.mjs';
 import { claudeBridge } from '../electron/claude-bridge.mjs';
 import { Client as ClaudeTestClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -81,6 +81,20 @@ test('Claude requires a successful terminal event, keeps tools constrained, and 
   terminal=undefined;await assert.rejects(claudeTurn(args),/did not complete/);assert.deepEqual(await fs.readdir(root),[]);
   terminal={type:'result',subtype:'error_during_execution',is_error:true};await assert.rejects(claudeTurn(args));
   terminal={type:'result',subtype:'success',is_error:false};code=1;await assert.rejects(claudeTurn(args));
+});
+
+test('Claude passes the selected model and a supported reasoning effort to the CLI',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'archi-claude-effort-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const calls=[];
+  const manager={verify:async()=>'/synthetic/claude',options:async signal=>({cwd:root,env:{},signal}),run:async(_exe,args,options)=>{
+    calls.push(args);await options.onEvent({type:'result',subtype:'success',is_error:false});return {code:0};
+  }};
+  const provider={adapter:'claude-code',baseURL:'https://claude.ai',reasoningFormat:'effort',models:claudeModels()};
+  const turn=(model,reasoningEffort)=>claudeTurn({manager,provider,model,reasoningEffort,messages:[{role:'system',content:'Synthetic system'}],signal:new AbortController().signal,onEvent:async()=>{}});
+  const option=(args,name)=>args.includes(name)?args[args.indexOf(name)+1]:undefined;
+  await turn('claude-haiku-5-5','low');await turn('default','max');await turn('claude-fable-5-1');await turn('claude-sonnet-5-5','ultra');
+  assert.deepEqual(calls.map(args=>[option(args,'--model'),option(args,'--effort')]),
+    [['claude-haiku-5-5','low'],[undefined,'max'],['claude-fable-5-1','xhigh'],['claude-sonnet-5-5','max']]);
 });
 
 test('Claude agent persists streamed blocks once and routes tool execution through the ordinary history and permissions',{timeout:15000},async t=>{

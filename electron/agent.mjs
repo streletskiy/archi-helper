@@ -203,7 +203,7 @@ export class Agent extends MessageQueue {
       mode=modes[Math.min(Math.max(0,modes.indexOf(mode)),Math.max(0,modes.indexOf(this.store.state.permissionMode||'full')))];
       const provider=this.store.getProvider(providerId);
       if(!model)throw new Error(t('ui.chooseAModel'));
-      if(provider.adapter==='claude-code')return await performClaudeTask(this,session,{provider,model,mode,knowledge,text,attachments,tools:agentTools},signal);
+      if(provider.adapter==='claude-code')return await performClaudeTask(this,session,{provider,model,reasoningEffort,mode,knowledge,text,attachments,tools:agentTools},signal);
       // Also resolve manually entered IDs, which need not appear in /models.
       const info=provider.models?.find(m=>m.id===model);
       if(provider.adapter==='openai-responses'&&!info)throw new Error(t('errors.refreshAccountModels'));

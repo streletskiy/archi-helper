@@ -54,6 +54,36 @@ test('Claude reuses an installed authenticated CLI and pins its profile without 
   assert.deepEqual(progress.map(value=>value?.stage),['detecting','checking',undefined]);
 });
 
+test('Claude keeps the default CLI profile implicit so the signed-in account stays visible after connecting',async t=>{
+  const {store}=await fixture(t),home=path.join(store.directory,'synthetic-home'),defaultDirectory=path.join(home,'.claude'),overrides=[];
+  // The CLI reads the account from ~/.claude.json only when CLAUDE_CONFIG_DIR is unset.
+  const manager=new ClaudeCode(store,{env:{},home,find:async()=>'/synthetic/claude.exe',run:async(_exe,args,options)=>{
+    if(args[0]==='--version')return {code:0,stdout:'2.1.312 (Claude Code)'};
+    overrides.push(options.env.CLAUDE_CONFIG_DIR);
+    return {code:0,stdout:JSON.stringify({loggedIn:true,authMethod:'claude.ai',configDirectory:options.env.CLAUDE_CONFIG_DIR||defaultDirectory,
+      email:options.env.CLAUDE_CONFIG_DIR?null:'synthetic@example.test'})};
+  }});
+  const id=await manager.connect();assert.equal(store.getProvider(id).cli.accountName,'synthetic@example.test');
+  await manager.verify(store.getProvider(id));
+  // Connections saved by earlier versions pinned the default directory explicitly.
+  store.getProvider(id).cli.configDirectory=defaultDirectory.toUpperCase();await manager.verify(store.getProvider(id));
+  assert.deepEqual(overrides,[undefined,undefined,undefined]);
+});
+
+test('Claude connections saved with model aliases gain the current catalog and reasoning efforts on startup',async t=>{
+  const {store}=await fixture(t);
+  store.state.providers.push({id:'synthetic-claude',adapter:'claude-code',reasoningFormat:'none',model:'haiku',models:[{id:'haiku',name:'Haiku',reasoningEfforts:[]}],cli:{status:'connected'}},
+    {id:'synthetic-other',adapter:'openai-compatible',model:'haiku'});
+  store.state.providerId='synthetic-claude';store.state.model='haiku';
+  await new ClaudeCode(store).refreshCatalog();
+  const provider=store.getProvider('synthetic-claude');
+  assert.equal(provider.model,'claude-haiku-5-5');assert.equal(store.state.model,'claude-haiku-5-5');assert.equal(provider.reasoningFormat,'effort');
+  assert.deepEqual(provider.models.map(model=>model.id),['default','claude-fable-5-1','claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5']);
+  assert.ok(provider.models.every(model=>model.reasoningEfforts.join()==='low,medium,high,xhigh,max'));
+  assert.equal(store.getProvider('synthetic-other').model,'haiku');
+  assert.equal(JSON.parse(await fs.readFile(store.file,'utf8')).model,'claude-haiku-5-5');
+});
+
 test('Claude installs once when absent, starts official login only when needed, and reuses it on reconnect',async t=>{
   const {store}=await fixture(t);let installed=false,loggedIn=false,installs=0,logins=0;
   const manager=new ClaudeCode(store,{env:{},find:async()=>{if(!installed)throw Object.assign(new Error('missing'),{code:'CLAUDE_NOT_FOUND'});return '/synthetic/claude.exe';},
