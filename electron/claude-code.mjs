@@ -72,15 +72,20 @@ export function runClaude(executable,args,{cwd,env=process.env,signal,input,onEv
   });
 }
 
+const samePath=(a,b)=>process.platform==='win32'?path.resolve(a).toLowerCase()===path.resolve(b).toLowerCase():path.resolve(a)===path.resolve(b);
+
 export class ClaudeCode {
-  constructor(store,{run=runClaude,find=findClaude,install=installClaude,onProgress=()=>{},env=process.env}={}){
-    this.store=store;this.run=run;this.find=find;this.install=install;this.onProgress=onProgress;this.env=env;this.pending=null;this.progress=null;
+  constructor(store,{run=runClaude,find=findClaude,install=installClaude,onProgress=()=>{},env=process.env,home=os.homedir()}={}){
+    this.store=store;this.run=run;this.find=find;this.install=install;this.onProgress=onProgress;this.env=env;this.home=home;this.pending=null;this.progress=null;
   }
   report(progress){this.progress=progress;this.onProgress(progress);}
   async options(signal,profile={profile:'shared'}) {
     const cwd=path.join(this.store.directory,'claude-code');await fs.mkdir(cwd,{recursive:true});
     const env={...this.env};
     if(profile.profile==='private')env.CLAUDE_CONFIG_DIR=cwd;
+    // The CLI keeps the default profile's account in ~/.claude.json; naming its
+    // default directory explicitly switches to another config without the account.
+    else if(profile.configDirectory&&samePath(profile.configDirectory,path.join(this.home,'.claude')))delete env.CLAUDE_CONFIG_DIR;
     else if(profile.configDirectory)env.CLAUDE_CONFIG_DIR=profile.configDirectory;
     return {cwd,env,signal};
   }
