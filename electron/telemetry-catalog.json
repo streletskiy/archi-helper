@@ -13104,6 +13104,7 @@
     "library-parts-gdl",
     "mesh-creation-contract",
     "model-edit-verification",
+    "morph-face-surfaces",
     "python-workflow",
     "zone-stamp-area-label"
   ]
