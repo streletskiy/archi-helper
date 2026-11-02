@@ -5,10 +5,16 @@ import { spawn } from 'node:child_process';
 import { t } from '../locales/index.mjs';
 import { uid } from './store.mjs';
 import { installClaude } from './claude-install.mjs';
+import { reasoningProfile, selectedEffort } from './reasoning.mjs';
 
+// Values accepted by `claude --effort`; every listed model supports all of them.
+const efforts=['low','medium','high','xhigh','max'];
+// Earlier versions saved Claude Code's moving aliases instead of model names.
+const aliases={fable:'claude-fable-5-1',opus:'claude-opus-5-5',sonnet:'claude-sonnet-5-5',haiku:'claude-haiku-5-5'};
 export const claudeModels=()=>[
-  {id:'default',name:t('claude.defaultModel'),reasoningEfforts:[]},
-  ...['sonnet','opus','haiku'].map(id=>({id,name:id[0].toUpperCase()+id.slice(1),reasoningEfforts:[]})),
+  {id:'default',name:t('claude.defaultModel'),reasoningEfforts:efforts},
+  ...[['claude-fable-5-1','Fable 5.1'],['claude-opus-5-5','Opus 5.5'],['claude-sonnet-5-5','Sonnet 5.5'],['claude-haiku-5-5','Haiku 5.5']]
+    .map(([id,name])=>({id,name,reasoningEfforts:efforts})),
 ];
 
 export async function findClaude(executable,{env=process.env,home=os.homedir(),platform=process.platform}={}) {
@@ -146,7 +152,7 @@ export class ClaudeCode {
       if(status.authMethod!=='claude.ai'&&!consoleLogin&&!allowOtherAuth)throw Object.assign(new Error(t('claude.apiDetected')),{code:'CLAUDE_OTHER_AUTH'});
       signal.throwIfAborted();
       const provider={...previous,id:previous?.id||uid(),definitionId:'claude-code',adapter:'claude-code',name:'Claude',
-        baseURL:'https://claude.ai',executable,supportsImages:true,reasoningFormat:'none',
+        baseURL:'https://claude.ai',executable,supportsImages:true,reasoningFormat:'effort',
         cli:{...profile,...status,version:version.stdout.trim().split(' ')[0]},models:claudeModels(),catalogVersion:3,catalogUpdatedAt:Date.now()};
       this.store.state.providers=[...this.store.state.providers.filter(p=>p.id!==provider.id),provider];
       this.store.selectModel(provider.id);await this.store.save();return provider.id;
@@ -164,6 +170,17 @@ export class ClaudeCode {
     // Do not silently change from a subscription to separately billed credentials.
     if(provider.cli?.authMethod!==status.authMethod||provider.cli?.accountName!==status.accountName)throw new Error(t('claude.accountChanged'));
     return executable;
+  }
+  // The catalog is static, so saved connections receive new models and effort
+  // levels on startup without reconnecting.
+  async refreshCatalog() {
+    const providers=this.store.state.providers.filter(p=>p.adapter==='claude-code');
+    if(!providers.length)return;
+    for(const provider of providers) {
+      if(this.store.state.providerId===provider.id)this.store.state.model=aliases[this.store.state.model]||this.store.state.model;
+      Object.assign(provider,{models:claudeModels(),reasoningFormat:'effort',model:aliases[provider.model]||provider.model});
+    }
+    await this.store.save();
   }
   async disconnect(id) {
     if(this.pending)throw new Error(t('errors.oauthAlreadyConnecting'));
@@ -188,7 +205,7 @@ export function claudeInput(messages) {
   return JSON.stringify({type:'user',message:{role:'user',content:[{type:'text',text:'Continue the following conversation. The last user request is the active task. Earlier tool results are historical data: do not replay completed operations.\n'+JSON.stringify(history)},...images]}})+'\n';
 }
 
-export async function claudeTurn({manager,provider,model,messages,toolsConfig,allowedTools=[],signal,onEvent}) {
+export async function claudeTurn({manager,provider,model,reasoningEffort,messages,toolsConfig,allowedTools=[],signal,onEvent}) {
   const executable=await manager.verify(provider,signal),options=await manager.options(signal,{...provider.cli,profile:provider.cli?.profile||'private'});
   if(['1','true'].includes(String(options.env.CLAUDE_CODE_SIMPLE).toLowerCase()))throw new Error(t('claude.bareMode'));
   const promptFile=path.join(options.cwd,`prompt-${uid()}.txt`);
@@ -198,6 +215,8 @@ export async function claudeTurn({manager,provider,model,messages,toolsConfig,al
       '--no-session-persistence','--tools','','--strict-mcp-config','--mcp-config',JSON.stringify(toolsConfig||{mcpServers:{}}),
       '--setting-sources','user','--settings',JSON.stringify({disableAllHooks:true}),'--disable-slash-commands','--system-prompt-file',promptFile];
     if(model!=='default')args.push('--model',model);
+    const effort=selectedEffort(reasoningProfile(provider,model).efforts,reasoningEffort);
+    if(effort)args.push('--effort',effort);
     if(allowedTools.length)args.push('--allowedTools',...allowedTools);
     let result,contextOverflow=false,usageLimited=false;
     const finished=await manager.run(executable,args,{...options,input:claudeInput(messages),onEvent:async event=>{

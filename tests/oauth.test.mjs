@@ -70,6 +70,20 @@ test('Claude keeps the default CLI profile implicit so the signed-in account sta
   assert.deepEqual(overrides,[undefined,undefined,undefined]);
 });
 
+test('Claude connections saved with model aliases gain the current catalog and reasoning efforts on startup',async t=>{
+  const {store}=await fixture(t);
+  store.state.providers.push({id:'synthetic-claude',adapter:'claude-code',reasoningFormat:'none',model:'haiku',models:[{id:'haiku',name:'Haiku',reasoningEfforts:[]}],cli:{status:'connected'}},
+    {id:'synthetic-other',adapter:'openai-compatible',model:'haiku'});
+  store.state.providerId='synthetic-claude';store.state.model='haiku';
+  await new ClaudeCode(store).refreshCatalog();
+  const provider=store.getProvider('synthetic-claude');
+  assert.equal(provider.model,'claude-haiku-5-5');assert.equal(store.state.model,'claude-haiku-5-5');assert.equal(provider.reasoningFormat,'effort');
+  assert.deepEqual(provider.models.map(model=>model.id),['default','claude-fable-5-1','claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5']);
+  assert.ok(provider.models.every(model=>model.reasoningEfforts.join()==='low,medium,high,xhigh,max'));
+  assert.equal(store.getProvider('synthetic-other').model,'haiku');
+  assert.equal(JSON.parse(await fs.readFile(store.file,'utf8')).model,'claude-haiku-5-5');
+});
+
 test('Claude installs once when absent, starts official login only when needed, and reuses it on reconnect',async t=>{
   const {store}=await fixture(t);let installed=false,loggedIn=false,installs=0,logins=0;
   const manager=new ClaudeCode(store,{env:{},find:async()=>{if(!installed)throw Object.assign(new Error('missing'),{code:'CLAUDE_NOT_FOUND'});return '/synthetic/claude.exe';},
