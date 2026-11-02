@@ -5,6 +5,7 @@ const normalized=value=>String(value||'').normalize('NFKC').toLowerCase()
   .replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
 const recommended=[
   /(?:^|-)gpt-6-1-sol(?:-|$)/,
+  /(?:^|-)gpt-6-1-terra(?:-|$)/,
   /(?:^|-)(?:haiku-5-5|claude-5-5-haiku)(?:-|$)/,
   /(?:^|-)deepseek-(?:(?:v-)?4-1-flash|flash-(?:v-)?4-1)(?:-|$)/,
 ];

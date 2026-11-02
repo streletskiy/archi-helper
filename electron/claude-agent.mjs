@@ -7,7 +7,7 @@ import { claudeBridge } from './claude-bridge.mjs';
 import { claudeTurn } from './claude-code.mjs';
 import { compactSession,reduceContextLimit } from './context.mjs';
 
-export async function performClaudeTask(agent,session,{provider,model,mode,knowledge,text,attachments,tools},signal) {
+export async function performClaudeTask(agent,session,{provider,model,reasoningEffort,mode,knowledge,text,attachments,tools},signal) {
   const store=agent.store,workspace=await store.workspace(session.projectId,session.id);
   const catalog=await saveApiCatalog(agent.mcp,workspace),emit=e=>agent.emit({...e,sessionId:session.id});
   agent.selectedKnowledge=new Map(knowledge.map(entry=>[entry.id,entry]));
@@ -59,7 +59,7 @@ export async function performClaudeTask(agent,session,{provider,model,mode,knowl
     }),turnSignal);
     let failure;
     try {
-      const result=await claudeTurn({manager:store.claudeCode,provider,model,signal:turnSignal,
+      const result=await claudeTurn({manager:store.claudeCode,provider,model,reasoningEffort,signal:turnSignal,
         messages:[{role:'system',content:system},...(reference.text?[{role:'user',content:reference.text}]:[]),...history],
         toolsConfig:bridge.config,allowedTools:tools.map(tool=>`mcp__archi__${tool.function.name}`),
         onEvent:event=>enqueue(async()=>{
@@ -96,7 +96,7 @@ export async function performClaudeTask(agent,session,{provider,model,mode,knowl
         reduceContextLimit(session,provider,model,error);
         const complete=async(_provider,_model,messages,_tools,compactSignal)=>{
           let content='';
-          await claudeTurn({manager:store.claudeCode,provider,model,messages,signal:compactSignal,onEvent:async event=>{
+          await claudeTurn({manager:store.claudeCode,provider,model,reasoningEffort,messages,signal:compactSignal,onEvent:async event=>{
             if(event.type==='assistant'&&!event.error)content+=(event.message?.content||[]).filter(part=>part.type==='text').map(part=>part.text).join('');
           }});
           return {role:'assistant',content};
