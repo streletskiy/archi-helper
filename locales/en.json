@@ -452,6 +452,8 @@
   "errors.oauthRevocationUnavailable": "This provider has no revocation endpoint. Revoke access in its account settings.",
   "errors.oauthRevokeFailed": "Server revocation could not be confirmed. Access is disabled locally; retry disconnecting when online or revoke it in the provider account.",
   "errors.providerAdapterUnsupported": "This provider requires an API adapter that is not installed.",
+  "errors.geminiToolModelUnsupported": "This Gemini model does not support Archi Helper tools. Refresh the model list and choose a general-purpose Gemini Flash or Pro model; speech, image and other specialized models are not suitable.",
+  "errors.geminiQuotaExceeded": "Google Gemini has reached a rate limit or quota for this model. Check usage and billing at https://ai.dev/rate-limit, wait for the limit to reset, or choose another available model.",
   "ui.oauthBrowserComplete": "Return to Archi Helper to finish connecting. You can close this tab.",
   "ui.oauthConnectProvider": "Connect {name}",
   "ui.oauthReconnectProvider": "Reconnect {name}",

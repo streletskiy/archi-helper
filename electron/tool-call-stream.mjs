@@ -28,9 +28,16 @@ export function toolCallStream() {
       if(fragment.function?.name)call.function.name+=fragment.function.name;
       if(fragment.function?.arguments!==undefined&&fragment.function.arguments!==null)
         call.function.arguments+=argumentText(fragment.function.arguments);
+      if(fragment.extra_content)call.extra_content=mergeExtraContent(call.extra_content,fragment.extra_content);
       calls.set(key,call);
     }
   };
+}
+
+// Gemini sends opaque thought signatures as metadata, sometimes after the call's
+// arguments. Merge metadata without concatenating or moving signatures between calls.
+export function mergeExtraContent(previous,next) {
+  return {...previous,...next,...(next.google?{google:{...previous?.google,...next.google}}:{})};
 }
 
 export function argumentText(value) {

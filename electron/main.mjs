@@ -217,8 +217,9 @@ const handlers={
     provider.models=list;
     provider.catalogVersion=3;provider.catalogUpdatedAt=Date.now();
     const accountCatalog=providerDefinitions.find(d=>d.id===provider.definitionId)?.accountCatalog;
-    if(!provider.model||(accountCatalog&&!list.some(m=>m.id===provider.model)))provider.model=list[0]?.id||'';
-    if(store.state.providerId===id&&(!store.state.model||accountCatalog))store.state.model=provider.model;
+    const strictCatalog=accountCatalog||new URL(p.baseURL).hostname==='generativelanguage.googleapis.com';
+    if(!provider.model||(strictCatalog&&!list.some(m=>m.id===provider.model)))provider.model=list[0]?.id||'';
+    if(store.state.providerId===id&&(!store.state.model||strictCatalog))store.state.model=provider.model;
     await store.save();return list;
   },
   settings:async input=>{

@@ -219,6 +219,60 @@ test('compatible streams route interleaved fragments and reject ambiguous contin
   await assert.rejects(run(),/ambiguous|однозначно/);
 });
 
+test('Gemini replays streamed and JSON thought signatures on their original calls after history reload',async t=>{
+  const gemini={id:'synthetic-gemini',baseURL:'https://generativelanguage.googleapis.com/v1beta/openai'};
+  const model='gemini-3.5-flash',signature={google:{thought_signature:'synthetic-call-signature'}};
+  const textSignature={google:{thought_signature:'synthetic-text-signature'}};
+  const calls=[{id:'a',type:'function',function:{name:'read_file',arguments:'{"path":"synthetic-a.txt"}'},extra_content:signature},
+    {id:'b',type:'function',function:{name:'read_file',arguments:'{"path":"synthetic-b.txt"}'}}];
+  let streamed=true,seen=[];
+  mock(t,async(_url,init)=>{
+    seen.push(JSON.parse(init.body));
+    return streamed?stream([
+      {choices:[{delta:{content:'Synthetic response',tool_calls:calls.map(({extra_content,...call})=>({...call,index:0}))}}]},
+      {choices:[{delta:{tool_calls:[{id:'a',index:0,extra_content:signature}]}}]},
+      {choices:[{delta:{extra_content:textSignature},finish_reason:'tool_calls'}]}
+    ]):Response.json({choices:[{message:{content:'Synthetic response',extra_content:textSignature,tool_calls:calls},finish_reason:'tool_calls'}]});
+  });
+  for(streamed of [true,false]) {
+    const result=await completion(gemini,model,[],tools,undefined,()=>{});
+    const reloaded=JSON.parse(JSON.stringify(result));
+    const history=[reloaded,...calls.map(call=>({role:'tool',tool_call_id:call.id,content:'Synthetic result'}))];
+    await completion(gemini,model,history,tools,undefined,()=>{});
+    const replay=seen.at(-1).messages[0];
+    assert.deepEqual(replay.tool_calls,calls);assert.deepEqual(replay.extra_content,textSignature);
+    assert.equal(replay._chatBinding,undefined);
+    const switched=requestMessages({...gemini,baseURL:'https://synthetic.example'},model,history);
+    assert.doesNotMatch(JSON.stringify(switched),/synthetic-(call|text)-signature|skip_thought_signature_validator/);
+    const anotherModel=requestMessages(gemini,'gemini-3.1-pro-preview',history)[0];
+    assert.equal(anotherModel.extra_content,undefined);
+    assert.equal(anotherModel.tool_calls[0].extra_content.google.thought_signature,'skip_thought_signature_validator');
+    assert.equal(anotherModel.tool_calls[1].extra_content,undefined);
+  }
+  const legacy={role:'assistant',content:null,tool_calls:calls.map(({extra_content,...call})=>call)};
+  assert.equal(requestMessages(gemini,model,[legacy])[0].tool_calls[0].extra_content.google.thought_signature,'skip_thought_signature_validator');
+  assert.equal(legacy.tool_calls[0].extra_content,undefined);
+});
+
+test('Gemini discovery excludes specialized models and rejects saved incompatible selections before sending',async t=>{
+  const gemini={baseURL:'https://generativelanguage.googleapis.com/v1beta/openai'};let requests=0;
+  const ids=['models/gemini-3.5-flash','gemini-3.1-pro-preview','gemini-3.5-flash-lite',
+    'models/gemini-3.8-flash-lite-tts','gemini-2.5-flash-native-audio-preview','gemini-3-pro-image-preview',
+    'gemini-2.5-computer-use-preview','gemini-3.5-transcribe','antigravity-preview-09-2026','gemma-3-27b-it','text-embedding-004'];
+  mock(t,async()=>{requests++;return Response.json({data:ids.map(id=>({id,contextWindow:1000000,outputWindow:8192}))});});
+  assert.deepEqual((await models(gemini)).map(m=>m.id).sort(),ids.slice(0,3).sort());
+  for(const id of ids.slice(3))await assert.rejects(completion(gemini,id,[],tools,undefined,()=>{}),/Gemini Flash/);
+  assert.equal(requests,1);
+});
+
+test('Gemini array-wrapped quota errors preserve status and explain the provider limit without retrying',async t=>{
+  let requests=0;
+  mock(t,async()=>{requests++;return Response.json([{error:{code:429,message:'synthetic-key',status:'RESOURCE_EXHAUSTED'}}],{status:429});});
+  await assert.rejects(completion({baseURL:'https://generativelanguage.googleapis.com/v1beta/openai',apiKey:'synthetic-key'},
+    'gemini-3.5-flash',[],tools,undefined,()=>{}),error=>error.status===429&&error.code===429&&!error.contextOverflow&&/https:\/\/ai.dev\/rate-limit/.test(error.message)&&!error.message.includes('synthetic-key'));
+  assert.equal(requests,1);
+});
+
 test('Responses sends stateless history, images and namespaced tools, and replays complete reasoning with tool outputs',async t=>{
   let body,usage;
   mock(t,async(url,init)=>{assert.equal(url,'https://api.openai.com/v1/responses');body=JSON.parse(init.body);return stream([
