@@ -5,13 +5,23 @@ import crypto from 'node:crypto';
 import { providerDefinition } from './provider-definitions.mjs';
 import { responsesCompletion } from './provider-responses.mjs';
 import { appFetch } from './network.mjs';
-import { argumentText, toolCallStream } from './tool-call-stream.mjs';
+import { argumentText, toolCallStream, mergeExtraContent } from './tool-call-stream.mjs';
 import { modelOutputLimit } from './model-limits.mjs';
 import { currentObservation } from './telemetry-context.mjs';
 const noStreamUsage=new Set();
 const activeCredentials=new WeakMap();
+const chatBinding=(provider,model)=>JSON.stringify([provider.id||'',provider.baseURL,model]);
+const isGemini=provider=>new URL(provider.baseURL).hostname==='generativelanguage.googleapis.com';
+function geminiToolModel(model) {
+  const id=String(model.id||model.name||model).replace(/^models\//,'');
+  return /^gemini-/i.test(id)&&!/(?:^|-)(?:tts|image|audio|live|embedding|robotics|computer-use|transcribe|translate)(?:-|$)/i.test(id)
+    &&(!Array.isArray(model.supportedGenerationMethods)||model.supportedGenerationMethods.includes('generateContent'));
+}
+function chatResult(provider,model,message) {
+  return {...message,_chatBinding:chatBinding(provider,model)};
+}
 function providerError(provider,status,text) {
-  let detail;try{const body=JSON.parse(text);detail=body.error||body;}catch{}
+  let detail;try{let body=JSON.parse(text);if(Array.isArray(body))body=body[0];detail=body?.error||body;}catch{}
   const code=detail?.code;
   const planError={subscription_sharing_usage_limit_exceeded:'errors.planUsageLimit',subscription_sharing_usage_unavailable:'errors.planUsageUnavailable',
     subscription_sharing_user_unavailable:'errors.planUsageUnavailable',subscription_sharing_user_not_eligible:'errors.planNotEligible',
@@ -20,6 +30,10 @@ function providerError(provider,status,text) {
   if(planError&&providerDefinition(provider)?.manageUsageURL)text=t(planError);
   else if(typeof detail?.message==='string'&&detail.message.trim())text=detail.message;
   else if(typeof detail==='string'&&detail.trim())text=detail;
+  if(isGemini(provider)) {
+    if(status===429)text=t('errors.geminiQuotaExceeded');
+    else if(/function calling is not enabled/i.test(text))text=t('errors.geminiToolModelUnsupported');
+  }
   for(const secret of [provider.apiKey,...(activeCredentials.get(provider)||[])])if(secret)text=text.replaceAll(secret,t('errors.redacted'));
   text=text.slice(0,1500);
   const error=new Error(status?t('errors.providerHttp',{value0:status,value1:text}):text);
@@ -83,7 +97,7 @@ export async function models(provider) {
   }
   const items = data.data || data.models;
   if (!Array.isArray(items)) throw new Error(t('errors.theProviderReturnedAnInvalidModelList'));
-  const list=items.map(modelInfo).filter(m=>m.id);
+  const list=items.filter(model=>!isGemini(provider)||geminiToolModel(model)).map(modelInfo).filter(m=>m.id);
   const metadata=providerDefinition(provider)?.catalog;
   if(metadata) {
     try {
@@ -103,7 +117,16 @@ export async function models(provider) {
 export function requestMessages(provider,model,messages) {
   // Reasoning state is provider-specific; never carry it into a different provider.
   const format=reasoningProfile(provider,model).format;
-  return messages.map(({_attachment,_checkpoint,_responseItems,_responseBinding,reasoning_content,reasoning_details,...message})=>({...message,...(format==='deepseek'&&message.role==='assistant'?{reasoning_content:reasoning_content||''}:{}),...(format==='openrouter'&&reasoning_details?{reasoning_details}:{})}));
+  return messages.map(({_attachment,_checkpoint,_responseItems,_responseBinding,_chatBinding,extra_content,tool_calls,reasoning_content,reasoning_details,...message})=>{
+    const sameBinding=_chatBinding===chatBinding(provider,model);
+    // Older histories lost signatures, and another model cannot supply this model's
+    // reasoning state. Google's migration sentinel allows those histories to resume.
+    // Fresh responses from this model must always replay their actual signatures.
+    const legacySignature=!sameBinding&&isGemini(provider);
+    return {...message,...(sameBinding&&extra_content?{extra_content}:{}),...(tool_calls?{tool_calls:tool_calls.map(({extra_content,...call},index)=>({...call,
+      ...(sameBinding&&extra_content?{extra_content}:legacySignature&&index===0?{extra_content:{google:{thought_signature:'skip_thought_signature_validator'}}}:{})}))}:{}),
+      ...(format==='deepseek'&&message.role==='assistant'?{reasoning_content:reasoning_content||''}:{}),...(format==='openrouter'&&reasoning_details?{reasoning_details}:{})};
+  });
 }
 export async function completion(provider, model, messages, tools, signal, onDelta, effort='xhigh', onUsage=()=>{}) {
   const measurement=currentObservation()?.generation(provider,model);let failure;
@@ -113,6 +136,7 @@ export async function completion(provider, model, messages, tools, signal, onDel
 }
 async function completeRequest(provider, model, messages, tools, signal, onDelta, effort, onUsage) {
   if(provider.adapter==='openai-responses')return responsesCompletion(provider,model,messages,tools,signal,onDelta,effort,onUsage,api,providerError);
+  if(tools.length&&isGemini(provider)&&!geminiToolModel(model))throw new Error(t('errors.geminiToolModelUnsupported'));
   const body={model,messages:requestMessages(provider,model,messages),stream:true,...reasoningOptions(provider,model,effort),...(tools.length?{tools,tool_choice:'auto'}:{})};
   const output=tools.length?modelOutputLimit(provider,model,messages,tools):undefined;
   if(output)body[new URL(provider.baseURL).hostname==='api.openai.com'?'max_completion_tokens':'max_tokens']=output;
@@ -131,9 +155,9 @@ async function completeRequest(provider, model, messages, tools, signal, onDelta
     if(body.usage)onUsage(body.usage);
     checkResponseLength(body.choices?.[0]?.finish_reason);
     const m=body.choices?.[0]?.message; if(!m) throw new Error(t('errors.theProviderResponseContainsNoMessage'));
-    if(m.content)onDelta(m.content); return { role:'assistant', content:m.content || null, ...(m.reasoning_content!==undefined?{reasoning_content:m.reasoning_content}:{}),...(m.reasoning_details?{reasoning_details:m.reasoning_details}:{}),...(m.tool_calls?.length?{tool_calls:completeCalls(m.tool_calls)}:{}) };
+    if(m.content)onDelta(m.content); return chatResult(provider,model,{ role:'assistant', content:m.content || null, ...(m.extra_content?{extra_content:m.extra_content}:{}),...(m.reasoning_content!==undefined?{reasoning_content:m.reasoning_content}:{}),...(m.reasoning_details?{reasoning_details:m.reasoning_details}:{}),...(m.tool_calls?.length?{tool_calls:completeCalls(m.tool_calls)}:{}) });
   }
-  const decoder=new TextDecoder(); let pending='', content='', reasoning='', finishReason, done=false, dataLines=[]; const calls=toolCallStream(), reasoningDetails=new Map();
+  const decoder=new TextDecoder(); let pending='', content='', reasoning='', extraContent, finishReason, done=false, dataLines=[]; const calls=toolCallStream(), reasoningDetails=new Map();
   const event = block => {
     const data=block.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');
     if(!data) return; if(data==='[DONE]'){done=true;return;}
@@ -143,6 +167,7 @@ async function completeRequest(provider, model, messages, tools, signal, onDelta
     if(parsed.usage)onUsage(parsed.usage);
     const choice=parsed.choices?.[0]; if(choice?.finish_reason)finishReason=choice.finish_reason;
     const delta=choice?.delta; if(!delta)return;
+    if(delta.extra_content)extraContent=mergeExtraContent(extraContent,delta.extra_content);
     if(typeof delta.reasoning_content==='string')reasoning+=delta.reasoning_content;
     for(const detail of delta.reasoning_details||[]) {
       const key=detail.index??detail.id??reasoningDetails.size, previous=reasoningDetails.get(key)||{};
@@ -166,5 +191,5 @@ async function completeRequest(provider, model, messages, tools, signal, onDelta
   if(!done && !finishReason)throw new Error(t('errors.theModelConnectionWasInterruptedIncompleteTool'));
   checkResponseLength(finishReason);
   const tool_calls=completeCalls([...calls.values()]);
-  return {role:'assistant',content:content||null,...(reasoning?{reasoning_content:reasoning}:{}),...(reasoningDetails.size?{reasoning_details:[...reasoningDetails.values()]}:{}),...(tool_calls.length?{tool_calls}:{})};
+  return chatResult(provider,model,{role:'assistant',content:content||null,...(extraContent?{extra_content:extraContent}:{}),...(reasoning?{reasoning_content:reasoning}:{}),...(reasoningDetails.size?{reasoning_details:[...reasoningDetails.values()]}:{}),...(tool_calls.length?{tool_calls}:{})});
 }
