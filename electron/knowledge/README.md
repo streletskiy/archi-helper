@@ -12,6 +12,7 @@
 | [Python](common/python-workflow.md) · `python-workflow` | Работа с SDK и зависимостями | Точные сигнатуры, отдельная среда |
 | [Библиотечные элементы и GDL](common/library-parts-gdl.md) · `library-parts-gdl` | Окна, библиотечные части, материалы и параметры GDL | Точная схема, тип значения, поэлементный результат и чтение после изменения |
 | [Пакетные изменения и геометрия](common/model-edit-verification.md) · `model-edit-verification` | Создание элементов и атрибутов, перекрытия, Morph и частичные сбои | Снимок состояния, проверка каждой записи, чтение после изменения и ограниченный повтор |
+| [Обрезка крышей или оболочкой](common/roof-shell-trim-contract.md) · `roof-shell-trim-contract` | Применение, чтение или снятие связи обрезки | Сверка схемы, направления связи и результата каждой операции |
 | [Рельеф Mesh](common/mesh-creation-contract.md) · `mesh-creation-contract` | Подготовка JSON для CreateMeshes | Текущая схема; геометрия требует отдельной проверки |
 | [Пересечение с гранью](common/geometry-boundary-checks.md) · `geometry-boundary-checks` | Граница, промах или допуск локального расчёта | Исходная точка, явная классификация и проверка граничных случаев |
 | [Назначение слоя](common/layer-assignment-verification.md) · `layer-assignment-verification` | Смена layerIndex и ошибка блокировки | Каталог индексов, состояния обоих слоёв и обратное чтение |
