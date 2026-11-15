@@ -6,7 +6,7 @@ kind: "skill"
 activation: "auto"
 enabled: true
 tags: ["gdl","library","window","окно","библиотека","материал","поверхность"]
-triggers: ["gdl","library","window","окно","окон","остекл","библиотеч","материал","поверхност","CreateWindows","ModifyWindows","GetAvailableLibraryParts","GetGDLParametersOfElements","SetGDLParametersOfElements"]
+triggers: ["gdl","library","window","окно","окон","остекл","библиотеч","материал","поверхност","CreateWindows","ModifyWindows","GetAvailableLibraryParts","GetFavoritesByType","favoriteName","libraryPartName","GetGDLParametersOfElements","SetGDLParametersOfElements"]
 related: ["archicad-capabilities","python-workflow"]
 ---
 
@@ -20,6 +20,20 @@ related: ["archicad-capabilities","python-workflow"]
 2. Ответ содержит `libraryParts` и `skippedCount`. Пустой массив вместе с пропущенными записями не доказывает отсутствия библиотеки. Учитывайте частичное покрытие и не придумывайте GUID библиотечных частей.
 3. Для существующего элемента вызовите `GetGDLParametersOfElements` с `elements`. Сначала снимите оболочку MCP: используйте `structuredContent`, иначе декодируйте JSON из текстового содержимого. Внутри ответа команды массив называется `gdlParametersOfElements`, а список параметров элемента — `parameters`. Ошибка `KeyError` может означать, что прочитана оболочка, а не отсутствие поля у команды.
 4. Прочитайте `name`, `type`, `value`, `isLocked`, допустимые значения и ограничения конкретного параметра. Не заменяйте техническое имя локализованным `displayName` и не переносите имена параметров между разными библиотечными частями без проверки.
+
+## Выбрать исходные настройки окна при создании
+
+В `CreateWindows` каждая запись `windowsData` содержит `ownerWallId` как объект с `guid` и неотрицательный `centerOffset`. Если пользователь указал избранное, вызовите `GetFavoritesByType` с `elementType="Window"` и передайте точное имя из `favorites[]` в `favoriteName`. Для выбора библиотечной части возьмите `libraryParts[].documentName` из `GetAvailableLibraryParts` с `filterByTypeId="Window"` и передайте его в `libraryPartName`. Этому полю нужен локализованный `docu_UName`. `fileName` и GUID для выбора по этому полю не подходят. Передавайте только поле выбранного способа.
+
+Явно синтетический запрос с именем из синтетического списка избранного.
+
+```json
+{"windowsData":[{"ownerWallId":{"guid":"00000000-0000-4000-8000-000000000001"},"centerOffset":1.5,"favoriteName":"Synthetic Window Preset"}]}
+```
+
+Создавайте окно в разрешённом режиме и начните с одной записи. В ответе команды проверьте `elements[]`: в записи возвращается `elementId` либо `error`. После получения ID прочитайте созданный элемент и проверьте размеры, размещение и требуемые GDL-параметры. При частичном или неизвестном исходе сверяйте уже созданные окна в стенах до повтора. Если поиск имени не дал однозначного результата, уточните выбор до создания.
+
+Проверены поставляемые схемы, включая схему `CreateWindows` версии `1.4.0`, и синтетический JSON. Соответствие `documentName` полю `docu_UName` сверено в исходниках Tapir 1.8.0. Применение избранного и геометрия в PLN в этой проверке не оценивались. [Исходник инвентаризации библиотечных частей](https://github.com/ENZYME-APD/tapir-archicad-automation/blob/1.8.0/archicad-addon/Sources/LibraryPartCommands.cpp)
 
 ## Изменить и проверить
 
