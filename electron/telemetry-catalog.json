@@ -13105,7 +13105,9 @@
     "mesh-creation-contract",
     "model-edit-verification",
     "morph-face-surfaces",
+    "object-rotation-contract",
     "python-workflow",
+    "roof-shell-trim-contract",
     "wall-visibility-readback",
     "zone-stamp-area-label"
   ]
