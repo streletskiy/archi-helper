@@ -13097,6 +13097,7 @@
     "ac27-capabilities",
     "api-modal-recovery",
     "archicad-capabilities",
+    "drawing-placement-contract",
     "geometry-boundary-checks",
     "interactive-schedules",
     "layer-assignment-verification",
@@ -13108,6 +13109,7 @@
     "object-rotation-contract",
     "python-workflow",
     "roof-shell-trim-contract",
+    "view-map-creation-contract",
     "wall-visibility-readback",
     "zone-stamp-area-label"
   ]
