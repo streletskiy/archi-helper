@@ -13108,6 +13108,7 @@
     "object-rotation-contract",
     "python-workflow",
     "roof-shell-trim-contract",
+    "view-map-creation-contract",
     "wall-visibility-readback",
     "zone-stamp-area-label"
   ]

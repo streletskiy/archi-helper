@@ -7,6 +7,7 @@
 | [Надпись площади в штампе зоны](common/zone-stamp-area-label.md) · `zone-stamp-area-label` | Согласованная надпись без изменения расчётной площади | Явное одобрение, проверка штампа, проба на одной зоне |
 | [Интерактивные каталоги](common/interactive-schedules.md) · `interactive-schedules` | Данные, ячейки или настройки спецификации | Проверка API текущей версии |
 | [Маршруты API](common/archicad-capabilities.md) · `archicad-capabilities` | Навигатор, databaseId, фильтр деталей элементов, результаты MCP | Сверка текущей схемы |
+| [Создание и клонирование видов](common/view-map-creation-contract.md) · `view-map-creation-contract` | Работа с Картой видов | Папка назначения, проверка `navigatorItems` и повторное чтение дерева |
 | [Модальный диалог и JSON API](common/api-modal-recovery.md) · `api-modal-recovery` | Invalid program status с сообщением об открытом диалоге | Завершение диалога и повторное чтение; состояние изменений проверять отдельно |
 | [Аудит макетов](common/layout-audit.md) · `layout-audit` | Комплект, Publisher, PDF | Раздельный учёт покрытия |
 | [Python](common/python-workflow.md) · `python-workflow` | Работа с SDK и зависимостями | Точные сигнатуры, отдельная среда |
