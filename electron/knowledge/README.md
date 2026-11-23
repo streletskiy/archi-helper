@@ -10,6 +10,7 @@
 | [Создание и клонирование видов](common/view-map-creation-contract.md) · `view-map-creation-contract` | Работа с Картой видов | Папка назначения, проверка `navigatorItems` и повторное чтение дерева |
 | [Модальный диалог и JSON API](common/api-modal-recovery.md) · `api-modal-recovery` | Invalid program status с сообщением об открытом диалоге | Завершение диалога и повторное чтение; состояние изменений проверять отдельно |
 | [Аудит макетов](common/layout-audit.md) · `layout-audit` | Комплект, Publisher, PDF | Раздельный учёт покрытия |
+| [Размещение чертежа на макете](common/drawing-placement-contract.md) · `drawing-placement-contract` | Подготовка запроса CreateDrawings | Источник, база назначения и параметры масштаба |
 | [Python](common/python-workflow.md) · `python-workflow` | Работа с SDK и зависимостями | Точные сигнатуры, отдельная среда |
 | [Библиотечные элементы и GDL](common/library-parts-gdl.md) · `library-parts-gdl` | Окна, библиотечные части, материалы и параметры GDL | Точная схема, тип значения, поэлементный результат и чтение после изменения |
 | [Поворот библиотечного объекта](common/object-rotation-contract.md) · `object-rotation-contract` | Установка и проверка угла Object | Радианы, исходный угол и повторное чтение |
