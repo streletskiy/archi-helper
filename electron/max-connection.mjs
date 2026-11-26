@@ -7,7 +7,7 @@ import {promisify} from 'node:util';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {MCP} from './mcp.mjs';
 import {maxCommands,maxMcpVersion,maxYear} from './max-catalog.mjs';
-import {projectPath} from './store.mjs';
+import {imageFile,projectPath} from './store.mjs';
 import {validatePng} from './png-validation.mjs';
 import {resultData} from './progress.mjs';
 import {t} from '../locales/index.mjs';
@@ -146,9 +146,10 @@ export class MaxConnection {
 export async function saveMaxViewport(data,root) {
   const temp=await fs.realpath(os.tmpdir()),source=await fs.realpath(data?.file||data?.result?.file||'');
   const relative=path.relative(temp,source);
-  if(!relative||relative.startsWith('..')||path.isAbsolute(relative)||path.extname(relative).toLowerCase()!=='.png')throw new Error(t('max.imageError'));
-  const stat=await fs.stat(source);if(!stat.isFile()||stat.size>12*1024*1024)throw new Error(t('max.imageError'));
-  const bytes=await fs.readFile(source);validatePng(bytes);
+  const capture=relative.split(path.sep).join('/');
+  if(!/^(?:3dsmax_mcp_multiview_\d+_\d+_\d+|3dsmax-mcp\/viewport_[0-9a-f]{32})\.png$/i.test(capture))throw new Error(t('max.imageError'));
+  const {data:bytes}=await imageFile(temp,relative);
+  validatePng(bytes);
   const imagePath='.archi/images/'+crypto.randomUUID()+'.png';
   const destination=await projectPath(root,imagePath);
   await fs.mkdir(path.dirname(destination),{recursive:true});
