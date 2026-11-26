@@ -107,7 +107,7 @@ export function toolDiagnostic(name,args,result,error,{failed=false,unknown=fals
     if(exceptions.has(exception)){diagnostic.exception_type=exception;if(diagnostic.kind==='tool_failure')diagnostic.kind='python_exception';}
     diagnostic.fields=[...text.matchAll(/['"]([A-Za-z_$][A-Za-z0-9_$]*)['"]/g)].map(match=>match[1]).filter(safeField);
   }
-  if(name==='call_archicad')diagnostic.input_shape=shape(args?.arguments||{});
+  if(['call_archicad','call_3dsmax'].includes(name))diagnostic.input_shape=shape(args?.arguments||{});
   if(data!==undefined)diagnostic.response_shape=shape(data);
   if(name==='run_python'&&result?.apiObservation){
     const observation=sanitizePythonObservation(result.apiObservation);

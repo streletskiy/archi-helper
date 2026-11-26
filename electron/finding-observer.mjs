@@ -1,12 +1,13 @@
+import {maxCommands,maxReadCommands} from './max-catalog.mjs';
 import {resultData} from './progress.mjs';
 import {sanitizeFindingEvidence} from './finding-schema.mjs';
 import {toolDiagnostic,sanitizePythonObservation} from './tool-diagnostics.mjs';
 import catalog from './telemetry-catalog.json' with {type:'json'};
 import publicFields from './telemetry-diagnostic-fields.json' with {type:'json'};
 
-const commands=new Set(catalog.commands);
+const commands=new Set([...catalog.commands,...maxCommands]);
 const fields=new Set(publicFields),assignmentCommands=new Set(['ModifyMorphs','ModifySlabs','ModifyRoofs']);
-export const findingEnvironment=connection=>JSON.stringify([connection?.archicad_version,connection?.archicad_build,connection?.tapir_installed]);
+export const findingEnvironment=connection=>JSON.stringify([connection?.archicad_version,connection?.archicad_build,connection?.tapir_installed,connection?.max_year,connection?.max_bridge,connection?.max_target]);
 const successful=item=>item.success===true&&item.status!=='unknown';
 export function matchFindingSteps(steps,trace) {
   const matched=[];let cursor=trace.length;
@@ -102,14 +103,14 @@ export class FindingRecorder {
     if(name==='save_finding')return;
     this.connection(connection);
     const unknown=result?.outcomeUnknown===true||['AbortError','TimeoutError'].includes(error?.name);
-    const diagnostic=['call_archicad','run_python'].includes(name)?toolDiagnostic(name,args,result,error,{failed:!!error||result?.isError===true,
+    const diagnostic=['call_archicad','call_3dsmax','run_python'].includes(name)?toolDiagnostic(name,args,result,error,{failed:!!error||result?.isError===true,
       unknown}):undefined;
-    const command=name==='call_archicad'?String(args?.name).replace(/^archicad:/,''):undefined;
+    const command=name==='call_3dsmax'?args?.name:name==='call_archicad'?String(args?.name).replace(/^archicad:/,''):undefined;
     const api=name==='run_python'&&result?.apiObservation?sanitizePythonObservation(result.apiObservation):undefined;
     const apiFailed=api?.calls.some(call=>call.diagnostic.kind!=='completed'),apiUnknown=api?.truncated||api?.calls.some(call=>call.diagnostic.kind==='unknown_outcome');
     const record={tool:name,...(commands.has(command)?{command}:{}),index,success:!error&&!result?.isError&&!unknown&&!apiFailed&&!apiUnknown,
       status:unknown||apiUnknown?'unknown':error||result?.isError||apiFailed?'error':'done',diagnostic,
-      ...(reference?{source:reference}:{}),readOnly:tools.find(tool=>tool.name===command||tool.key===args?.name)?.annotations?.readOnlyHint===true,
+      ...(reference?{source:reference}:{}),readOnly:name==='call_3dsmax'?maxReadCommands.includes(command):tools.find(tool=>tool.name===command||tool.key===args?.name)?.annotations?.readOnlyHint===true,
       targets:targets(args?.arguments)};
     if(name==='call_archicad'&&record.success)targets(resultData(result),record.targets);
     if(record.success&&record.targets.size===1&&!record.targets.incomplete) {
@@ -118,7 +119,7 @@ export class FindingRecorder {
       if(command==='GetDetailsOfElements'&&Array.isArray(details)&&details.length===1)record.actual=scalarFields(details[0]?.details);
     }
     this.trace.push(record);
-    if(name==='call_archicad'&&commands.has(command)||name==='run_python'&&!api?.calls.length)await this.checkpoint(record,connection);
+    if(['call_archicad','call_3dsmax'].includes(name)&&commands.has(command)||name==='run_python'&&!api?.calls.length)await this.checkpoint(record,connection);
     if(api)for(const [offset,call] of api.calls.entries()) {
       const bad=call.diagnostic.kind!=='completed';
       const item={tool:name,command:call.command,index:index+(offset+1)/100,diagnostic:call.diagnostic,
@@ -139,7 +140,7 @@ export class FindingRecorder {
     state.id=saved.id;
   }
   async checkpoint(item,connection) {
-    if(!connection?.archicad_version||!connection?.archicad_build||!connection?.tapir_installed)return;
+    if(item.tool==='call_3dsmax'?!connection?.max_year:(!connection?.archicad_version||!connection?.archicad_build||!connection?.tapir_installed))return;
     const key=`${item.tool}:${item.command||''}`;
     if(item.status!=='done') {
       const kind=item.diagnostic?.kind||'tool_failure';

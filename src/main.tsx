@@ -31,18 +31,19 @@ type Model={id:string;name:string;reasoningEfforts?:string[];contextWindow?:numb
 type Provider={id:string;name:string;baseURL:string;hasKey:boolean;definitionId?:string;cli?:{status:string;authMethod:string;accountName:string;subscriptionType?:string};oauth?:{status:string;accountName:string;planEnabled?:boolean};catalogVersion?:number;catalogUpdatedAt?:number;models:Model[];supportsImages?:boolean;reasoningFormat?:string;reasoningEfforts?:string[]};
 type Message={id:string;role:string;text:string;at?:number;usageAction?:string;name?:string;status?:string;summary?:string;args?:unknown;artifact?:{path:string;bytes:number};model?:string};
 type QueuedMessage={id:string;text:string;attachments:string[];knowledge?:KnowledgeSelection[];model:string;delivery:'queue'|'steer'};
-type Session={id:string;title:string;messages:Message[];updatedAt:number;archivedAt?:number;count?:number;pendingMessages?:QueuedMessage[];queuePaused?:boolean};
+type MaxInstance={pid:number;year:number;started:string;ready:boolean;title?:string};
+type Session={id:string;maxTarget?:string;title:string;messages:Message[];updatedAt:number;archivedAt?:number;count?:number;pendingMessages?:QueuedMessage[];queuePaused?:boolean};
 type SessionGroup={projectId:string;sessions:Session[];error?:string};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
 type TapirDownloadProgress={status:'checking'|'downloading'|'verifying'|'installing'|'launched'|'error';version:string;percent:number;transferred:number;total:number;bytesPerSecond:number;message:string};
-type State={claudeProgress?:ClaudeProgress|null;telemetry?:TelemetryState;showToolDetails?:boolean;theme?:ThemeMode;onboardingVersion?:number;appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
+type State={claudeProgress?:ClaudeProgress|null;telemetry?:TelemetryState;showToolDetails?:boolean;theme?:ThemeMode;onboardingVersion?:number;appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;maxConnection?:{status:'searching'|'offline'|'restart'|'unsupported'|'connected'|'error';instances:MaxInstance[]};toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
 const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',definitionId:p.definitionId||'',cli:p.cli,oauth:p.oauth,supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
 const emptyProvider=()=>({id:'',name:'',baseURL:'',apiKey:'',definitionId:'',cli:undefined as Provider['cli'],oauth:undefined as Provider['oauth'],supportsImages:false,reasoningFormat:'auto',reasoningEfforts:''});
 const effortLabel=(value:string)=>t(({none:'ui.reasoningNone',minimal:'ui.reasoningMinimal',low:'ui.reasoningLow',medium:'ui.reasoningMedium',high:'ui.reasoningHigh',xhigh:'ui.reasoningXhigh',max:'ui.reasoningMax',ultra:'ui.reasoningUltra'} as const)[value as 'xhigh']);
 const api=(method:string,input?:unknown)=>window.archi.call(method,input);
 const pretty=(v:unknown)=>typeof v==='string'?v:JSON.stringify(v,null,2);
 const bytes=(n:number)=>n>1048576?t('ui.mb',{value0:(n/1048576).toFixed(1)}):n>1024?t('ui.kb',{value0:Math.round(n/1024)}):t('ui.b',{value0:n});
-const labels=():Record<string,string>=>({get_project_overview:t('operations.name.get_project_overview'),capture_view:t('operations.name.capture_view'),inspect_elements:t('operations.name.inspect_elements'),export_layout_package:t('operations.name.export_layout_package'),audit_layout_text:t('operations.name.audit_layout_text'),apply_change_plan:t('operations.name.apply_change_plan'),get_knowledge:t('ui.knowledge'),get_api_catalog:t('ui.apiCatalog'),export_layouts_pdf:t('ui.exportLayoutsPdf'),find_tools:t('ui.findTools'),call_archicad:t('ui.archicadCommand'),list_files:t('ui.projectFiles'),read_file:t('ui.readResult'),view_image:t('ui.viewImage'),write_file:t('ui.saveFile'),run_python:t('ui.processData')});
+const labels=():Record<string,string>=>({find_max_tools:t('max.tools'),call_3dsmax:'3ds Max',get_project_overview:t('operations.name.get_project_overview'),capture_view:t('operations.name.capture_view'),inspect_elements:t('operations.name.inspect_elements'),export_layout_package:t('operations.name.export_layout_package'),audit_layout_text:t('operations.name.audit_layout_text'),apply_change_plan:t('operations.name.apply_change_plan'),get_knowledge:t('ui.knowledge'),get_api_catalog:t('ui.apiCatalog'),export_layouts_pdf:t('ui.exportLayoutsPdf'),find_tools:t('ui.findTools'),call_archicad:t('ui.archicadCommand'),list_files:t('ui.projectFiles'),read_file:t('ui.readResult'),view_image:t('ui.viewImage'),write_file:t('ui.saveFile'),run_python:t('ui.processData')});
 function IconButton({title,onClick,children,disabled=false}:{title:string;onClick:()=>void;children:React.ReactNode;disabled?:boolean}) {
   return <button className="icon-button" title={title} aria-label={title} onClick={onClick} disabled={disabled}>{children}</button>;
 }
@@ -139,6 +140,7 @@ function App(){
       if(e.type==='update')setUpdate(e.update);
       if(e.type==='tapir-progress')setTapirProgress(e.progress);
       if(e.type==='claude-progress')setState(s=>s?{...s,claudeProgress:e.progress}:s);
+      if(e.type==='max-connection')setState(s=>s?{...s,maxConnection:e.state}:s);
       if(e.type==='connection')setState(s=>s?{...s,connection:e.connection,toolCount:e.toolCount,runtimeReady:e.runtimeReady}:s);
       if(e.type==='busy'){setBusy(e.busy);setState(s=>s?{...s,busy:e.busy,canSteer:e.canSteer,activeSession:e.busy?e.sessionId:undefined,activeProject:e.busy?e.projectId:undefined}:s);if(!e.busy){setApproval(null);guard(async()=>{await refresh();await refreshSessions();});}}
       if(e.type==='queue-error')notify(e.message,'error');
@@ -337,6 +339,9 @@ function App(){
   const archiveCount=sessionGroups.reduce((count,g)=>count+g.sessions.filter(s=>s.archivedAt).length,0)+(state?.projects.filter(p=>p.archivedAt).length||0);
   const visibleProjects=state?.projects.filter(p=>!!p.archivedAt===projectArchive&&`${p.name} ${p.path}`.toLowerCase().includes(projectSearch.toLowerCase()))||[];
   const connected=state?.connection?.connected;
+  const maxState=state?.maxConnection;
+  const maxReady=maxState?.instances.filter(item=>item.ready)||[];
+  const maxLabel=maxReady.length?'3ds Max '+[...new Set(maxReady.map(item=>item.year))].join(', '):'';
   const projectInfo=state?.connection.project;
   const projectLabel=projectInfo?.projectName||projectInfo?.name||projectInfo?.projectPath?.split(/[\\/]/).pop()||(projectInfo?.isUntitled?t('ui.untitledUnsaved'):t('ui.openProject'));
   const tapirVersion=connected&&typeof state?.connection.data?.tapir_installed==='string'?state.connection.data.tapir_installed:'';
@@ -383,7 +388,7 @@ function App(){
       </aside>
       <main className="main" onDragEnter={event=>{if(event.dataTransfer.types.includes('Files')){event.preventDefault();dragDepth.current++;if(!readOnly&&!workspaceLocked&&!modal)setDragging(true);}}} onDragOver={event=>{if(event.dataTransfer.types.includes('Files')){event.preventDefault();event.dataTransfer.dropEffect=readOnly||workspaceLocked||!!modal?'none':'copy';}}} onDragLeave={event=>{if(event.dataTransfer.types.includes('Files')&&--dragDepth.current<=0){dragDepth.current=0;setDragging(false);}}} onDrop={event=>{if(!event.dataTransfer.types.includes('Files'))return;event.preventDefault();dragDepth.current=0;setDragging(false);const files=Array.from(event.dataTransfer.files);if(files.length)void importAttachments(files);}}>
         {dragging&&<div className="chat-drop-overlay" role="status"><Paperclip size={28}/><strong>{t('ui.dropFilesHere')}</strong></div>}
-        <header className="chat-header"><strong className="session-title">{session?.title||t('ui.newSession')}</strong><div className="header-actions"><button data-tour="connection" className={`connection-pill ${connected?'online':''}`} onClick={()=>setModal('archicad')} title={connected?projectLabel:t('ui.connectionSettings')}><span/>{connected?`Archicad ${state?.connection.data?.archicad_version||''}`:t('ui.connectArchicad')}</button>{session&&<><IconButton title={t('ui.renameSession')} disabled={workspaceLocked} onClick={()=>setModal('rename')}><Pencil size={15}/></IconButton><IconButton title={t('ui.exportConversation')} onClick={()=>guard(()=>api('exportSession',{projectId,id:session.id}))}><Share size={16}/></IconButton><ActionMenu label={t('ui.sessionActions',{name:session.title})} disabled={workspaceLocked} actions={sessionActions(session)}/></>}</div></header>
+        <header className="chat-header"><strong className="session-title">{session?.title||t('ui.newSession')}</strong><div className="header-actions"><button data-tour="connection" className={`connection-pill ${connected||maxReady.length?'online':''}`} onClick={()=>setModal('archicad')} title={connected?projectLabel:t('ui.connectionSettings')}><span/>{[connected&&`Archicad ${state?.connection.data?.archicad_version||''}`,maxLabel].filter(Boolean).join(' · ')||t('max.apps')}</button>{session&&<><IconButton title={t('ui.renameSession')} disabled={workspaceLocked} onClick={()=>setModal('rename')}><Pencil size={15}/></IconButton><IconButton title={t('ui.exportConversation')} onClick={()=>guard(()=>api('exportSession',{projectId,id:session.id}))}><Share size={16}/></IconButton><ActionMenu label={t('ui.sessionActions',{name:session.title})} disabled={workspaceLocked} actions={sessionActions(session)}/></>}</div></header>
         {readOnly&&<div className="archive-banner"><Archive size={17}/><span>{t(project?.archivedAt?'ui.projectIsArchived':'ui.sessionIsArchived')}</span><button disabled={workspaceLocked} onClick={()=>project?.archivedAt?archiveProject(project):session&&archiveSession(session)}><ArchiveRestore size={15}/>{t('ui.restore')}</button></div>}
         <div className="conversation-wrap">
         <div className="conversation" ref={conversation}>
@@ -446,7 +451,7 @@ function App(){
         <nav className="settings-nav" aria-label={t('ui.settingsSections')}>
           <button aria-current={modal==='providers'?'page':undefined} onClick={()=>setModal('providers')}><Sparkles size={18}/>{t('ui.aiProviders')}</button>
           <button aria-current={modal==='preferences'?'page':undefined} onClick={()=>setModal('preferences')}><Settings size={18}/>{t('ui.applicationSettings')}</button>
-          <button aria-current={modal==='archicad'?'page':undefined} onClick={()=>setModal('archicad')}><Cable size={18}/>Archicad</button>
+          <button aria-current={modal==='archicad'?'page':undefined} onClick={()=>setModal('archicad')}><Cable size={18}/>{t('max.apps')}</button>
           <button aria-current={modal==='about'?'page':undefined} onClick={()=>setModal('about')}><Info size={18}/>{t('ui.about')}</button>
         </nav>
         <div className="settings-content">
@@ -482,10 +487,15 @@ function App(){
             </div>
           </section>}
           {modal==='archicad'&&<section className="settings-page" aria-labelledby="archicad-heading">
-            <div className="settings-page-header"><div><h3 id="archicad-heading">Archicad</h3><p>{t('ui.archicadSectionDescription')}</p></div></div>
+            <div className="settings-page-header"><div><h3 id="archicad-heading">{t('max.both')}</h3></div></div>
             <div className={`settings-card settings-connection ${connected?'online':''}`}>
               <div className="settings-connection-status"><span className="connection-dot"/><div><h4>{connected?t('ui.archicadConnected',{value0:state?.connection.data?.archicad_version||''}):t('ui.openAProjectInArchicad')}</h4><p className="connection-description">{connected?projectLabel:state?.connection.message}</p>{connected&&<p className="connection-meta">{tapirVersion&&`Tapir ${tapirVersion} · `}{t('ui.toolCount',{count:state?.toolCount||0})}</p>}</div></div>
               <div className="settings-connection-actions"><button className="primary" onClick={connect} disabled={busy||!!working}><RotateCw size={16} className={working===t('ui.connecting')?'spin':undefined}/>{working===t('ui.connecting')?t('ui.connectingAlt'):connected?t('ui.reconnect'):t('ui.connect')}</button><button className="secondary" disabled={!!working} onClick={()=>guard(()=>api('launchArchicad'))}><FolderOpen size={16}/>{t('ui.openPln')}</button></div>
+            </div>
+            <div className={`settings-card settings-connection ${maxReady.length?'online':''}`}>
+              <div className="settings-connection-status"><span className="connection-dot"/><div><h4>{maxLabel||'3ds Max'}</h4><p className="connection-description">{t(`max.${maxState?.status||'searching'}` as const)}</p></div></div>
+              {maxReady.length>0&&(maxState!.instances.length>1||!!session?.maxTarget&&!maxReady.some(item=>item.pid+'/'+item.started===session.maxTarget))&&<label className="settings-field"><span>{t('max.select')}</span><select aria-label={t('max.choose')} value={session?.maxTarget||''} disabled={busy||!!working} onChange={e=>{const target=e.target.value;guard(async()=>{const chat=await ensureSession();await api('maxSelect',{projectId,sessionId:chat.id,target});setSession(s=>s?{...s,maxTarget:target}:s);});}}><option value="" disabled>{t('max.choose')}</option>{maxReady.map(item=><option key={item.pid} value={item.pid+'/'+item.started}>{item.title||'3ds Max '+item.year} · PID {item.pid}</option>)}</select></label>}
+              <div className="settings-connection-actions"><button className="secondary" disabled={!!working} onClick={()=>guard(async()=>{const next=await api('maxRefresh');setState(s=>s?{...s,maxConnection:next}:s);})}><RotateCw size={16}/>{t('max.check')}</button></div>
             </div>
             <TapirSettings connection={state?.connection} disabled={!!working||busy} active={tapirActive} onInstall={()=>guard(async()=>{setTapirProgress(null);const result=await api('installTapir');notify(result.message);},t('ui.downloadingTapir'))}>
               {tapirProgress&&<TapirProgress progress={tapirProgress}/>}

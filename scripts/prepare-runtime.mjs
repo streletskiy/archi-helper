@@ -39,4 +39,5 @@ for(const file of ocr.files){
   }
 }
 await fs.copyFile(path.join(root,'vendor/ocr/manifest.json'),path.join(runtime,'tessdata/manifest.json'));
+run('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(root,'scripts/prepare-max-runtime.ps1')]);
 console.log('Portable runtime ready.');

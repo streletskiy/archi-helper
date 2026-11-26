@@ -1,3 +1,4 @@
+import {maxCommands,maxYear} from './max-catalog.mjs';
 import catalog from './telemetry-catalog.json' with {type:'json'};
 import taskPatterns from '../locales/telemetry-patterns.json' with {type:'json'};
 import {providerDefinition} from './provider-definitions.mjs';
@@ -15,8 +16,8 @@ const boolean=value=>typeof value==='boolean'?value:undefined;
 const uuid=value=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value)?value:undefined;
 const version=value=>typeof value==='string'&&/^\d{1,3}(?:\.\d{1,6}){0,3}$/.test(value)?value:undefined;
 const members=values=>{const set=new Set(values);return value=>set.has(value)?value:undefined;};
-const models=members(catalog.models),commands=members(catalog.commands),articles=members(catalog.articles);
-export const TOOL_NAMES=[...operationToolNames,'get_knowledge','save_finding','verify_finding','get_api_catalog','find_tools','call_archicad','export_layouts_pdf','list_files','read_file','write_file','view_image','show_image','run_python'];
+const models=members(catalog.models),commands=members([...catalog.commands,...maxCommands]),articles=members(catalog.articles);
+export const TOOL_NAMES=[...operationToolNames,'get_knowledge','save_finding','verify_finding','get_api_catalog','find_tools','find_max_tools','call_3dsmax','call_archicad','export_layouts_pdf','list_files','read_file','write_file','view_image','show_image','run_python'];
 export const OUTCOMES=['completed_unverified','failed','cancelled','outcome_unknown'];
 export const ERROR_CATEGORIES=['none','cancelled','timeout','permission_denied','authentication','rate_limit','context_limit','invalid_response','network','provider_error','python_error','tool_error','unknown'];
 const outcome=oneOf(OUTCOMES),errorCategory=oneOf(ERROR_CATEGORIES),tool=oneOf(TOOL_NAMES);
@@ -32,7 +33,7 @@ const steps=value=>Array.isArray(value)?value.slice(0,60).flatMap(step=>{
     ...(positiveInteger(1e6)(step.previous_failed_step)?{previous_failed_step:step.previous_failed_step}:{})}];
 }):undefined;
 const common={run_id:uuid,provider_type:providerType,auth_mode:oneOf(['api_key','oauth','local']),model:value=>models(value)||'custom',
-  task_kind:taskKind,permission_mode:oneOf(['read','review','full']),archicad_version:positiveInteger(99),archicad_build:positiveInteger(999999),tapir_version:version,
+  max_year:maxYear,max_bridge:version,task_kind:taskKind,permission_mode:oneOf(['read','review','full']),archicad_version:positiveInteger(99),archicad_build:positiveInteger(999999),tapir_version:version,
   duration_ms:number(86400000),outcome,error_category:errorCategory,tool_count:integer(),tool_errors:integer(),request_count:integer(),generation_count:integer(),
   generation_errors:integer(),compaction_count:integer(),steering_count:integer(),knowledge_ids:strings(articles),route_truncated:boolean};
 export const EVENT_SCHEMAS=Object.freeze({
@@ -40,10 +41,11 @@ export const EVENT_SCHEMAS=Object.freeze({
   archi_first_seen:{installation_kind:oneOf(['installed','portable']),existing_profile:boolean},
   archi_app_started:{installation_kind:oneOf(['installed','portable'])},
   archi_provider_status:{provider_type:providerType,auth_mode:common.auth_mode,status:oneOf(['configured','verified','removed','used']),configured_count:integer(1000)},
+  archi_max_connection:{connected:boolean,max_year:maxYear,bridge_version:version},
   archi_connection:{connected:boolean,archicad_version:common.archicad_version,archicad_build:common.archicad_build,tapir_version:version},
   archi_task_started:common,
   archi_task_finished:common,
-  archi_tool_finished:{run_id:uuid,tool,command:value=>commands(value)||'other',duration_ms:common.duration_ms,outcome,error_category:errorCategory,
+  archi_tool_finished:{run_id:uuid,tool,max_year:maxYear,max_bridge:version,command:value=>commands(value)||'other',duration_ms:common.duration_ms,outcome,error_category:errorCategory,
     operation_status:oneOf(['completed','partial','failed','unsupported','cancelled','outcome_unknown']),operation_action:oneOf(['preview','apply','plan','export']),readback_checked:boolean},
   archi_tool_diagnostic:{run_id:uuid,tool,command:value=>commands(value)||'other',source:oneOf(['python_json_api']),api_step_index:positiveInteger(40),step_index:positiveInteger(1e6),previous_failed_step:positiveInteger(1e6),outcome,error_category:errorCategory,diagnostic:sanitizeDiagnostic},
   archi_http_request:{run_id:uuid,provider_type:providerType,http_status:integer(599),duration_ms:common.duration_ms,purpose:oneOf(['agent','compaction']),error_category:errorCategory},
@@ -70,7 +72,7 @@ export const publicModel=value=>models(value)||'custom';
 export const publicCommand=value=>commands(typeof value==='string'?value.replace(/^archicad:/,''):value)||'other';
 export const publicArticles=values=>strings(articles)(values)||[];
 export function connectionMetadata(connection) {
-  return sanitizeEvent('archi_connection',{archicad_version:Number(connection?.archicad_version),archicad_build:Number(connection?.archicad_build),tapir_version:connection?.tapir_installed});
+  return {...(maxYear(connection?.max_year)?{max_year:connection.max_year,max_bridge:version(connection.max_bridge)}:{}),...sanitizeEvent('archi_connection',{archicad_version:Number(connection?.archicad_version),archicad_build:Number(connection?.archicad_build),tapir_version:connection?.tapir_installed})};
 }
 export function classifyError(error,signal) {
   if(signal?.aborted||error?.name==='AbortError')return error?.name==='TimeoutError'||signal?.reason?.name==='TimeoutError'?'timeout':'cancelled';

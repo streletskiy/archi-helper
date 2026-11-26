@@ -15,6 +15,7 @@ const connectionInfo=connection=>({archicad:Number(connection?.archicad_version)
 const versionParts=value=>typeof value==='string'&&/^\d+(?:\.\d+){0,3}$/.test(value)?value.split('.').map(Number):null;
 const compareVersion=(a,b)=>{const x=versionParts(a),y=versionParts(b);if(!x||!y)return null;for(let i=0;i<Math.max(x.length,y.length);i++){const d=(x[i]||0)-(y[i]||0);if(d)return Math.sign(d);}return 0;};
 const matches=(entry,connection)=>{
+  if(entry.maxEnvironment)return entry.maxEnvironment.max===connection?.max_year&&entry.maxEnvironment.bridge===connection?.max_bridge;
   const actual=connectionInfo(connection);
   if(entry.archicad.length&&!entry.archicad.includes(actual.archicad))return false;
   if(!entry.compatibility?.length)return true;
@@ -125,7 +126,7 @@ export class KnowledgeLibrary {
     if(this.root){await walk(this.root,'global','user','global');if(projectId)await walk(this.root,this.projectFolder(projectId),'user','project');}
     for(const file of this.cache.keys())if(!files.has(file))this.cache.delete(file);
     try {
-      const findings=await this.findings.reconcile(entries.filter(entry=>entry.source==='bundled'),(entry,environment)=>matches(entry,{archicad_version:environment.archicad,archicad_build:environment.build,tapir_installed:environment.tapir}));
+      const findings=await this.findings.reconcile(entries.filter(entry=>entry.source==='bundled'),(entry,environment)=>!environment.max&&matches(entry,{archicad_version:environment.archicad,archicad_build:environment.build,tapir_installed:environment.tapir}));
       entries.push(...findings);
     }catch(error){issues.push({file:'agent-findings/findings.json',error:error.message});}
     return {entries,issues};

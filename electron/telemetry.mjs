@@ -1,3 +1,4 @@
+import {maxYear,maxMcpVersion} from './max-catalog.mjs';
 import crypto from 'node:crypto';
 import {appFetch} from './network.mjs';
 import {t} from '../locales/index.mjs';
@@ -169,6 +170,7 @@ class TaskObservation {
       permission_mode:input.mode,...connectionMetadata(connection)};
     telemetry.capture('archi_task_started',this.meta);if(provider)telemetry.provider(provider,'used');
   }
+  maxConnection(year){if(maxYear(year)){this.meta.max_year=year;this.meta.max_bridge=maxMcpVersion;}}
   get active(){return this.telemetry.active&&this.epoch===this.telemetry.epoch;}
   diagnosticReference() {
     if(this.active&&this.collectRoute&&this.telemetry.workflows&&this.workflowEpoch===this.telemetry.workflowEpoch)
@@ -207,15 +209,15 @@ class TaskObservation {
       if(this.active){
         this.counts.tool_count++;const failed=!!error||result?.isError===true;
         const category=error?classifyError(error,signal):result?.termination==='timeout'?'timeout':result?.termination==='cancelled'?'cancelled':failed?(name==='run_python'?'python_error':'tool_error'):'none';
-        const unknown=result?.outcomeUnknown===true||name==='call_archicad'&&(signal?.aborted||category==='timeout');
+        const unknown=result?.outcomeUnknown===true||['call_archicad','call_3dsmax'].includes(name)&&(signal?.aborted||category==='timeout');
         if(failed)this.counts.tool_errors++;if(unknown)this.unknown=true;
-        const command=name==='call_archicad'?publicCommand(args?.name):'other';
-        this.emit('archi_tool_finished',{run_id:this.id,tool:name,command,duration_ms:this.telemetry.now()-started,outcome:unknown?'outcome_unknown':failed?'failed':'completed_unverified',error_category:category,
+        const command=['call_archicad','call_3dsmax'].includes(name)?publicCommand(args?.name):'other';
+        this.emit('archi_tool_finished',{run_id:this.id,tool:name,command,...(name==='call_3dsmax'?{max_year:this.meta.max_year,max_bridge:this.meta.max_bridge}:{}),duration_ms:this.telemetry.now()-started,outcome:unknown?'outcome_unknown':failed?'failed':'completed_unverified',error_category:category,
           ...(result?.operation?{operation_status:result.status,operation_action:args?.action,readback_checked:result.checks?.includes('readback_after_write')===true}:{})});
         if(!failed&&name==='get_knowledge'&&args?.id)this.knowledgeUsed([args.id],'read');
         if(this.collectRoute&&this.telemetry.workflows&&this.workflowEpoch===this.telemetry.workflowEpoch){
           const step_index=this.counts.tool_count,key=`${name}:${command}`,previous_failed_step=this.failedSteps.get(key);
-          const diagnostic=['call_archicad','run_python'].includes(name)?toolDiagnostic(name,args,result,error,{failed,unknown}):undefined;
+          const diagnostic=['call_archicad','call_3dsmax','run_python'].includes(name)?toolDiagnostic(name,args,result,error,{failed,unknown}):undefined;
           if(diagnostic)this.emit('archi_tool_diagnostic',{run_id:this.id,tool:name,command,step_index,previous_failed_step,outcome:unknown?'outcome_unknown':failed?'failed':'completed_unverified',error_category:category,diagnostic});
           if(name==='run_python'&&result?.apiObservation)for(const [index,call] of sanitizePythonObservation(result.apiObservation).calls.entries()) {
             const uncertain=call.diagnostic.kind==='unknown_outcome',bad=['execution_failure','python_exception','tool_failure'].includes(call.diagnostic.kind);
@@ -235,7 +237,7 @@ class TaskObservation {
       error_category:this.error||'none',knowledge_ids:[...this.knowledge],route_truncated:this.truncated===true});
     this.emit('archi_task_finished',summary);
     const shared=this.collectRoute&&this.telemetry.workflows&&this.workflowEpoch===this.telemetry.workflowEpoch;
-    const coverage=this.steps.some(step=>step.tool==='run_python'||operationToolNames.includes(step.tool))?'agent_tools_only':'agent_and_mcp';
+    const coverage=this.steps.some(step=>step.tool==='run_python'||step.tool==='call_3dsmax'&&step.command==='run_python'||operationToolNames.includes(step.tool))?'agent_tools_only':'agent_and_mcp';
     if(shared)this.emit('archi_workflow_observed',{...summary,steps:this.steps,coverage,verification:'unverified'});
     return {id:this.id,installationId:this.telemetry.store.state.telemetry.installationId,appVersion:this.telemetry.version,schemaVersion:this.telemetry.config.schemaVersion,summary,steps:shared?this.steps:[],coverage,shared};
   }

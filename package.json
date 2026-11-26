@@ -1,8 +1,8 @@
 {
   "name": "ac-helper",
   "productName": "Archi Helper",
-  "version": "0.2.38",
-  "description": "Personal architect assistant for Archicad",
+  "version": "0.3.0",
+  "description": "Architect assistant for Archicad and 3ds Max",
   "author": "streletskiy",
   "private": true,
   "type": "module",
@@ -73,6 +73,7 @@
           "requirements.lock",
           "api-catalog.json",
           "tessdata/**/*",
+          "max-mcp/**/*",
           "dictionaries/**/*",
           "python/cpython-3.13.7-windows-x86_64-none/**/*",
           "!**/__pycache__/**",

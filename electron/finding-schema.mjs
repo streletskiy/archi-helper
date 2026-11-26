@@ -1,3 +1,4 @@
+import {maxCommands,maxYear} from './max-catalog.mjs';
 import crypto from 'node:crypto';
 import catalog from './telemetry-catalog.json' with {type:'json'};
 import publicFields from './telemetry-diagnostic-fields.json' with {type:'json'};
@@ -7,8 +8,8 @@ export const FINDING_CATEGORIES=['api_workflow','unsupported_argument','missing_
 export const FINDING_ACTIONS=['inspect_schema','read','modify','verify','transform','retry','use_field','avoid_field'];
 export const FINDING_CHECKS=['schema','readback','per_item_errors','synthetic','manual','none'];
 export const FINDING_CAUTIONS=['check_live_schema','version_specific','explicit_approval','unknown_after_timeout','partial_failure','read_before_retry','synthetic_only','not_independently_verified'];
-const tools=new Set(['get_api_catalog','find_tools','call_archicad','run_python','read_file','write_file','view_image','export_layouts_pdf']);
-const commands=new Set(catalog.commands),fields=new Set(publicFields);
+const tools=new Set(['get_api_catalog','find_tools','find_max_tools','call_3dsmax','call_archicad','run_python','read_file','write_file','view_image','export_layouts_pdf']);
+const commands=new Set([...catalog.commands,...maxCommands]),fields=new Set(publicFields);
 const list=(value,allowed,max)=>Array.isArray(value)&&value.length<=max&&value.every(item=>allowed.has(item));
 const unique=value=>[...new Set(value)].sort();
 const version=value=>typeof value==='string'&&/^\d{1,3}(?:\.\d{1,6}){0,3}$/.test(value);
@@ -19,8 +20,8 @@ export function validFindingComparison(input) {
   return !!input&&/^finding:[a-f0-9]{64}$/.test(input.id)&&commands.has(input.command)&&list(input.field_path,fields,6)&&input.field_path.length>0&&
     (input.expected===null||typeof input.expected==='boolean'||typeof input.expected==='number'&&Number.isFinite(input.expected)||typeof input.expected==='string'&&input.expected.length<=4000);
 }
-export const findingVerificationTool={type:'function',function:{name:'verify_finding',description:'Check a saved finding on this device before sharing it. Performs a fresh discovered read-only Get/Is command and compares one public response field against the expected scalar locally. Arrays along the field path must each contain one item: use a focused read. Only paths, comparison outcome and diagnostic references are shared; values and arguments remain private. This verifies the reported expectation, not the entire user goal or geometry. Never mutate or replay operations just to produce evidence.',parameters:{type:'object',additionalProperties:false,properties:{
-  id:{type:'string',description:'Finding ID returned by save_finding.'},command:{type:'string',description:'Exact public name of a discovered read-only Get/Is command.'},arguments:{type:'object',additionalProperties:true,description:'Actual read arguments. Local only.'},field_path:pathSchema,
+export const findingVerificationTool={type:'function',function:{name:'verify_finding',description:'Check a saved finding on this device before sharing it. Performs a fresh discovered read-only Archicad Get/Is or 3ds Max command and compares one public response field against the expected scalar locally. Arrays along the field path must each contain one item: use a focused read. Only paths, comparison outcome and diagnostic references are shared; values and arguments remain private. This verifies the reported expectation, not the entire user goal or geometry. Never mutate or replay operations just to produce evidence.',parameters:{type:'object',additionalProperties:false,properties:{
+  id:{type:'string',description:'Finding ID returned by save_finding.'},command:{type:'string',description:'Exact public name of a discovered read-only Archicad Get/Is or 3ds Max command.'},arguments:{type:'object',additionalProperties:true,description:'Actual read arguments. Local only.'},field_path:pathSchema,
   expected:{type:['string','number','boolean','null'],description:'Expected scalar from the task or procedure. Compared locally; never stored in the finding or sent to telemetry.'}
 },required:['id','command','arguments','field_path','expected']}}};
 function rule(value,condition=false) {
@@ -83,17 +84,18 @@ export function sanitizeFindingEvidence(input) {
 export function sanitizeFinding(input) {
   if(!input||!FINDING_CATEGORIES.includes(input.category)||!Array.isArray(input.steps)||!input.steps.length||input.steps.length>16)return;
   const environment=input.environment;
-  if(!environment||!Number.isInteger(environment.archicad)||environment.archicad<20||environment.archicad>99||
-    !Number.isInteger(environment.build)||environment.build<1||environment.build>999999||!version(environment.tapir))return;
+  const max=input.steps.some(step=>step?.tool==='call_3dsmax');
+  if(max?(!maxYear(environment?.max)||!version(environment?.bridge)):(!environment||!Number.isInteger(environment.archicad)||environment.archicad<20||environment.archicad>99||
+    !Number.isInteger(environment.build)||environment.build<1||environment.build>999999||!version(environment.tapir)))return;
   const steps=[];
   for(const step of input.steps) {
     if(!step||!tools.has(step.tool)||!FINDING_ACTIONS.includes(step.action)||
-      step.command!==undefined&&!commands.has(step.command)||step.tool==='call_archicad'&&!step.command||
+      step.command!==undefined&&!commands.has(step.command)||step.tool==='call_3dsmax'&&!maxCommands.includes(step.command)||step.tool==='call_archicad'&&(max||!catalog.commands.includes(step.command))||
       !list(step.fields??[],fields,12))return;
     steps.push({tool:step.tool,action:step.action,...(step.command?{command:step.command}:{}),fields:unique(step.fields??[])});
   }
   if(!list(input.checks,new Set(FINDING_CHECKS),6)||!list(input.cautions??[],new Set(FINDING_CAUTIONS),8))return;
-  const card={schema:1,category:input.category,environment:{archicad:environment.archicad,build:environment.build,tapir:environment.tapir},steps,
+  const card={schema:1,category:input.category,environment:max?{max:environment.max,bridge:environment.bridge}:{archicad:environment.archicad,build:environment.build,tapir:environment.tapir},steps,
     checks:unique(input.checks),cautions:unique(input.cautions??[])};
   if(input.schema===2||input.condition!==undefined||input.correction!==undefined) {
     const condition=rule(input.condition??{kind:'completed'},true),correction=rule(input.correction??{kind:'unknown'});
@@ -107,7 +109,7 @@ export const findingTool={type:'function',function:{name:'save_finding',descript
   category:{type:'string',enum:FINDING_CATEGORIES},
   condition:{type:'object',additionalProperties:false,properties:{kind:{type:'string',enum:['completed','execution_failure','unsupported_argument','missing_argument','missing_key','invalid_value_type','python_exception','tool_failure','unknown_outcome']},field_path:pathSchema,expected_type:{type:'string',enum:primitiveTypes}},required:['kind']},
   correction:{type:'object',additionalProperties:false,properties:{kind:{type:'string',enum:FINDING_CORRECTIONS},field_path:pathSchema,replacement_path:pathSchema,value_type:{type:'string',enum:primitiveTypes}},required:['kind']},
-  steps:{type:'array',minItems:1,maxItems:16,items:{type:'object',additionalProperties:false,properties:{tool:{type:'string',enum:[...tools]},action:{type:'string',enum:FINDING_ACTIONS},command:{type:'string',description:'Exact public command name from the supplied API catalog, without archicad: prefix. Required for call_archicad.'},fields:{type:'array',maxItems:12,items:{type:'string'},description:'Only public API schema field names, never values or user-defined properties.'}},required:['tool','action']}},
+  steps:{type:'array',minItems:1,maxItems:16,items:{type:'object',additionalProperties:false,properties:{tool:{type:'string',enum:[...tools]},action:{type:'string',enum:FINDING_ACTIONS},command:{type:'string',description:'Exact public command name from the supplied API catalog, without archicad: prefix. Required for call_archicad and call_3dsmax.'},fields:{type:'array',maxItems:12,items:{type:'string'},description:'Only public API schema field names, never values or user-defined properties.'}},required:['tool','action']}},
   checks:{type:'array',maxItems:6,items:{type:'string',enum:FINDING_CHECKS}},
   cautions:{type:'array',maxItems:8,items:{type:'string',enum:FINDING_CAUTIONS}},
   title:{type:'string',maxLength:120,description:'Local title describing the reusable problem in the user language. Never shared.'},
