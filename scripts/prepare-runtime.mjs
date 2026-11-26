@@ -1,3 +1,4 @@
+import {prepareMaxRuntime} from './prepare-max-runtime.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,5 +40,5 @@ for(const file of ocr.files){
   }
 }
 await fs.copyFile(path.join(root,'vendor/ocr/manifest.json'),path.join(runtime,'tessdata/manifest.json'));
-run('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(root,'scripts/prepare-max-runtime.ps1')]);
+await prepareMaxRuntime(root,python);
 console.log('Portable runtime ready.');
