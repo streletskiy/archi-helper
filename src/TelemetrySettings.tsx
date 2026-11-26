@@ -17,7 +17,7 @@ export function TelemetrySettings({value,onChange}:{value?:TelemetryState;onChan
   }
   return <section className="telemetry-settings" aria-labelledby="telemetry-heading">
     <h4 id="telemetry-heading"><ShieldCheck size={18}/>{t('telemetry.title')}</h4>
-    <div className="settings-card chat-preference"><div><h4 id="telemetry-enabled">{t('telemetry.enabled')}</h4><p className="settings-description" id="telemetry-enabled-hint">{t('telemetry.enabledHint')}</p></div>
+    <div className="settings-card chat-preference"><div><h4 id="telemetry-enabled">{t('telemetry.enabled')}</h4><p className="settings-description" id="telemetry-enabled-hint">{t('telemetry.enabledHint')} {t('max.telemetry')}</p></div>
       <button className="settings-switch" role="switch" aria-checked={value?.enabled!==false} aria-labelledby="telemetry-enabled" aria-describedby="telemetry-enabled-hint" disabled={pending||!value} onClick={()=>update({enabled:!value?.enabled})}><span/></button></div>
     <div className="settings-card chat-preference"><div><h4 id="telemetry-workflows">{t('telemetry.workflows')}</h4><p className="settings-description" id="telemetry-workflows-hint">{t('telemetry.workflowsHint')}</p></div>
       <button className="settings-switch" role="switch" aria-checked={value?.enabled!==false&&value?.shareWorkflows!==false} aria-labelledby="telemetry-workflows" aria-describedby="telemetry-workflows-hint" disabled={pending||!value||!value.enabled} onClick={()=>update({shareWorkflows:!value?.shareWorkflows})}><span/></button></div>
