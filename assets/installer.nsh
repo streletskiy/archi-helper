@@ -1,4 +1,20 @@
 ; Report installer stages while the application's update screen stays open.
+!ifdef BUILD_UNINSTALLER
+!macro customUnInstall
+  ${ifNot} ${isUpdated}
+    ${if} $installMode == "all"
+      SetShellVarContext current
+    ${endif}
+    Delete "$APPDATA\Autodesk\ApplicationPlugins\ArchiHelper-Max2022\PackageContents.xml"
+    Delete "$APPDATA\Autodesk\ApplicationPlugins\ArchiHelper-Max2022\archi_helper_startup.ms"
+    Delete "$APPDATA\Autodesk\ApplicationPlugins\ArchiHelper-Max2022\archi_helper.py"
+    RMDir "$APPDATA\Autodesk\ApplicationPlugins\ArchiHelper-Max2022"
+    ${if} $installMode == "all"
+      SetShellVarContext all
+    ${endif}
+  ${endif}
+!macroend
+!endif
 !ifndef BUILD_UNINSTALLER
 !define MUI_CUSTOMFUNCTION_ABORT archiOnUserAbort
 !include "${PROJECT_DIR}\.cache\runtime-package\size.nsh"

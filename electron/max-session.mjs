@@ -17,12 +17,12 @@ export const sessionTools = [
   tool('get_materials','List materials used by the scene.',page),
   tool('inspect_object','Read one node, its world position and assigned material.',{handle},['handle']),
   tool('capture_viewport','Capture the active viewport as a PNG.'),
-  tool('create_object','Create one primitive at the specified world position.',{type:{type:'string',enum:['box','sphere','cylinder']},name:{type:'string',minLength:1,maxLength:128},position},['type']),
+  tool('create_object','Create one primitive at the specified world position.',{type:{type:'string',enum:['box','sphere','cylinder']},name:{type:'string',minLength:1,maxLength:128},size:{type:'number',exclusiveMinimum:0,maximum:1e9,default:25,description:'Box side length or sphere/cylinder diameter in scene units. Cylinder height matches its diameter.'},position},['type']),
   tool('transform_object','Move one object to an absolute world position.',{handle,position},['handle','position']),
   tool('undo_last','Undo the latest entry on the active scene undo stack. Read the scene again to verify.')
 ];
 
-export const sessionPipe = pid => 'ArchiHelper-MaxSession-v1-'+pid;
+export const sessionPipe = pid => 'ArchiHelper-MaxSession-v2-'+pid;
 
 export function callMaxSession(item,name,args,signal) {
   const schema=sessionTools.find(tool=>tool.name===name)?.inputSchema;
