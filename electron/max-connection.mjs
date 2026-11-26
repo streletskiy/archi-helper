@@ -2,11 +2,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import {execFile} from 'node:child_process';
+import {execFile,spawn} from 'node:child_process';
 import {promisify} from 'node:util';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {MCP} from './mcp.mjs';
-import {maxCommands,maxMcpVersion,maxYear} from './max-catalog.mjs';
+import {maxCommands,maxMcpVersion,maxBridgeVersion,maxYear} from './max-catalog.mjs';
+import {callMaxSession,sessionPipe,sessionTools} from './max-session.mjs';
 import {imageFile,projectPath} from './store.mjs';
 import {validatePng} from './png-validation.mjs';
 import {resultData} from './progress.mjs';
@@ -40,9 +41,15 @@ export async function provisionMax(runtime) {
 
 async function maxProcesses() {
   const shell=path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe');
-  const script="[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); @(Get-Process -Name 3dsmax -ErrorAction SilentlyContinue) | ForEach-Object { if ($_.Path) { [PSCustomObject]@{pid=$_.Id; title=$_.MainWindowTitle; year=1998+[Diagnostics.FileVersionInfo]::GetVersionInfo($_.Path).ProductMajorPart; started=$_.StartTime.ToUniversalTime().Ticks.ToString()} } } | ConvertTo-Json -Compress";
+  const script=[
+    '[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)',
+    "$dirs=@((Get-ItemProperty 'HKLM:\\SOFTWARE\\Autodesk\\3dsMax\\24.0' -ErrorAction SilentlyContinue).Installdir, (Join-Path $env:ProgramFiles 'Autodesk\\3ds Max 2022'))",
+    "$legacy=$dirs | Where-Object { $_ } | ForEach-Object { Join-Path $_ '3dsmax.exe' } | Where-Object { (Test-Path -LiteralPath $_ -PathType Leaf) -and [Diagnostics.FileVersionInfo]::GetVersionInfo($_).ProductMajorPart -eq 24 } | Select-Object -First 1",
+    "$running=@(Get-Process -Name 3dsmax -ErrorAction SilentlyContinue | ForEach-Object { if ($_.Path) { [PSCustomObject]@{pid=$_.Id; title=$_.MainWindowTitle; year=1998+[Diagnostics.FileVersionInfo]::GetVersionInfo($_.Path).ProductMajorPart; started=$_.StartTime.ToUniversalTime().Ticks.ToString()} } })",
+    '[PSCustomObject]@{running=$running;legacy=[string]$legacy} | ConvertTo-Json -Compress'
+  ].join('; ');
   const {stdout}=await exec(shell,['-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,timeout:10000});
-  return stdout.trim()?[].concat(JSON.parse(stdout)):[];
+  return JSON.parse(stdout);
 }
 
 export class MaxConnection {
@@ -60,24 +67,41 @@ export class MaxConnection {
     return this.state;
   }
   async scan() {
-    const running=await maxProcesses();
+    const {running,legacy}=await maxProcesses();
+    this.legacyExecutable=legacy;
     const available=running.filter(item=>maxYear(item.year));
-    if(!this.provisioned&&(available.length||await exists(path.join(process.env.LOCALAPPDATA,'Autodesk','3dsMax'))||
+    const native=available.filter(item=>item.year>2022);
+    let provisionError=false;
+    if(!this.provisioned&&(native.length||
       (await Promise.all([2023,2024,2025,2026,2027].map(year=>exists(path.join(process.env.ProgramFiles,'Autodesk','3ds Max '+year))))).some(Boolean))){
-      await provisionMax(this.runtime);this.provisioned=true;
+      try {await provisionMax(this.runtime);this.provisioned=true;} catch {provisionError=true;}
     }
     const pipes=new Set(available.length?await fs.readdir('\\\\.\\pipe\\'):[]);
-    const instances=available.map(item=>({...item,ready:pipes.has('3dsmax-mcp-pid-'+item.pid)}));
+    const instances=available.map(item=>({...item,ready:pipes.has(item.year===2022?sessionPipe(item.pid):'3dsmax-mcp-pid-'+item.pid)}));
     for(const [key,promise] of this.clients)if(!instances.some(item=>item.ready&&this.key(item)===key)){
       this.clients.delete(key);void promise.then(client=>client.close()).catch(()=>{});
     }
-    return this.update({status:instances.some(item=>item.ready)?'connected':available.length?'restart':running.length?'unsupported':'offline',instances});
+    const needsSession=instances.some(item=>item.year===2022&&!item.ready);
+    const status=instances.some(item=>item.ready)?'connected':needsSession?'session':provisionError?'error':native.length?'restart':running.length?'unsupported':'offline';
+    return this.update({status,instances,canLaunch2022:!!legacy&&!this.startingLegacy&&!instances.some(item=>item.year===2022)});
+  }
+  async launch2022(script) {
+    await this.refresh(true);
+    if(!this.state.canLaunch2022||!this.legacyExecutable||this.startingLegacy)throw new Error(t('max.check'));
+    await fs.access(script);
+    if(this.startingLegacy)throw new Error(t('max.check'));
+    const child=spawn(this.legacyExecutable,['-U','PythonHost',script],{detached:true,stdio:'ignore'});
+    this.startingLegacy=child;
+    child.once('close',()=>{this.startingLegacy=null;});
+    await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});
+    child.unref();
+    this.update({...this.state,canLaunch2022:false});
   }
   key(item){return item.pid+'/'+item.started;}
   environment(session,pid) {
     const ready=this.state.instances.filter(item=>item.ready);
     const item=pid!==undefined?ready.find(x=>x.pid===pid):session?.maxTarget?ready.find(x=>this.key(x)===session.maxTarget):this.state.instances.length===1?ready[0]:null;
-    return item?{max_year:item.year,max_bridge:maxMcpVersion,max_target:this.key(item)}:{};
+    return item?{max_year:item.year,max_bridge:maxBridgeVersion(item.year),max_target:this.key(item)}:{};
   }
   async target(session,pid) {
     await this.refresh();
@@ -114,17 +138,18 @@ export class MaxConnection {
     if(!instances.some(item=>item.ready))return {instances,status:state.status,message:t('max.'+state.status)};
     if(!pid&&(session.maxTarget?!state.instances.some(item=>item.ready&&this.key(item)===session.maxTarget):instances.length>1))return {instances,message:t('max.select')};
     const item=await this.target(session,pid);
-    const server=await this.client(item);
+    const tools=item.year===2022?sessionTools:(await this.client(item)).tools;
     const name=String(query||'').replace(/^max:/,'');
-    const exact=server.tools.find(tool=>tool.name===name&&maxCommands.includes(name));
+    const exact=tools.find(tool=>tool.name===name&&maxCommands.includes(name));
     return {instances,pid:item.pid,year:item.year,tools:exact?[{name:exact.name,description:exact.description,inputSchema:exact.inputSchema}]:
-      server.tools.filter(tool=>maxCommands.includes(tool.name)).map(tool=>tool.name)};
+      tools.filter(tool=>maxCommands.includes(tool.name)).map(tool=>tool.name)};
   }
   async call(item,name,args,signal) {
     if(!maxCommands.includes(name))throw new Error(t('max.unknown'));
     // Revalidate the process lifetime even if a confirmation dialog was open for a while.
     await this.refresh(true);
     const current=await this.target({maxTarget:this.key(item)});
+    if(current.year===2022)return callMaxSession(current,name,args,signal);
     const server=await this.client(current);
     const response=await server.call('max:'+name,{...args,expected_pid:current.pid},signal);
     const data=resultData(response);

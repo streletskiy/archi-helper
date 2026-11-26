@@ -36,7 +36,7 @@ type Session={id:string;maxTarget?:string;title:string;messages:Message[];update
 type SessionGroup={projectId:string;sessions:Session[];error?:string};
 type Tool={key:string;name:string;description:string;readOnly:boolean;inputSchema:any};
 type TapirDownloadProgress={status:'checking'|'downloading'|'verifying'|'installing'|'launched'|'error';version:string;percent:number;transferred:number;total:number;bytesPerSecond:number;message:string};
-type State={claudeProgress?:ClaudeProgress|null;telemetry?:TelemetryState;showToolDetails?:boolean;theme?:ThemeMode;onboardingVersion?:number;appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;maxConnection?:{status:'searching'|'offline'|'restart'|'unsupported'|'connected'|'error';instances:MaxInstance[]};toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
+type State={claudeProgress?:ClaudeProgress|null;telemetry?:TelemetryState;showToolDetails?:boolean;theme?:ThemeMode;onboardingVersion?:number;appVersion?:string;updateApplied?:boolean;updateOnly?:boolean;runtimeInfo?:{pythonVersion?:string};language:string;projects:Project[];providers:Provider[];providerId:string;model:string;reasoningEffort?:string;permissionMode?:string;archicadPort:string;connection:any;maxConnection?:{status:'searching'|'offline'|'restart'|'session'|'unsupported'|'connected'|'error';instances:MaxInstance[];canLaunch2022?:boolean};toolCount:number;runtimeReady:boolean;busy:boolean;activeSession?:string;activeProject?:string;canSteer?:boolean;update?:any;tapirProgress?:TapirDownloadProgress};
 const providerToForm=(p:Provider)=>({id:p.id,name:p.name,baseURL:p.baseURL,apiKey:'',definitionId:p.definitionId||'',cli:p.cli,oauth:p.oauth,supportsImages:p.supportsImages===true,reasoningFormat:p.reasoningFormat||'auto',reasoningEfforts:p.reasoningEfforts?.join(', ')||''});
 const emptyProvider=()=>({id:'',name:'',baseURL:'',apiKey:'',definitionId:'',cli:undefined as Provider['cli'],oauth:undefined as Provider['oauth'],supportsImages:false,reasoningFormat:'auto',reasoningEfforts:''});
 const effortLabel=(value:string)=>t(({none:'ui.reasoningNone',minimal:'ui.reasoningMinimal',low:'ui.reasoningLow',medium:'ui.reasoningMedium',high:'ui.reasoningHigh',xhigh:'ui.reasoningXhigh',max:'ui.reasoningMax',ultra:'ui.reasoningUltra'} as const)[value as 'xhigh']);
@@ -341,6 +341,7 @@ function App(){
   const connected=state?.connection?.connected;
   const maxState=state?.maxConnection;
   const maxReady=maxState?.instances.filter(item=>item.ready)||[];
+  const maxNeedsSession=maxState?.instances.some(item=>item.year===2022&&!item.ready);
   const maxLabel=maxReady.length?'3ds Max '+[...new Set(maxReady.map(item=>item.year))].join(', '):'';
   const projectInfo=state?.connection.project;
   const projectLabel=projectInfo?.projectName||projectInfo?.name||projectInfo?.projectPath?.split(/[\\/]/).pop()||(projectInfo?.isUntitled?t('ui.untitledUnsaved'):t('ui.openProject'));
@@ -495,7 +496,12 @@ function App(){
             <div className={`settings-card settings-connection ${maxReady.length?'online':''}`}>
               <div className="settings-connection-status"><span className="connection-dot"/><div><h4>{maxLabel||'3ds Max'}</h4><p className="connection-description">{t(`max.${maxState?.status||'searching'}` as const)}</p></div></div>
               {maxReady.length>0&&(maxState!.instances.length>1||!!session?.maxTarget&&!maxReady.some(item=>item.pid+'/'+item.started===session.maxTarget))&&<label className="settings-field"><span>{t('max.select')}</span><select aria-label={t('max.choose')} value={session?.maxTarget||''} disabled={busy||!!working} onChange={e=>{const target=e.target.value;guard(async()=>{const chat=await ensureSession();await api('maxSelect',{projectId,sessionId:chat.id,target});setSession(s=>s?{...s,maxTarget:target}:s);});}}><option value="" disabled>{t('max.choose')}</option>{maxReady.map(item=><option key={item.pid} value={item.pid+'/'+item.started}>{item.title||'3ds Max '+item.year} · PID {item.pid}</option>)}</select></label>}
-              <div className="settings-connection-actions"><button className="secondary" disabled={!!working} onClick={()=>guard(async()=>{const next=await api('maxRefresh');setState(s=>s?{...s,maxConnection:next}:s);})}><RotateCw size={16}/>{t('max.check')}</button></div>
+              {maxNeedsSession&&maxState?.status!=='session'&&<p className="connection-description">{t('max.session')}</p>}
+              <div className="settings-connection-actions">
+                {maxState?.canLaunch2022&&<button className="primary" disabled={!!working} onClick={()=>guard(async()=>{await api('maxLaunch2022');notify(t('max.launching2022'));})}>{t('max.launch2022')}</button>}
+                {maxNeedsSession&&<button className="primary" disabled={!!working} onClick={()=>guard(async()=>{await api('maxCopyScript');notify(t('max.copiedScript'));})}>{t('max.copyScript')}</button>}
+                <button className="secondary" disabled={!!working} onClick={()=>guard(async()=>{const next=await api('maxRefresh');setState(s=>s?{...s,maxConnection:next}:s);})}><RotateCw size={16}/>{t('max.check')}</button>
+              </div>
             </div>
             <TapirSettings connection={state?.connection} disabled={!!working||busy} active={tapirActive} onInstall={()=>guard(async()=>{setTapirProgress(null);const result=await api('installTapir');notify(result.message);},t('ui.downloadingTapir'))}>
               {tapirProgress&&<TapirProgress progress={tapirProgress}/>}

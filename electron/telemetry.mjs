@@ -1,4 +1,4 @@
-import {maxYear,maxMcpVersion} from './max-catalog.mjs';
+import {maxYear,maxBridgeVersion} from './max-catalog.mjs';
 import crypto from 'node:crypto';
 import {appFetch} from './network.mjs';
 import {t} from '../locales/index.mjs';
@@ -170,7 +170,7 @@ class TaskObservation {
       permission_mode:input.mode,...connectionMetadata(connection)};
     telemetry.capture('archi_task_started',this.meta);if(provider)telemetry.provider(provider,'used');
   }
-  maxConnection(year){if(maxYear(year)){this.meta.max_year=year;this.meta.max_bridge=maxMcpVersion;}}
+  maxConnection(year){if(maxYear(year)){this.meta.max_year=year;this.meta.max_bridge=maxBridgeVersion(year);}}
   get active(){return this.telemetry.active&&this.epoch===this.telemetry.epoch;}
   diagnosticReference() {
     if(this.active&&this.collectRoute&&this.telemetry.workflows&&this.workflowEpoch===this.telemetry.workflowEpoch)

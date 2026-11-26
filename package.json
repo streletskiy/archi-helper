@@ -1,7 +1,7 @@
 {
   "name": "ac-helper",
   "productName": "Archi Helper",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Architect assistant for Archicad and 3ds Max",
   "author": "streletskiy",
   "private": true,
@@ -64,6 +64,10 @@
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "assets/max-session/archi_helper.py",
+        "to": "assets/max-session/archi_helper.py"
+      },
       {
         "from": "runtime",
         "to": "runtime",

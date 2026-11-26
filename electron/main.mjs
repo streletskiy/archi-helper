@@ -12,7 +12,7 @@ import { ClaudeCode,claudeModels } from './claude-code.mjs';
 import { appFetch, configureAppFetch } from './network.mjs';
 import { EFFORTS } from './reasoning.mjs';
 import {MaxConnection} from './max-connection.mjs';
-import {maxMcpVersion} from './max-catalog.mjs';
+import {maxBridgeVersion} from './max-catalog.mjs';
 import { MCP } from './mcp.mjs';
 import { Agent } from './agent.mjs';
 import updaterModule from 'electron-updater';
@@ -30,6 +30,7 @@ if(dataOverride)app.setPath('userData',path.resolve(dataOverride));
 else if(app.isPackaged)app.setPath('userData',path.join(app.getPath('appData'),'Archi'));
 let win,store,mcp,agent,maxTimer,updates,connection={connected:false,message:t('ui.connectingAlt')},connecting,activeCalls=0,tapirProgress=null,tapirInstalling=false;
 const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(here,'../runtime');
+const maxSessionScript=path.join(app.isPackaged?process.resourcesPath:path.resolve(here,'..'),'assets','max-session','archi_helper.py');
 const emit=data=>{if(win && !win.isDestroyed())win.webContents.send('archi:event',data);};
 const windowBackground=()=>nativeTheme.shouldUseDarkColors?'#17181b':'#fcfcf9';
 nativeTheme.on('updated',()=>{if(win&&!win.isDestroyed())win.setBackgroundColor(windowBackground());});
@@ -247,6 +248,8 @@ const handlers={
     const session=await agent.load(projectId,sessionId);session.maxTarget=target;await store.saveSession(session);
   }),
   maxRefresh:async()=>mcp.max.refresh(true),
+  maxLaunch2022:async()=>mcp.max.launch2022(maxSessionScript),
+  maxCopyScript:async()=>{await fs.access(maxSessionScript);clipboard.writeText(maxSessionScript);},
   connect:async()=>connect(),
   scan:async()=>scan(),
   tools:async()=>mcp.tools.map(t=>({key:t.key,name:t.name,description:t.description,inputSchema:t.inputSchema,readOnly:t.annotations?.readOnlyHint===true})),
@@ -345,7 +348,7 @@ else {
      emit({type:'max-connection',state});
      const years=new Map(state.instances.map(item=>[item.year,state.instances.some(instance=>instance.year===item.year&&instance.ready)]));
      for(const year of new Set([...years.keys(),...reportedMaxYears.keys()]))if(years.get(year)!==reportedMaxYears.get(year))
-       store.telemetry?.capture('archi_max_connection',{max_year:year,bridge_version:maxMcpVersion,connected:years.get(year)===true});
+       store.telemetry?.capture('archi_max_connection',{max_year:year,bridge_version:maxBridgeVersion(year),connected:years.get(year)===true});
      reportedMaxYears=years;
    });
    agent=new Agent(store,mcp,emit);await agent.knowledge.init();
