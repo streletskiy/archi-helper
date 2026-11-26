@@ -11,6 +11,8 @@ import { OAuthManager } from './oauth-manager.mjs';
 import { ClaudeCode,claudeModels } from './claude-code.mjs';
 import { appFetch, configureAppFetch } from './network.mjs';
 import { EFFORTS } from './reasoning.mjs';
+import {MaxConnection} from './max-connection.mjs';
+import {maxMcpVersion} from './max-catalog.mjs';
 import { MCP } from './mcp.mjs';
 import { Agent } from './agent.mjs';
 import updaterModule from 'electron-updater';
@@ -26,7 +28,7 @@ const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWi
 if(dataOverride)app.setPath('userData',path.resolve(dataOverride));
 // Keep the original profile so renaming the application preserves keys and projects.
 else if(app.isPackaged)app.setPath('userData',path.join(app.getPath('appData'),'Archi'));
-let win,store,mcp,agent,updates,connection={connected:false,message:t('ui.connectingAlt')},connecting,activeCalls=0,tapirProgress=null,tapirInstalling=false;
+let win,store,mcp,agent,maxTimer,updates,connection={connected:false,message:t('ui.connectingAlt')},connecting,activeCalls=0,tapirProgress=null,tapirInstalling=false;
 const runtime=app.isPackaged?path.join(process.resourcesPath,'runtime'):path.resolve(here,'../runtime');
 const emit=data=>{if(win && !win.isDestroyed())win.webContents.send('archi:event',data);};
 const windowBackground=()=>nativeTheme.shouldUseDarkColors?'#17181b':'#fcfcf9';
@@ -46,7 +48,7 @@ function answerProviderPrompt({id,response}) {
   pendingProviderPrompt=undefined;emit({type:'provider-prompt',prompt:null});pending.resolve({response});
 }
 const runtimeManifest=await fs.readFile(path.join(runtime,'manifest.json'),'utf8').then(JSON.parse).catch(()=>({}));
-const publicState=()=>({...store.publicState(),telemetry:store.telemetry?.state(),providerPrompt:pendingProviderPrompt?.prompt,claudeProgress:store.claudeCode?.progress,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,runtimeReady:mcp.clients.has('archicad'),toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state,tapirProgress});
+const publicState=()=>({...store.publicState(),telemetry:store.telemetry?.state(),providerPrompt:pendingProviderPrompt?.prompt,claudeProgress:store.claudeCode?.progress,appVersion:app.getVersion(),updateApplied:process.argv.includes('--updated'),runtimeInfo:{pythonVersion:typeof runtimeManifest.pythonVersion==='string'?runtimeManifest.pythonVersion:undefined},connection,maxConnection:mcp.max.state,runtimeReady:mcp.clients.has('archicad'),toolCount:mcp.tools.length,busy:!!agent.running,activeSession:agent.activeSession,activeProject:agent.activeProject,canSteer:agent.steerable,approval:agent.approval,update:updates?.state,tapirProgress});
 async function connect() {
   if(connecting)return connecting;
   connecting=(async()=>{
@@ -104,11 +106,11 @@ const handlers={
     try{await store.save();}catch(error){store.state.theme=previous;throw error;}
     nativeTheme.themeSource=theme;return {theme};
   },
-  knowledgeList:async({projectId})=>{store.project(projectId);return agent.knowledge.list(projectId,connection.data);},
-  knowledgeRead:async({projectId,id})=>{store.project(projectId);return agent.knowledge.read(id,projectId,connection.data);},
-  knowledgeSave:async({projectId,entry})=>{store.project(projectId);const saved=await agent.knowledge.save(entry,projectId);return agent.knowledge.read(saved.id,projectId,connection.data);},
+  knowledgeList:async({projectId})=>{store.project(projectId);return agent.knowledge.list(projectId,{...connection.data,...mcp.max.environment()});},
+  knowledgeRead:async({projectId,id})=>{store.project(projectId);return agent.knowledge.read(id,projectId,{...connection.data,...mcp.max.environment()});},
+  knowledgeSave:async({projectId,entry})=>{store.project(projectId);const saved=await agent.knowledge.save(entry,projectId);return agent.knowledge.read(saved.id,projectId,{...connection.data,...mcp.max.environment()});},
   knowledgeRemove:async({projectId,id,revision})=>{store.project(projectId);return agent.knowledge.remove({id,revision},projectId);},
-  findingUpdate:async({projectId,...input})=>{store.project(projectId);await agent.knowledge.findings.update(input);return agent.knowledge.read(input.id,projectId,connection.data);},
+  findingUpdate:async({projectId,...input})=>{store.project(projectId);await agent.knowledge.findings.update(input);return agent.knowledge.read(input.id,projectId,{...connection.data,...mcp.max.environment()});},
   knowledgeFolder:async({source}={})=>{await agent.knowledge.init();const root=source==='agent'?agent.knowledge.findings.root:agent.knowledge.root;await fs.mkdir(root,{recursive:true});const error=await shell.openPath(root);if(error)throw new Error(error);return true;},
   knowledgePrompt:async()=>({text:await fs.readFile(new URL('./knowledge/prompts/system.md',import.meta.url),'utf8')}),
   bootstrap:async()=>publicState(),
@@ -239,6 +241,12 @@ const handlers={
     }
     await store.save();return publicState();
   },
+  maxSelect:async({projectId,sessionId,target})=>agent.locked(async()=>{
+    if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
+    const state=await mcp.max.refresh();if(!state.instances.some(item=>item.ready&&mcp.max.key(item)===target))throw new Error(t('max.select'));
+    const session=await agent.load(projectId,sessionId);session.maxTarget=target;await store.saveSession(session);
+  }),
+  maxRefresh:async()=>mcp.max.refresh(true),
   connect:async()=>connect(),
   scan:async()=>scan(),
   tools:async()=>mcp.tools.map(t=>({key:t.key,name:t.name,description:t.description,inputSchema:t.inputSchema,readOnly:t.annotations?.readOnlyHint===true})),
@@ -331,7 +339,16 @@ else {
     encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new Error(t('errors.windowsEncryptionIsUnavailable'));return safeStorage.encryptString(value).toString('base64');},
     decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))
   });
-   await store.init(app.getLocale());nativeTheme.themeSource=store.state.theme;store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});store.claudeCode=new ClaudeCode(store,{onProgress:progress=>emit({type:'claude-progress',progress})});await store.claudeCode.refreshCatalog();connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);agent=new Agent(store,mcp,emit);await agent.knowledge.init();
+   await store.init(app.getLocale());nativeTheme.themeSource=store.state.theme;store.oauthManager=new OAuthManager(store,{openExternal:url=>shell.openExternal(url)});store.claudeCode=new ClaudeCode(store,{onProgress:progress=>emit({type:'claude-progress',progress})});await store.claudeCode.refreshCatalog();connection={connected:false,message:t('ui.connectingAlt')};mcp=new MCP(runtime);
+   let reportedMaxYears=new Map();
+   mcp.max=new MaxConnection(runtime,state=>{
+     emit({type:'max-connection',state});
+     const years=new Map(state.instances.map(item=>[item.year,state.instances.some(instance=>instance.year===item.year&&instance.ready)]));
+     for(const year of new Set([...years.keys(),...reportedMaxYears.keys()]))if(years.get(year)!==reportedMaxYears.get(year))
+       store.telemetry?.capture('archi_max_connection',{max_year:year,bridge_version:maxMcpVersion,connected:years.get(year)===true});
+     reportedMaxYears=years;
+   });
+   agent=new Agent(store,mcp,emit);await agent.knowledge.init();
   store.telemetry=new Telemetry(store,{runtimeEnabled:app.isPackaged&&process.env.ARCHI_TELEMETRY_DISABLED!=='1',version:app.getVersion(),installationKind:process.env.PORTABLE_EXECUTABLE_FILE?'portable':'installed',findings:agent.knowledge.findings});
   await store.telemetry.init();store.telemetry.start();
   updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>installUpdate({app,win,updater:updaterModule.autoUpdater,update:updates.state,language:store.state.language})});
@@ -355,11 +372,11 @@ else {
   process.send?.({type:'archi-ready',version:app.getVersion()});
   // The window has painted and is visible: acknowledge the update immediately.
   cleanupUpdateHelper(app).catch(()=>{});
-  updates.start();connect();
+  updates.start();connect();void mcp.max.refresh();maxTimer=setInterval(()=>void mcp.max.refresh(),15000);maxTimer.unref();
   win.on('close',event=>{
     if(agent.running){event.preventDefault();dialog.showMessageBox(win,{type:'question',message:t('errors.stopTheTaskAndCloseArchiHelper'),detail:t('errors.changesAlreadyMadeInArchicadWillNot'),buttons:[t('errors.keepWorking'),t('errors.stopAndClose')],defaultId:0,cancelId:0}).then(({response})=>{if(response===1){agent.stop().catch(()=>{});setTimeout(()=>win.destroy(),500);}});}
   });
   app.on('window-all-closed',()=>app.quit());
-   let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;if(pendingProviderPrompt)answerProviderPrompt({id:pendingProviderPrompt.prompt.id,response:pendingProviderPrompt.prompt.cancelId});updates.dispose();store.oauthManager.dispose();store.claudeCode.cancel();Promise.allSettled([agent.stop(),mcp.close(),store.telemetry.shutdown()]).finally(()=>app.quit());}});
+   let quitting=false;app.on('before-quit',event=>{if(!quitting){event.preventDefault();quitting=true;if(pendingProviderPrompt)answerProviderPrompt({id:pendingProviderPrompt.prompt.id,response:pendingProviderPrompt.prompt.cancelId});clearInterval(maxTimer);updates.dispose();store.oauthManager.dispose();store.claudeCode.cancel();Promise.allSettled([agent.stop(),mcp.close(),mcp.max.close(),store.telemetry.shutdown()]).finally(()=>app.quit());}});
   }).catch(error=>{dialog.showErrorBox(t('errors.archiHelperStartupError'),error.message);app.quit();});
 }

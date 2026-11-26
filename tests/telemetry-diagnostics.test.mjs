@@ -16,6 +16,15 @@ import {KnowledgeLibrary} from '../electron/knowledge-library.mjs';
 import {sanitizeFinding,sanitizeFindingEvidence} from '../electron/finding-schema.mjs';
 import {FindingRecorder} from '../electron/finding-observer.mjs';
 
+test('Max findings retain SDK vocabulary and drop private scene and script data',()=>{
+  const environment={max:2024,bridge:'2.0.1',scene:'PRIVATE_SCENE',pid:98765};
+  const card=sanitizeFinding({category:'api_workflow',environment,steps:[{tool:'call_3dsmax',command:'query_scene',action:'read',fields:['objectCount']}],checks:['readback']});
+  assert.deepEqual(card.environment,{max:2024,bridge:'2.0.1'});
+  assert.equal(sanitizeFinding({...card,environment:{archicad:27,build:1000,tapir:'1.0'}}),undefined);
+  const safe=sanitizeEvent('archi_max_connection',{connected:true,max_year:2024,bridge_version:'2.0.1',pid:98765,scene:'PRIVATE_SCENE',code:'PRIVATE_SCRIPT'});
+  assert.deepEqual(safe,{connected:true,max_year:2024,bridge_version:'2.0.1'});
+});
+
 const bundled=path.resolve('runtime/python/cpython-3.13.7-windows-x86_64-none/python.exe');
 const python=process.env.ARCHI_TEST_PYTHON||(await fs.access(bundled).then(()=>bundled).catch(()=>process.platform==='win32'?'python':'python3'));
 assert.equal(spawnSync(python,['-c','import json,urllib.request,runpy,threading'],{windowsHide:true}).status,0,'Python standard library is required');

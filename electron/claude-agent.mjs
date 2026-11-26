@@ -17,7 +17,7 @@ export async function performClaudeTask(agent,session,{provider,model,reasoningE
     const corrections=await agent.takeSteering(session);
     if(corrections)for(const item of corrections){query=(item.text+' '+query).slice(0,8000);for(const entry of item.knowledge||[])agent.selectedKnowledge.set(entry.id,entry);}
     agent.repair(session.history);
-    const reference=await agent.knowledge.context(session.projectId,agent.mcp.connectionInfo,{query,selected:[...agent.selectedKnowledge.keys()]});
+    const reference=await agent.knowledge.context(session.projectId,agent.environment(session),{query,selected:[...agent.selectedKnowledge.keys()]});
     currentObservation()?.knowledgeUsed([...agent.selectedKnowledge.keys()],'selected');
     currentObservation()?.knowledgeUsed(reference.automatic.map(entry=>entry.id),'automatic');
     const system=systemMessage(store.project(session.projectId).path,true,mode,catalogSummary(catalog),{workspace,legacyProjectFiles:session.legacyProjectFiles,knowledge:reference.summary});

@@ -54,7 +54,7 @@ export class AgentFindings {
     this.generation++;
   }
   async save(input,connection,trace=[],{replaceId,failure,checkpoint=false}={}) {return this.mutate(async()=>{
-    let card=sanitizeFinding({...input,schema:2,environment:{archicad:Number(connection?.archicad_version),build:Number(connection?.archicad_build),tapir:connection?.tapir_installed}});
+    let card=sanitizeFinding({...input,schema:2,environment:input.steps?.some(step=>step.tool==='call_3dsmax')?{max:connection?.max_year,bridge:connection?.max_bridge}:{archicad:Number(connection?.archicad_version),build:Number(connection?.archicad_build),tapir:connection?.tapir_installed}});
     if(!card||!localMetadata(input)||input.notes!==undefined&&(typeof input.notes!=='string'||input.notes.length>4000))fail();
     const state=await this.readState();
     const legacy=!input.condition&&!input.correction&&sanitizeFinding({...input,schema:1,environment:card.environment});
@@ -100,8 +100,8 @@ export class AgentFindings {
     if(!validFindingComparison(input)||!readback?.success||!readback.readOnly||readback.command!==input.command)fail();
     const state=await this.readState(),record=state.records.find(item=>`finding:${item.card.fingerprint}`===input.id);
     const environment=record?.card.environment;
-    if(!record||record.confidence!=='observed'||record.archive||!record.enabled||environment.archicad!==Number(connection?.archicad_version)||
-      environment.build!==Number(connection?.archicad_build)||environment.tapir!==connection?.tapir_installed)fail();
+    if(!record||record.confidence!=='observed'||record.archive||!record.enabled||(environment.max?environment.max!==connection?.max_year||environment.bridge!==connection?.max_bridge:
+      environment.archicad!==Number(connection?.archicad_version)||environment.build!==Number(connection?.archicad_build)||environment.tapir!==connection?.tapir_installed))fail();
     let actual=result;
     for(const field of input.field_path) {
       if(Array.isArray(actual))actual=actual.length===1?actual[0]:undefined;
@@ -121,14 +121,14 @@ export class AgentFindings {
   entry(record) {
     const card=record.card,title=record.title||t(`findings.category.${card.category}`),route=card.steps.map(step=>step.command||step.tool).join(' → ');
     const text=[`# ${title}`,t('findings.reference'),`${t('findings.confidence')}: ${t(`findings.${record.confidence}`)}`,
-      `Archicad ${card.environment.archicad} / ${card.environment.build} / Tapir ${card.environment.tapir}`,
+      card.environment.max?`3ds Max ${card.environment.max} / MCP ${card.environment.bridge}`:`Archicad ${card.environment.archicad} / ${card.environment.build} / Tapir ${card.environment.tapir}`,
       ...card.steps.map((step,index)=>`${index+1}. ${step.action}: ${step.tool}${step.command?` / ${step.command}`:''}${step.fields.length?` (${step.fields.join(', ')})`:''}`),
       ...(card.condition?[`${t('findings.condition')}: ${JSON.stringify(card.condition)}`,`${t('findings.correction')}: ${JSON.stringify(card.correction)}`]:[]),
       `${t('findings.observedChecks')}: ${record.evidence?.checks.map(check=>`${check.kind}: ${check.state}${check.kind==='readback'?' (comparison: not_performed)':''}`).join(', ')||'none'}`,
       `${t('findings.checks')}: ${card.checks.join(', ')||'none'}`,`${t('findings.cautions')}: ${card.cautions.join(', ')||'not_independently_verified'}`,record.notes].filter(Boolean).join('\n\n');
     return {id:`finding:${card.fingerprint}`,title,summary:route.slice(0,320),text,source:'agent',scope:'global',kind:'knowledge',activation:record.confidence==='observed'&&!(record.origin==='checkpoint'&&['unknown','retry_same_shape'].includes(card.correction?.kind))?'auto':'manual',
       enabled:record.enabled&&!record.archive,tags:[...(record.keywords||[]),card.category,...new Set(card.steps.map(step=>step.command||step.tool))].slice(0,20),triggers:[title,...(record.keywords||[]),card.category,...card.steps.flatMap(step=>[step.tool,step.command,...step.fields]).filter(Boolean)],
-      archicad:[card.environment.archicad],compatibility:[{archicad:card.environment.archicad,minBuild:card.environment.build,maxBuild:card.environment.build,tapirMin:card.environment.tapir,tapirMax:card.environment.tapir}],
+      maxEnvironment:card.environment.max?card.environment:undefined,archicad:card.environment.max?[]:[card.environment.archicad],compatibility:card.environment.max?[]:[{archicad:card.environment.archicad,minBuild:card.environment.build,maxBuild:card.environment.build,tapirMin:card.environment.tapir,tapirMax:card.environment.tapir}],
       verifiedOn:[],revision:revision(record),relative:'agent-findings/findings.json',searchText:text.toLocaleLowerCase(),confidence:record.confidence,archived:!!record.archive,archive:record.archive,pinned:record.pinned};
   }
   async update({id,revision:expected,enabled,pinned,archived}) {return this.mutate(async()=>{
