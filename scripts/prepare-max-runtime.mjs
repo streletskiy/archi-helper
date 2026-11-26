@@ -20,22 +20,24 @@ async function verifiedFile(cache,asset) {
   let cached;
   try{cached=await fs.readFile(file);}catch(error){if(error.code!=='ENOENT')throw error;}
   if(cached&&digest(cached)===asset.sha256)return file;
-  const response=await fetch(asset.url,{signal:AbortSignal.timeout(180000)});
-  if(!response.ok)throw new Error('Max distribution download failed: '+response.status);
-  const bytes=Buffer.from(await response.arrayBuffer());
-  if(digest(bytes)!==asset.sha256)throw new Error('Max distribution checksum mismatch: '+asset.file);
-  await fs.writeFile(file,bytes);
+  const incoming=await fs.mkdtemp(path.join(cache,'download-'));
+  const download=path.join(incoming,'payload');
+  try {
+    const curl=path.join(process.env.SystemRoot,'System32','curl.exe');
+    execFileSync(curl,['--disable','--fail','--silent','--show-error','--location','--proto','=https','--proto-redir','=https','--max-time','180','--retry','2','--output',download,asset.url],{windowsHide:true,stdio:'inherit'});
+    if(digest(await fs.readFile(download))!==asset.sha256)throw new Error('Max distribution checksum mismatch: '+asset.file);
+    await fs.rename(download,file);
+  } finally {await fs.rm(incoming,{recursive:true,force:true});}
   return file;
 }
 
 // Max keeps native Python modules mapped while a scene is open. An incremental
 // build can reuse a byte-identical file without trying to replace the loaded DLL.
 async function needsCopy(source,target) {
+  if(!/\.(?:pyd|dll|exe|zip)$/i.test(source))return true;
   let existing;
-  try{existing=await fs.stat(target);}catch(error){if(error.code==='ENOENT')return true;throw error;}
-  if(!existing.isFile()||(await fs.stat(source)).size!==existing.size)return true;
-  const [before,after]=await Promise.all([fs.readFile(target),fs.readFile(source)]);
-  return !before.equals(after);
+  try{existing=await fs.readFile(target);}catch(error){if(error.code==='ENOENT')return true;throw error;}
+  return !existing.equals(await fs.readFile(source));
 }
 
 export async function prepareMaxRuntime(root,python) {
