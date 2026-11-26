@@ -13,7 +13,7 @@ from PySide2 import QtCore, QtNetwork
 
 
 rt = pymxs.runtime
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 YEAR = 1998 + int(rt.maxVersion()[0]) // 1000
 PID = os.getpid()
 
@@ -68,7 +68,8 @@ def viewport():
     folder = os.path.join(tempfile.gettempdir(), "3dsmax-mcp")
     os.makedirs(folder, exist_ok=True)
     filename = os.path.join(folder, "viewport_" + uuid.uuid4().hex + ".png")
-    bitmap = rt.gw.getViewportDib()
+    rt.completeRedraw()
+    bitmap = rt.viewport.getViewportDib()
     try:
         bitmap.filename = filename
         if not rt.save(bitmap):
@@ -87,6 +88,7 @@ def dispatch(command, args):
         node = get_node(args)
         p = node.position
         return dict(describe(node), position=[p.x, p.y, p.z],
+                    bounds=[[v.x, v.y, v.z] for v in (node.min, node.max)],
                     material=str(node.material.name)[:256] if node.material else None)
     if command == "capture_viewport":
         return viewport()
@@ -95,7 +97,14 @@ def dispatch(command, args):
         name = args.get("name")
         if shape is None or (name is not None and (not isinstance(name, str) or not 1 <= len(name) <= 128)):
             raise ValueError("Invalid primitive or object name")
-        options = {"pos": position(args.get("position", [0, 0, 0]))}
+        size = args.get("size", 25)
+        if type(size) not in (int, float) or not math.isfinite(size) or not 0 < size <= 1e9:
+            raise ValueError("Expected a positive size in scene units")
+        kind = args["type"]
+        options = ({"length": size, "width": size, "height": size} if kind == "box"
+                   else {"radius": size / 2.0} if kind == "sphere"
+                   else {"radius": size / 2.0, "height": size})
+        options["pos"] = position(args.get("position", [0, 0, 0]))
         if name is not None:
             options["name"] = name
         with pymxs.undo(True, "Archi Helper"):
@@ -117,7 +126,7 @@ class Session(QtCore.QObject):
         self.server = QtNetwork.QLocalServer(self)
         self.server.setSocketOptions(QtNetwork.QLocalServer.UserAccessOption)
         self.server.newConnection.connect(self.accept)
-        if not self.server.listen("ArchiHelper-MaxSession-v1-" + str(PID)):
+        if not self.server.listen("ArchiHelper-MaxSession-v2-" + str(PID)):
             raise RuntimeError(self.server.errorString())
 
     def accept(self):
@@ -156,5 +165,5 @@ class Session(QtCore.QObject):
 
 
 # Running the script again in an open scene reuses its existing session.
-if not getattr(builtins, "_archi_helper_max_session_v1", None):
-    builtins._archi_helper_max_session_v1 = Session()
+if not getattr(builtins, "_archi_helper_max_session_v2", None):
+    builtins._archi_helper_max_session_v2 = Session()
