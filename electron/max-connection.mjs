@@ -17,6 +17,24 @@ const exists=file=>fs.access(file).then(()=>true,()=>false);
 const pluginRoot=base=>path.join(base,'Autodesk','ApplicationPlugins');
 const exec=promisify(execFile);
 
+// Autodesk discovers per-user script packages on launch, including localized installations.
+// Publish the Python payload before the startup manifest. Repeated scans don't rewrite files.
+async function provisionSession(script) {
+  const dir=path.join(pluginRoot(process.env.APPDATA),'ArchiHelper-Max2022');
+  await fs.mkdir(dir,{recursive:true});
+  const manifest=await fs.readFile(path.join(dir,'PackageContents.xml'),'utf8').catch(error=>{if(error.code!=='ENOENT')throw error;});
+  if(manifest&&!manifest.includes('{37347C7C-3872-453F-9926-C9FF796D30DD}'))throw new Error(t('max.error'));
+  for(const name of ['archi_helper.py','archi_helper_startup.ms','PackageContents.xml']){
+    const source=await fs.readFile(path.join(path.dirname(script),name));
+    const destination=path.join(dir,name);
+    const existing=await fs.readFile(destination).catch(error=>{if(error.code!=='ENOENT')throw error;});
+    if(existing?.equals(source))continue;
+    const staged=path.join(dir,'.'+crypto.randomUUID()+'.tmp');
+    try {await fs.writeFile(staged,source,{flag:'wx'});await fs.rename(staged,destination);}
+    finally {await fs.rm(staged,{force:true});}
+  }
+}
+
 // Max loads its GUPs at startup. Publish the entire per-user bundle in one rename.
 // Respect existing upstream installations, including installs for all users.
 export async function provisionMax(runtime) {
@@ -53,8 +71,9 @@ async function maxProcesses() {
 }
 
 export class MaxConnection {
-  constructor(runtime,onChange=()=>{}) {
+  constructor(runtime,onChange=()=>{},sessionScript) {
     this.runtime=runtime;this.onChange=onChange;this.clients=new Map();
+    this.sessionScript=sessionScript;
     this.state={status:'searching',instances:[]};
   }
   refresh(force=false) {
@@ -72,6 +91,9 @@ export class MaxConnection {
     const available=running.filter(item=>maxYear(item.year));
     const native=available.filter(item=>item.year>2022);
     let provisionError=false;
+    if(this.sessionScript&&!this.sessionPrepared&&(legacy||available.some(item=>item.year===2022))){
+      try {await provisionSession(this.sessionScript);this.sessionPrepared=true;} catch { /* Manual connection is still available. */ }
+    }
     if(!this.provisioned&&(native.length||
       (await Promise.all([2023,2024,2025,2026,2027].map(year=>exists(path.join(process.env.ProgramFiles,'Autodesk','3ds Max '+year))))).some(Boolean))){
       try {await provisionMax(this.runtime);this.provisioned=true;} catch {provisionError=true;}
@@ -82,8 +104,8 @@ export class MaxConnection {
       this.clients.delete(key);void promise.then(client=>client.close()).catch(()=>{});
     }
     const needsSession=instances.some(item=>item.year===2022&&!item.ready);
-    const status=instances.some(item=>item.ready)?'connected':needsSession?'session':provisionError?'error':native.length?'restart':running.length?'unsupported':'offline';
-    return this.update({status,instances,canLaunch2022:!!legacy&&!this.startingLegacy&&!instances.some(item=>item.year===2022)});
+    const status=instances.some(item=>item.ready)?'connected':needsSession?(this.sessionPrepared?'session':'manual'):provisionError?'error':native.length?'restart':running.length?'unsupported':'offline';
+    return this.update({status,instances,autoStart2022:!!this.sessionPrepared,canLaunch2022:!!legacy&&!this.startingLegacy&&!instances.some(item=>item.year===2022)});
   }
   async launch2022(script) {
     await this.refresh(true);
@@ -98,6 +120,14 @@ export class MaxConnection {
     this.update({...this.state,canLaunch2022:false});
   }
   key(item){return item.pid+'/'+item.started;}
+  selected(session,pid) {
+    const instances=this.state.instances;
+    return pid!==undefined?instances.find(item=>item.pid===pid):session?.maxTarget?instances.find(item=>this.key(item)===session.maxTarget):instances.length===1?instances[0]:null;
+  }
+  help(item) {
+    if(item?.year===2022&&this.sessionScript)return t(this.sessionPrepared?'max.restartPath':'max.manualPath',{path:this.sessionScript});
+    return t('max.'+(item&&!item.ready&&this.state.status==='connected'?'restart':this.state.status));
+  }
   environment(session,pid) {
     const ready=this.state.instances.filter(item=>item.ready);
     const item=pid!==undefined?ready.find(x=>x.pid===pid):session?.maxTarget?ready.find(x=>this.key(x)===session.maxTarget):this.state.instances.length===1?ready[0]:null;
@@ -105,11 +135,10 @@ export class MaxConnection {
   }
   async target(session,pid) {
     await this.refresh();
-    const ready=this.state.instances.filter(item=>item.ready);
-    if(!ready.length)throw new Error(t('max.'+this.state.status));
-    const selected=pid!==undefined?ready.find(item=>item.pid===pid):session.maxTarget?ready.find(item=>this.key(item)===session.maxTarget):this.state.instances.length===1?ready[0]:null;
-    if(session.maxTarget&&selected&&this.key(selected)!==session.maxTarget&&ready.some(item=>this.key(item)===session.maxTarget))throw new Error(t('max.select'));
-    if(!selected)throw new Error(t('max.select'));
+    const selected=this.selected(session,pid);
+    if(!selected)throw new Error(this.state.instances.length?t('max.select'):this.help());
+    if(session.maxTarget&&this.key(selected)!==session.maxTarget&&this.state.instances.some(item=>this.key(item)===session.maxTarget))throw new Error(t('max.select'));
+    if(!selected.ready)throw new Error(this.help(selected));
     return selected;
   }
   async client(item) {
@@ -133,11 +162,11 @@ export class MaxConnection {
     return this.clients.get(key);
   }
   async discover(session,query,pid) {
-    const state=await this.refresh();
-    const instances=state.instances.map(({pid,year,ready,title})=>({pid,year,ready,title}));
-    if(!instances.some(item=>item.ready))return {instances,status:state.status,message:t('max.'+state.status)};
-    if(!pid&&(session.maxTarget?!state.instances.some(item=>item.ready&&this.key(item)===session.maxTarget):instances.length>1))return {instances,message:t('max.select')};
-    const item=await this.target(session,pid);
+    await this.refresh();
+    let item,error;
+    try {item=await this.target(session,pid);} catch(caught){error=caught;}
+    const instances=this.state.instances.map(({pid,year,ready,title})=>({pid,year,ready,title}));
+    if(error)return {instances,status:this.state.status,message:error.message};
     const tools=item.year===2022?sessionTools:(await this.client(item)).tools;
     const name=String(query||'').replace(/^max:/,'');
     const exact=tools.find(tool=>tool.name===name&&maxCommands.includes(name));

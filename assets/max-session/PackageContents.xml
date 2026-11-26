@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage SchemaVersion="1.0" AutodeskProduct="3ds Max" ProductType="Application"
+  Name="Archi Helper Max 2022" Description="Load the local Archi Helper scene adapter"
+  AppVersion="1.1.0" ProductCode="{A3BEAFC1-8C70-43A4-B935-B18AACEBC701}" UpgradeCode="{37347C7C-3872-453F-9926-C9FF796D30DD}">
+  <CompanyDetails Name="Archi Helper" />
+  <Components Description="post-start-up scripts parts">
+    <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2022" SeriesMax="2022" />
+    <ComponentEntry ModuleName="./archi_helper_startup.ms" />
+  </Components>
+</ApplicationPackage>

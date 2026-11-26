@@ -1,7 +1,7 @@
 {
   "name": "ac-helper",
   "productName": "Archi Helper",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Architect assistant for Archicad and 3ds Max",
   "author": "streletskiy",
   "private": true,
@@ -12,6 +12,7 @@
     "site:build": "node scripts/build-site.mjs",
     "site:preview": "npm run site:build && vite preview --outDir .cache/site --host 127.0.0.1 --port 4173 --strictPort",
     "start": "electron .",
+    "check:app": "node scripts/check-app.mjs",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build && node scripts/build-main.mjs && node scripts/build-update-helper.mjs",
     "runtime": "node scripts/prepare-runtime.mjs",
@@ -65,8 +66,13 @@
     ],
     "extraResources": [
       {
-        "from": "assets/max-session/archi_helper.py",
-        "to": "assets/max-session/archi_helper.py"
+        "from": "assets/max-session",
+        "to": "assets/max-session",
+        "filter": [
+          "archi_helper.py",
+          "archi_helper_startup.ms",
+          "PackageContents.xml"
+        ]
       },
       {
         "from": "runtime",

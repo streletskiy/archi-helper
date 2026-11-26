@@ -12,6 +12,7 @@ import { ClaudeCode,claudeModels } from './claude-code.mjs';
 import { appFetch, configureAppFetch } from './network.mjs';
 import { EFFORTS } from './reasoning.mjs';
 import {MaxConnection} from './max-connection.mjs';
+import {startCheckApi} from './check-api.mjs';
 import {maxBridgeVersion} from './max-catalog.mjs';
 import { MCP } from './mcp.mjs';
 import { Agent } from './agent.mjs';
@@ -24,8 +25,10 @@ import { saveAttachments, clipboardAttachments } from './attachments.mjs';
 import { Telemetry } from './telemetry.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
+const checkApi=process.argv.includes('--archi-check-api')&&typeof process.send==='function';
 const dataOverride=process.env.ARCHI_DATA_DIR || process.argv.find(a=>a.startsWith('--archi-data-dir='))?.slice('--archi-data-dir='.length);
 if(dataOverride)app.setPath('userData',path.resolve(dataOverride));
+else if(checkApi)app.setPath('userData',path.join(app.getPath('appData'),'Archi Checks'));
 // Keep the original profile so renaming the application preserves keys and projects.
 else if(app.isPackaged)app.setPath('userData',path.join(app.getPath('appData'),'Archi'));
 let win,store,mcp,agent,maxTimer,updates,connection={connected:false,message:t('ui.connectingAlt')},connecting,activeCalls=0,tapirProgress=null,tapirInstalling=false;
@@ -244,7 +247,8 @@ const handlers={
   },
   maxSelect:async({projectId,sessionId,target})=>agent.locked(async()=>{
     if(agent.running)throw new Error(t('errors.waitForTheTaskToFinish'));
-    const state=await mcp.max.refresh();if(!state.instances.some(item=>item.ready&&mcp.max.key(item)===target))throw new Error(t('max.select'));
+    const state=await mcp.max.refresh();const instance=state.instances.find(item=>mcp.max.key(item)===target);
+    if(!instance||(!instance.ready&&instance.year!==2022))throw new Error(t('max.select'));
     const session=await agent.load(projectId,sessionId);session.maxTarget=target;await store.saveSession(session);
   }),
   maxRefresh:async()=>mcp.max.refresh(true),
@@ -350,11 +354,11 @@ else {
      for(const year of new Set([...years.keys(),...reportedMaxYears.keys()]))if(years.get(year)!==reportedMaxYears.get(year))
        store.telemetry?.capture('archi_max_connection',{max_year:year,bridge_version:maxBridgeVersion(year),connected:years.get(year)===true});
      reportedMaxYears=years;
-   });
+   },maxSessionScript);
    agent=new Agent(store,mcp,emit);await agent.knowledge.init();
   store.telemetry=new Telemetry(store,{runtimeEnabled:app.isPackaged&&process.env.ARCHI_TELEMETRY_DISABLED!=='1',version:app.getVersion(),installationKind:process.env.PORTABLE_EXECUTABLE_FILE?'portable':'installed',findings:agent.knowledge.findings});
   await store.telemetry.init();store.telemetry.start();
-  updates=createUpdates({updater:updaterModule.autoUpdater,enabled:app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>installUpdate({app,win,updater:updaterModule.autoUpdater,update:updates.state,language:store.state.language})});
+  updates=createUpdates({updater:updaterModule.autoUpdater,enabled:!checkApi&&app.isPackaged&&process.platform==='win32'&&!process.env.PORTABLE_EXECUTABLE_FILE,version:app.getVersion(),getBusy:()=>!!agent.running||activeCalls>0,emit,install:()=>installUpdate({app,win,updater:updaterModule.autoUpdater,update:updates.state,language:store.state.language})});
   ipcMain.handle('archi:call',async(event,method,input={})=>{
     if(event.sender!==win?.webContents || event.senderFrame!==win.webContents.mainFrame)throw new Error(t('errors.untrustedRequest'));
     if(updates.state.status==='installing'&&!['bootstrap','window','telemetryPreferences','telemetryStatus'].includes(method))throw new Error(t('errors.anUpdateIsBeingInstalled'));
@@ -371,7 +375,8 @@ else {
   const painted=new Promise(resolve=>win.once('ready-to-show',resolve));
   if(!app.isPackaged && process.env.ARCHI_DEV_URL)await win.loadURL(process.env.ARCHI_DEV_URL);else await win.loadFile(path.resolve(here,'../dist/index.html'));
   await painted;
-  if(!showAppWindow(win))throw new Error(t('errors.couldNotShowWindow'));
+  if(!checkApi&&!showAppWindow(win))throw new Error(t('errors.couldNotShowWindow'));
+  if(checkApi)startCheckApi({app,agent,store,mcp,send:handlers.send});
   process.send?.({type:'archi-ready',version:app.getVersion()});
   // The window has painted and is visible: acknowledge the update immediately.
   cleanupUpdateHelper(app).catch(()=>{});
