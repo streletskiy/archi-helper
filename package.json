@@ -1,7 +1,7 @@
 {
   "name": "ac-helper",
   "productName": "Archi Helper",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Architect assistant for Archicad and 3ds Max",
   "author": "streletskiy",
   "private": true,
