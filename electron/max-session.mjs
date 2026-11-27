@@ -1,4 +1,7 @@
 import net from 'node:net';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {createHash,randomUUID} from 'node:crypto';
 import {t} from '../locales/index.mjs';
 
 const page = {
@@ -10,7 +13,7 @@ const handle = {type:'integer', minimum:1, maximum:4294967295, description:'Node
 const position = {type:'array', minItems:3, maxItems:3, items:{type:'number',minimum:-1e9,maximum:1e9}, description:'Absolute world position in scene units'};
 const tool = (name,description,properties={},required=[]) => ({name,description,inputSchema:{type:'object',properties,required,additionalProperties:false}});
 
-export const sessionTools = [
+const legacyTools = [
   tool('get_bridge_status','Get the connected Max process, year and session adapter version.'),
   tool('query_scene','List scene nodes with their handles, names, classes and parent handles.',{...page, selection_only:selection}),
   tool('get_hierarchy','Read the scene hierarchy as a paginated list of nodes and parent handles.',page),
@@ -22,19 +25,46 @@ export const sessionTools = [
   tool('undo_last','Undo the latest entry on the active scene undo stack. Read the scene again to verify.')
 ];
 
-export const sessionPipe = pid => 'ArchiHelper-MaxSession-v2-'+pid;
+const rotate = {...position,description:'Relative X, Y, Z Euler rotation in degrees about the object pivot at the current frame.'};
+const transform = tool('transform_object','Move to an absolute world position and/or rotate by an offset. Read inspect_object before and after to verify.',{
+  handle,position,rotate,coordinate_system:{type:'string',enum:['world','local'],default:'world',description:'Axes for rotation only.'}
+},['handle']);
+transform.inputSchema.anyOf=[{required:['position']},{required:['rotate']}];
+const inspect = tool('inspect_object','Read one node including class, world position and absolute world XYZ Euler rotation in degrees (equivalent angles may wrap).',{handle},['handle']);
+export const sessionTools = [...legacyTools.map(item=>item.name==='transform_object'?transform:item.name==='inspect_object'?inspect:item),
+  tool('run_python','Execute short Python on the selected 3ds Max main thread, with pymxs and rt (pymxs.runtime) available. Use print for bounded output. Prefer transform_object for simple rotations. Scene edits support Max undo when the underlying operation is undoable.',{
+    code:{type:'string',minLength:1,maxLength:16000,description:'Python source for the interpreter inside Max.'}
+  },['code'])
+];
+export const toolsForSession = item => item.legacySession?legacyTools:sessionTools;
+export const sessionPipe = (pid,legacy=false) => 'ArchiHelper-MaxSession-v'+(legacy?'2':'3')+'-'+pid;
 
-export function callMaxSession(item,name,args,signal) {
-  const schema=sessionTools.find(tool=>tool.name===name)?.inputSchema;
+export async function callMaxSession(item,name,args,signal) {
+  const schema=toolsForSession(item).find(tool=>tool.name===name)?.inputSchema;
   if(!schema)throw new Error(t('max.unknown'));
   if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(key=>!Object.hasOwn(schema.properties,key))||
     schema.required.some(key=>!Object.hasOwn(args,key)))throw new Error(t('max.invalidArguments'));
   signal?.throwIfAborted();
   const timeout=30000;
-  const message=Buffer.from(JSON.stringify({pid:item.pid,year:item.year,name,args,expires:Date.now()+timeout})+'\n');
+  const expires=Date.now()+timeout;
+  const ticket=name==='run_python'?randomUUID().replaceAll('-',''):undefined;
+  const message=Buffer.from(JSON.stringify({pid:item.pid,year:item.year,name,args:ticket?{...args,ticket}:args,expires})+'\n');
   if(message.length>65536)throw new Error(t('max.invalidArguments'));
+  if(!ticket)return sendRequest(item,message,signal,timeout);
+  if(typeof args.code!=='string'||!args.code.trim()||args.code.length>16000)throw new Error(t('max.invalidArguments'));
+  const dir=path.join(process.env.LOCALAPPDATA,'ArchiHelper','MaxPython');
+  await fs.mkdir(dir,{recursive:true});
+  const receipt=path.join(dir,ticket);
+  const digest=createHash('sha256').update(args.code).digest('hex');
+  await fs.writeFile(receipt,JSON.stringify({pid:item.pid,expires,digest}),{flag:'wx'});
+  try {return await sendRequest(item,message,signal,timeout);}
+  finally {await fs.rm(receipt,{force:true});}
+}
+
+function sendRequest(item,message,signal,timeout) {
+  signal?.throwIfAborted();
   return new Promise((resolve,reject)=>{
-    const socket=net.createConnection('\\\\.\\pipe\\'+sessionPipe(item.pid));
+    const socket=net.createConnection('\\\\.\\pipe\\'+sessionPipe(item.pid,item.legacySession));
     const chunks=[];
     let sent=false,size=0;
     function fail(){

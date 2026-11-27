@@ -1,4 +1,5 @@
 {
+  "max.upgrade2022": "This Max window is running the previous adapter. Save the scene and restart Max 2022 to enable object rotation and in-Max Python.",
   "max.apps": "Connections",
   "max.searching": "Looking for 3ds Max…",
   "max.offline": "Open 3ds Max. You can start the 2022 version from Archi Helper.",
