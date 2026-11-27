@@ -350,9 +350,13 @@ else {
    let reportedMaxYears=new Map();
    mcp.max=new MaxConnection(runtime,state=>{
      emit({type:'max-connection',state});
-     const years=new Map(state.instances.map(item=>[item.year,state.instances.some(instance=>instance.year===item.year&&instance.ready)]));
+     const years=new Map();
+     for(const item of state.instances){
+       if(!years.has(item.year))years.set(item.year,null);
+       if(item.ready&&(!years.get(item.year)||!item.legacySession))years.set(item.year,maxBridgeVersion(item.year,item.legacySession));
+     }
      for(const year of new Set([...years.keys(),...reportedMaxYears.keys()]))if(years.get(year)!==reportedMaxYears.get(year))
-       store.telemetry?.capture('archi_max_connection',{max_year:year,bridge_version:maxBridgeVersion(year),connected:years.get(year)===true});
+       store.telemetry?.capture('archi_max_connection',{max_year:year,bridge_version:years.get(year)||reportedMaxYears.get(year)||undefined,connected:!!years.get(year)});
      reportedMaxYears=years;
    },maxSessionScript);
    agent=new Agent(store,mcp,emit);await agent.knowledge.init();

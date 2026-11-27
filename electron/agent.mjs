@@ -148,8 +148,11 @@ export class Agent extends MessageQueue {
       if(!maxCommands.includes(args.name))throw new Error(t('max.unknown'));
       if(!maxReadCommands.includes(args.name)&&mode==='read')throw new Error(t('agent.readOnlyModeIsEnabledChangesAre'));
       const item=await this.mcp.max.target(session,args.pid);
-      currentObservation()?.maxConnection(item.year);
-      if(!maxReadCommands.includes(args.name)&&mode!=='full')await this.confirm(session,'3ds Max',t('max.approve',{year:item.year,pid:item.pid,action:args.purpose||args.name}),args.arguments,signal);
+      currentObservation()?.maxConnection(item.year,item.legacySession);
+      if(!maxReadCommands.includes(args.name)&&mode!=='full'){
+        const kind=args.name==='run_python'?'python':'3ds Max';
+        await this.confirm(session,kind,t('max.approve',{year:item.year,pid:item.pid,action:args.purpose||args.name}),args.arguments,signal);
+      }
       signal.throwIfAborted();session.maxTarget=this.mcp.max.key(item);
       const result=await this.mcp.max.call(item,args.name,args.arguments,signal);
       if(args.name==='capture_viewport'&&!result?.isError)return saveMaxViewport(result,root);

@@ -13,10 +13,13 @@ import {sanitizeEvent} from '../electron/telemetry-schema.mjs';
 import {normalizeExecutionResult,sanitizeDiagnostic,toolDiagnostic} from '../electron/tool-diagnostics.mjs';
 import {AgentFindings} from '../electron/agent-findings.mjs';
 import {KnowledgeLibrary} from '../electron/knowledge-library.mjs';
-import {sanitizeFinding,sanitizeFindingEvidence} from '../electron/finding-schema.mjs';
+import {sanitizeFinding,sanitizeFindingEvidence,validFindingComparison} from '../electron/finding-schema.mjs';
 import {FindingRecorder} from '../electron/finding-observer.mjs';
 
 test('Max findings retain SDK vocabulary and drop private scene and script data',()=>{
+  const comparison={id:'finding:'+'a'.repeat(64),command:'inspect_object',expected:'Box'};
+  assert.equal(validFindingComparison({...comparison,field_path:['class']}),true);
+  assert.equal(validFindingComparison({...comparison,field_path:['PRIVATE_FIELD']}),false);
   const environment={max:2024,bridge:'2.0.1',scene:'PRIVATE_SCENE',pid:98765};
   const card=sanitizeFinding({category:'api_workflow',environment,steps:[{tool:'call_3dsmax',command:'query_scene',action:'read',fields:['objectCount']}],checks:['readback']});
   assert.deepEqual(card.environment,{max:2024,bridge:'2.0.1'});

@@ -1,6 +1,7 @@
 [
   "$ref",
   "action",
+  "class",
   "classCounts",
   "frozenCount",
   "handle",
