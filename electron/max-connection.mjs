@@ -7,7 +7,7 @@ import {promisify} from 'node:util';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {MCP} from './mcp.mjs';
 import {maxCommands,maxMcpVersion,maxBridgeVersion,maxYear} from './max-catalog.mjs';
-import {callMaxSession,sessionPipe,sessionTools} from './max-session.mjs';
+import {callMaxSession,sessionPipe,toolsForSession} from './max-session.mjs';
 import {imageFile,projectPath} from './store.mjs';
 import {validatePng} from './png-validation.mjs';
 import {resultData} from './progress.mjs';
@@ -99,7 +99,12 @@ export class MaxConnection {
       try {await provisionMax(this.runtime);this.provisioned=true;} catch {provisionError=true;}
     }
     const pipes=new Set(available.length?await fs.readdir('\\\\.\\pipe\\'):[]);
-    const instances=available.map(item=>({...item,ready:pipes.has(item.year===2022?sessionPipe(item.pid):'3dsmax-mcp-pid-'+item.pid)}));
+    const instances=available.map(item=>{
+      if(item.year!==2022)return {...item,ready:pipes.has('3dsmax-mcp-pid-'+item.pid)};
+      const current=pipes.has(sessionPipe(item.pid));
+      const legacySession=!current&&pipes.has(sessionPipe(item.pid,true));
+      return {...item,ready:current||legacySession,legacySession};
+    });
     for(const [key,promise] of this.clients)if(!instances.some(item=>item.ready&&this.key(item)===key)){
       this.clients.delete(key);void promise.then(client=>client.close()).catch(()=>{});
     }
@@ -131,7 +136,7 @@ export class MaxConnection {
   environment(session,pid) {
     const ready=this.state.instances.filter(item=>item.ready);
     const item=pid!==undefined?ready.find(x=>x.pid===pid):session?.maxTarget?ready.find(x=>this.key(x)===session.maxTarget):this.state.instances.length===1?ready[0]:null;
-    return item?{max_year:item.year,max_bridge:maxBridgeVersion(item.year),max_target:this.key(item)}:{};
+    return item?{max_year:item.year,max_bridge:maxBridgeVersion(item.year,item.legacySession),max_target:this.key(item)}:{};
   }
   async target(session,pid) {
     await this.refresh();
@@ -167,10 +172,10 @@ export class MaxConnection {
     try {item=await this.target(session,pid);} catch(caught){error=caught;}
     const instances=this.state.instances.map(({pid,year,ready,title})=>({pid,year,ready,title}));
     if(error)return {instances,status:this.state.status,message:error.message};
-    const tools=item.year===2022?sessionTools:(await this.client(item)).tools;
+    const tools=item.year===2022?toolsForSession(item):(await this.client(item)).tools;
     const name=String(query||'').replace(/^max:/,'');
     const exact=tools.find(tool=>tool.name===name&&maxCommands.includes(name));
-    return {instances,pid:item.pid,year:item.year,tools:exact?[{name:exact.name,description:exact.description,inputSchema:exact.inputSchema}]:
+    return {instances,pid:item.pid,year:item.year,...(item.legacySession?{message:t('max.upgrade2022')}:{ }),tools:exact?[{name:exact.name,description:exact.description,inputSchema:exact.inputSchema}]:
       tools.filter(tool=>maxCommands.includes(tool.name)).map(tool=>tool.name)};
   }
   async call(item,name,args,signal) {

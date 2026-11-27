@@ -170,7 +170,7 @@ class TaskObservation {
       permission_mode:input.mode,...connectionMetadata(connection)};
     telemetry.capture('archi_task_started',this.meta);if(provider)telemetry.provider(provider,'used');
   }
-  maxConnection(year){if(maxYear(year)){this.meta.max_year=year;this.meta.max_bridge=maxBridgeVersion(year);}}
+  maxConnection(year,legacySession){if(maxYear(year)){this.meta.max_year=year;this.meta.max_bridge=maxBridgeVersion(year,legacySession);}}
   get active(){return this.telemetry.active&&this.epoch===this.telemetry.epoch;}
   diagnosticReference() {
     if(this.active&&this.collectRoute&&this.telemetry.workflows&&this.workflowEpoch===this.telemetry.workflowEpoch)
