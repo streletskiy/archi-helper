@@ -130,8 +130,20 @@ def viewport():
     folder = os.path.join(tempfile.gettempdir(), "3dsmax-mcp")
     os.makedirs(folder, exist_ok=True)
     filename = os.path.join(folder, "viewport_" + uuid.uuid4().hex + ".png")
-    rt.completeRedraw()
-    bitmap = rt.viewport.getViewportDib()
+    minimized = ctypes.windll.user32.IsIconic(ctypes.c_void_p(rt.windows.getMAXHWND()))
+    # Max 2022 suspends redraw when minimized. Refresh the graphics buffer before
+    # reading it, then return the redraw counter to the state we found it in.
+    resume_redraw = minimized and rt.isSceneRedrawDisabled()
+    if resume_redraw:
+        rt.enableSceneRedraw()
+    try:
+        if resume_redraw and rt.isSceneRedrawDisabled():
+            raise RuntimeError("3ds Max is busy. Try capturing the viewport again when it is idle.")
+        rt.completeRedraw()
+        bitmap = rt.gw.getViewportDib() if minimized else rt.viewport.getViewportDib()
+    finally:
+        if resume_redraw:
+            rt.disableSceneRedraw()
     try:
         bitmap.filename = filename
         if not rt.save(bitmap):
